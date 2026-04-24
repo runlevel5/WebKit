@@ -175,6 +175,11 @@ int main()
         { "mulli  3,4,100",            dForm(7, 3, 4, 100),                                  0x1c640064 },
         { "mulli  3,4,-1",             dForm(7, 3, 4, static_cast<uint16_t>(-1)),            0x1c64ffff },
 
+        // Sign-extend X-form (opcode 31). RB slot unused (0).
+        { "extsb 3,4",                 xForm(31, 4, 3, 0, 954, 0),                           0x7c830774 },
+        { "extsh 3,4",                 xForm(31, 4, 3, 0, 922, 0),                           0x7c830734 },
+        { "extsw 3,4",                 xForm(31, 4, 3, 0, 986, 0),                           0x7c8307b4 },
+
         // Shift-by-register X-form (opcode 31).
         { "slw  3,4,5",                xForm(31, 4, 3, 5, 24, 0),                            0x7c832830 },
         { "srw  3,4,5",                xForm(31, 4, 3, 5, 536, 0),                           0x7c832c30 },

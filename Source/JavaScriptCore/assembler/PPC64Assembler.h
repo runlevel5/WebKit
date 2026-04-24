@@ -384,6 +384,34 @@ public:
     }
 
     // ===================================================================
+    // Sign-extend (X-form). Power ISA v2.07B §3.3.14. Replicates the
+    // sign bit of a narrow source into the high bits of the 64-bit RA.
+    // Useful after narrow loads (lbz/lhz) or 32-bit multiplies (which
+    // leave the high half of RT undefined).
+    //   extsb RA, RS — opcode 31, XO=954 (byte → 64-bit)
+    //   extsh RA, RS — opcode 31, XO=922 (halfword → 64-bit)
+    //   extsw RA, RS — opcode 31, XO=986 (word → 64-bit)
+    // Verified on POWER9:
+    //   extsb 3,4 → 0x7c830774 (bytes 74 07 83 7c)
+    //   extsh 3,4 → 0x7c830734 (bytes 34 07 83 7c)
+    //   extsw 3,4 → 0x7c8307b4 (bytes b4 07 83 7c)
+    // ===================================================================
+    void extsb(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 954, /*Rc*/ 0));
+    }
+
+    void extsh(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 922, /*Rc*/ 0));
+    }
+
+    void extsw(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 986, /*Rc*/ 0));
+    }
+
+    // ===================================================================
     // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
     // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
     // from a register (RB) rather than an immediate. Opcode 31 with
