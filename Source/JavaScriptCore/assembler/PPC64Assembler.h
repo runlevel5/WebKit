@@ -183,6 +183,32 @@ public:
         insn(dForm(14, rt, ra, static_cast<uint16_t>(si)));
     }
 
+    // ld — Load Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 58, XO=0.
+    //   Encoding: [op(6)=58 | RT(5) | RA(5) | DS(14) | XO(2)=0]
+    //   Semantics: RT <- MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8)
+    //   Byte offset must be a multiple of 4 (the low 2 bits become XO).
+    // Verified 2026-04-24 on POWER9:
+    //   ld 3,0(4)    → 0xe8640000 (bytes 00 00 64 e8)
+    //   ld 3,8(4)    → 0xe8640008 (bytes 08 00 64 e8)
+    //   ld 3,-16(4)  → 0xe864fff0 (bytes f0 ff 64 e8)
+    //   ld 3,0(0)    → 0xe8600000 (bytes 00 00 60 e8) — RA=0 literal-zero form
+    void ld(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dsForm(58, rt, ra, byteOffset, /*XO*/ 0));
+    }
+
+    // std — Store Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 62, XO=0.
+    //   Encoding: [op(6)=62 | RS(5) | RA(5) | DS(14) | XO(2)=0]
+    //   Semantics: MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8) <- RS
+    // Verified 2026-04-24 on POWER9:
+    //   std 3,0(4)   → 0xf8640000 (bytes 00 00 64 f8)
+    //   std 5,16(1)  → 0xf8a10010 (bytes 10 00 a1 f8)
+    //   std 3,-24(1) → 0xf861ffe8 (bytes e8 ff 61 f8)
+    void std(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dsForm(62, rs, ra, byteOffset, /*XO*/ 0));
+    }
+
     // nop — Power ISA v2.07B §3.3.1.1 defines the preferred nop as
     //   `ori 0, 0, 0` → 0x60000000. Verified: `echo "nop" | as` emits
     //   the same bytes (00 00 00 60).
@@ -212,6 +238,24 @@ protected:
     // See Power ISA v2.07B Book I §1.6.1 Figure 3. Bit positions (MSB=0):
     //   OE at bit 21 (shift 10 from LSB), XO at bits 22-30 (shift 1 from LSB),
     //   Rc at bit 31 (shift 0).
+    // DS-form: [op(6) | RT/RS(5) | RA(5) | DS(14) | XO(2)]
+    // See Power ISA v2.07B Book I §1.6.1 Figure 3. DS is a 14-bit signed word
+    // displacement; the effective byte offset is sign_extend(DS || 0b00), i.e.
+    // DS << 2. In the instruction, DS occupies bits 16-29 and XO occupies bits
+    // 30-31; that is, the low 16 bits of the instruction hold
+    // (byteOffset & 0xFFFC) | XO, provided byteOffset is a multiple of 4.
+    static constexpr uint32_t dsForm(uint32_t opcode, RegisterID rtOrRs, RegisterID ra, int16_t byteOffset, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 4);
+        ASSERT((byteOffset & 0x3) == 0);
+        return (opcode << 26)
+             | (registerValue(rtOrRs) << 21)
+             | (registerValue(ra) << 16)
+             | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
+             | xo;
+    }
+
     static constexpr uint32_t xoForm(uint32_t opcode, RegisterID rt, RegisterID ra, RegisterID rb,
                                      uint32_t oe, uint32_t xo, uint32_t rc)
     {
