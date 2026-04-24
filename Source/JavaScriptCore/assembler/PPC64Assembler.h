@@ -551,6 +551,58 @@ public:
     }
 
     // ===================================================================
+    // Shift-by-register (X-form). Power ISA v2.07B §3.3.11. The shift
+    // count comes from the low 7 bits of RB; counts ≥ XLEN produce 0
+    // (logical shifts) or the sign bit (sraw / srad). This differs from
+    // x86's mask-to-{5,6}-bits semantics — callers that expect x86-like
+    // behavior must mask RB first.
+    //
+    //   slw  RA, RS, RB — opcode 31, XO=24  (32-bit left)
+    //   srw  RA, RS, RB — opcode 31, XO=536 (32-bit right, logical)
+    //   sraw RA, RS, RB — opcode 31, XO=792 (32-bit right, arithmetic)
+    //   sld  RA, RS, RB — opcode 31, XO=27  (64-bit left)
+    //   srd  RA, RS, RB — opcode 31, XO=539 (64-bit right, logical)
+    //   srad RA, RS, RB — opcode 31, XO=794 (64-bit right, arithmetic)
+    //
+    // Verified on POWER9:
+    //   slw 3,4,5  → 0x7c832830 (bytes 30 28 83 7c)
+    //   srw 3,4,5  → 0x7c832c30 (bytes 30 2c 83 7c)
+    //   sraw 3,4,5 → 0x7c832e30 (bytes 30 2e 83 7c)
+    //   sld 3,4,5  → 0x7c832836 (bytes 36 28 83 7c)
+    //   srd 3,4,5  → 0x7c832c36 (bytes 36 2c 83 7c)
+    //   srad 3,4,5 → 0x7c832e34 (bytes 34 2e 83 7c)
+    // ===================================================================
+    void slw(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 24, /*Rc*/ 0));
+    }
+
+    void srw(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 536, /*Rc*/ 0));
+    }
+
+    void sraw(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 792, /*Rc*/ 0));
+    }
+
+    void sld(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 27, /*Rc*/ 0));
+    }
+
+    void srd(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 539, /*Rc*/ 0));
+    }
+
+    void srad(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 794, /*Rc*/ 0));
+    }
+
+    // ===================================================================
     // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
     // D-form compare encodings diverge from the normal X/D shapes: the
     // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved

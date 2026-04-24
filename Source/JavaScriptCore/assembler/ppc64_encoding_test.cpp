@@ -175,6 +175,14 @@ int main()
         { "mulli  3,4,100",            dForm(7, 3, 4, 100),                                  0x1c640064 },
         { "mulli  3,4,-1",             dForm(7, 3, 4, static_cast<uint16_t>(-1)),            0x1c64ffff },
 
+        // Shift-by-register X-form (opcode 31).
+        { "slw  3,4,5",                xForm(31, 4, 3, 5, 24, 0),                            0x7c832830 },
+        { "srw  3,4,5",                xForm(31, 4, 3, 5, 536, 0),                           0x7c832c30 },
+        { "sraw 3,4,5",                xForm(31, 4, 3, 5, 792, 0),                           0x7c832e30 },
+        { "sld  3,4,5",                xForm(31, 4, 3, 5, 27, 0),                            0x7c832836 },
+        { "srd  3,4,5",                xForm(31, 4, 3, 5, 539, 0),                           0x7c832c36 },
+        { "srad 3,4,5",                xForm(31, 4, 3, 5, 794, 0),                           0x7c832e34 },
+
         // Divide XO-form (opcode 31).
         { "divw  3,4,5",               xoForm(31, 3, 4, 5, 0, 491, 0),                       0x7c642bd6 },
         { "divwu 3,4,5",               xoForm(31, 3, 4, 5, 0, 459, 0),                       0x7c642b96 },
