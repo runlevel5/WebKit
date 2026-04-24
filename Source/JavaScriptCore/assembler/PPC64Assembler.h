@@ -606,6 +606,34 @@ public:
         ori(PPC64Registers::r0, PPC64Registers::r0, 0);
     }
 
+    // tw — Trap Word (32-bit compare trap). Power ISA v2.07B §3.3.12,
+    //   X-form, opcode 31, XO=4.
+    //   Encoding: [op=31 | TO(5) | RA(5) | RB(5) | XO=4 | /(1)]
+    //   TO is a 5-bit mask selecting which compare conditions trap
+    //   (LT=16, GT=8, EQ=4, LGT=2, LLT=1; OR them; 31 = unconditional).
+    // Verified 2026-04-25: tw 31,0,0 → 0x7fe00008 (bytes 08 00 e0 7f).
+    void tw(uint32_t to, RegisterID ra, RegisterID rb)
+    {
+        ASSERT(to < 32);
+        // xForm's rtOrRs slot is bits 6-10, same slot used by TO here.
+        // We can't pass `to` directly because xForm takes RegisterID;
+        // rather than adding a new helper for a single instruction,
+        // assemble the encoding inline.
+        insn((31 << 26)
+            | (to << 21)
+            | (registerValue(ra) << 16)
+            | (registerValue(rb) << 11)
+            | (4 << 1));
+    }
+
+    // trap — Simplified mnemonic for `tw 31, 0, 0`: always-trap (0x7fe00008).
+    //   This is the canonical PPC breakpoint / debugger trap; the kernel
+    //   delivers SIGTRAP to the process when this instruction executes.
+    void trap()
+    {
+        tw(31, PPC64Registers::r0, PPC64Registers::r0);
+    }
+
 protected:
     void insn(uint32_t instruction)
     {

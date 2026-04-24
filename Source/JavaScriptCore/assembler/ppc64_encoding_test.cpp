@@ -163,6 +163,11 @@ int main()
         { "lha 3,4(4)",                dForm(42, 3, 4, 4),                                   0xa8640004 },
         { "sth 3,6(4)",                dForm(44, 3, 4, 6),                                   0xb0640006 },
 
+        // tw 31,0,0 (= trap, opcode 31, XO=4, TO=31 = unconditional).
+        // Built inline because the TO slot uses the same bits as our
+        // xForm's rtOrRs (RegisterID typed) parameter.
+        { "trap (tw 31,0,0)",          (31u<<26)|(31u<<21)|(0u<<16)|(0u<<11)|(4u<<1),        0x7fe00008 },
+
         // X-form indexed loads/stores (opcode 31).
         { "ldx  3,4,5",                xForm(31, 3, 4, 5, 21, 0),                            0x7c64282a },
         { "stdx 3,4,5",                xForm(31, 3, 4, 5, 149, 0),                           0x7c64292a },
