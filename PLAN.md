@@ -251,9 +251,34 @@ All 11 failures are expected and explained:
 
 **Verdict**: 10/11 failures are clearly config/environment artifacts, not PPC64 bugs. The one item needing follow-up (`proxy-set-failure-inline-cache.js.bytecode-cache`) should be reproduced on the ARM64 oracle first to rule out an existing bug.
 
+### ARM64 reference oracle cross-check — ✅ DONE 2026-04-23
+
+**Box**: `tle@192.168.64.3` — Fedora 43, aarch64, 8 cores, 7.8 GB RAM.
+
+Built the same C_LOOP JSC with the same flag set (plus `-DENABLE_SAMPLING_PROFILER=OFF` which was required because ARM64 CMake defaults enable the sampling profiler, and that conflicts with `ENABLE_C_LOOP`). Ran:
+
+```sh
+JSCTEST_timeout=60 \
+  Tools/Scripts/run-jsc-stress-tests \
+    --jsc WebKitBuild/JSCOnly/Release/bin/jsc \
+    --no-jit --memory-limited -c 8 \
+    JSTests/stress
+```
+
+(`--memory-limited` skips 119 tests tagged `memoryHog!` to avoid OOM hangs on the 7.8 GB box.)
+
+Result: **17604/17604 PASS, 0 failures.**
+
+**Confirmed PPC64-specific bug**: `proxy-set-failure-inline-cache.js.bytecode-cache`
+- ARM64: PASS (bytecode-cache test helper exits 0)
+- PPC64: FAIL — `Exception: Error: Bad value: 0!` at `shouldBe(setCalls, 1e7)` — `setCalls=0` meaning the proxy set trap is never called during the cache-read pass
+
+The proxy set trap is bypassed entirely when the second `jsc` invocation loads the bytecode from cache. The first run (cache write) passes fine; the second run (cache read) reads back a stale IC state that skips the trap. Likely cause: IC state or cell type is serialized/deserialized incorrectly on PPC64LE (endianness, alignment, or pointer-width issue in the bytecode cache format). Root cause investigation is Phase 1 pre-work — reproduce via the exact `.tests/stress/` symlink tree that the stress runner creates, not via a bare `--useCodeCache` invocation.
+
+Verdict: **10/11 PPC64 failures were config/environment artifacts.** The one true PPC64 bug is `proxy-set-failure-inline-cache.js.bytecode-cache`.
+
 ### What Phase 0 did NOT prove
 
-- **ARM64 reference oracle not built yet** — need to build the same JSC on `tle@192.168.64.3` and cross-check the `proxy-set-failure-inline-cache.js.bytecode-cache` failure.
 - **mimalloc path not attempted** — using system malloc. Switching to mimalloc is a Phase 1 pre-req; test whether it handles 64K pages cleanly.
 
 ### Success criteria
@@ -262,7 +287,7 @@ All 11 failures are expected and explained:
 - ✅ 16/16 smoke-subset stress tests pass under C_LOOP.
 - ✅ Full `JSTests/stress/` run: 17894/17905 pass; all 11 failures explained.
 - ✅ CMake elseif-ordering bug fixed; PPC64LE branch added to `WebKitFeatures.cmake`.
-- ⏳ ARM64 reference oracle cross-check pending.
+- ✅ ARM64 reference oracle cross-check: 17604/17604 PASS; `proxy-set-failure-inline-cache.js.bytecode-cache` confirmed PPC64-specific.
 
 ## Phase 1 — Assembler skeleton + register map
 
@@ -361,11 +386,11 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions
 
-Phase 0 is complete. Remaining items before Phase 1:
+Phase 0 is complete. Proceeding to Phase 1.
 
-1. **ARM64 oracle cross-check.** Build the same C_LOOP JSC on `tle@192.168.64.3` and run `run-jsc-stress-tests --no-jit`. Diff the failure list against PPC64LE's 11 failures. Specifically verify whether `proxy-set-failure-inline-cache.js.bytecode-cache` also fails on ARM64 (pre-existing) or is PPC64-specific.
-2. **Evaluate mimalloc on 64K pages.** Try `-DUSE_MIMALLOC=ON` rebuild. If it works cleanly, update the Phase 0 recipe and drop `USE_SYSTEM_MALLOC=ON`; the PPC64LE `WebKitFeatures.cmake` branch should then default to mimalloc (matching RISCV64/MIPS).
-3. **Start Phase 1** — assembler skeleton (`PPC64Registers.h`, `PPC64Assembler.h`, `MacroAssemblerPPC64.h`) and wire into `MacroAssembler.h` / `TargetAssemblerDefinitions.h`.
+1. **Investigate `proxy-set-failure-inline-cache.js.bytecode-cache` (PPC64 bug).** Reproduce via the exact `.tests/stress/` symlink tree the stress runner creates (the `bytecode-cache-test-helper.sh` script requires that tree — bare `--useCodeCache` invocations don't replicate the same IC state path). Once reproducible, bisect to the bytecode-cache read path in `CodeCache.cpp` / `UnlinkedFunctionExecutable.cpp` looking for endianness or alignment issues on PPC64LE. File a WebKit bug.
+2. **Evaluate mimalloc on 64K pages.** Try `-DUSE_MIMALLOC=ON` rebuild on PPC64 box. If it works cleanly, update the Phase 0 recipe and drop `USE_SYSTEM_MALLOC=ON`; the PPC64LE `WebKitFeatures.cmake` branch should then default to mimalloc (matching RISCV64/MIPS).
+3. **Start Phase 1** — assembler skeleton (`PPC64Registers.h`, `PPC64Assembler.h`, `MacroAssemblerPPC64.h`) and wire into `MacroAssembler.h` / `TargetAssemblerDefinitions.h`. Read `Source/JavaScriptCore/assembler/RISCV64Assembler.h` and `Source/JavaScriptCore/assembler/ARM64Assembler.h` for structure reference before writing any PPC64 code.
 
 ## Appendix — commands cheat sheet
 
