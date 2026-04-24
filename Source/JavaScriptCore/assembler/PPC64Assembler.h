@@ -945,6 +945,96 @@ public:
     }
 
     // ===================================================================
+    // Shift-right-algebraic immediate (signed arithmetic right shift).
+    // Power ISA v2.07B §3.3.11. Sets XER[CA] based on the shifted-out
+    // bits — MacroAssembler::rshift32/rshift64 will typically use these
+    // and then check the carry when it cares about the sign bit.
+    //
+    //   srawi RA, RS, SH — X-form,  opcode 31, XO=824, SH in RB slot (imm)
+    //                      SH is 5 bits (0-31).
+    //   sradi RA, RS, SH — XS-form, opcode 31, XO=413
+    //                      SH is 6 bits (0-63); split into low-5 at bits
+    //                      16-20 and high-1 at bit 30.
+    //
+    // Verified on POWER9:
+    //   srawi 3,4,8  → 0x7c834670
+    //   srawi 3,4,31 → 0x7c83fe70
+    //   sradi 3,4,8  → 0x7c834674
+    //   sradi 3,4,32 → 0x7c830676
+    //   sradi 3,4,63 → 0x7c83fe76
+    // ===================================================================
+    void srawi(RegisterID ra, RegisterID rs, uint32_t sh)
+    {
+        ASSERT(sh < 32);
+        // X-form with SH in the RB slot as an immediate.
+        insn((31u << 26)
+           | (registerValue(rs) << 21)
+           | (registerValue(ra) << 16)
+           | (sh << 11)
+           | (824u << 1));
+    }
+
+    void sradi(RegisterID ra, RegisterID rs, uint32_t sh)
+    {
+        ASSERT(sh < 64);
+        insn(xsForm(31, rs, ra, sh, /*XO*/ 413, /*Rc*/ 0));
+    }
+
+    // ===================================================================
+    // Count-leading-zeros and popcount (X-form, opcode 31, RB slot unused).
+    // Power ISA v2.07B §3.3.14. POWER8 supports all of these natively.
+    //
+    //   cntlzw  RA, RS — XO=26   (count leading zeros,  32-bit)
+    //   cntlzd  RA, RS — XO=58   (count leading zeros,  64-bit)
+    //   popcntb RA, RS — XO=122  (popcount per byte, v2.05+)
+    //   popcntw RA, RS — XO=378  (popcount per word, v2.06+)
+    //   popcntd RA, RS — XO=506  (popcount of full doubleword, v2.06+)
+    //
+    // Verified on POWER9:
+    //   cntlzw  3,4 → 0x7c830034
+    //   cntlzd  3,4 → 0x7c830074
+    //   popcntw 3,4 → 0x7c8302f4
+    //   popcntd 3,4 → 0x7c8303f4
+    //   popcntb 3,4 → 0x7c8300f4
+    // ===================================================================
+    void cntlzw(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 26, /*Rc*/ 0));
+    }
+
+    void cntlzd(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 58, /*Rc*/ 0));
+    }
+
+    void popcntw(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 378, /*Rc*/ 0));
+    }
+
+    void popcntd(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 506, /*Rc*/ 0));
+    }
+
+    void popcntb(RegisterID ra, RegisterID rs)
+    {
+        insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 122, /*Rc*/ 0));
+    }
+
+    // subfic RT, RA, SI — D-form, opcode 8 (Subtract From Immediate Carrying).
+    //   RT <- sign_extend(SI) - RA. Sets XER[CA] based on the result.
+    //   Useful for "immediate - register" patterns (addi can only do
+    //   "register + immediate") and for negating via subfic RT, RA, 0.
+    // Verified on POWER9:
+    //   subfic 3,4,100 → 0x20640064
+    //   subfic 3,4,-1  → 0x2064ffff
+    void subfic(RegisterID rt, RegisterID ra, int16_t si)
+    {
+        insn(dForm(8, rt, ra, static_cast<uint16_t>(si)));
+    }
+
+    // ===================================================================
     // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
     // D-form compare encodings diverge from the normal X/D shapes: the
     // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved
@@ -1315,6 +1405,31 @@ protected:
              | (registerValue(rb) << 11)
              | (mb << 6)
              | (me << 1)
+             | rc;
+    }
+
+    // XS-form: [op(6) | RS(5) | RA(5) | sh[0:4](5) | XO(9) | sh2(1) | Rc(1)]
+    //
+    // Power ISA v2.07B Book I §1.6.1. Used only by sradi and siblings
+    // (the 64-bit shift-right-algebraic-immediate). Like MD-form the
+    // 6-bit shift is split — low 5 at instruction bits 16-20, high 1
+    // at bit 30 — but unlike MD-form there is no mb field, so XO gets
+    // 9 bits at instruction bits 21-29.
+    static constexpr uint32_t xsForm(uint32_t opcode, RegisterID rs, RegisterID ra,
+                                     uint32_t sh, uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(sh < 64);
+        ASSERT(xo < 512);
+        ASSERT(rc < 2);
+        uint32_t shLow5 = sh & 0x1F;
+        uint32_t sh2 = (sh >> 5) & 1;
+        return (opcode << 26)
+             | (registerValue(rs) << 21)
+             | (registerValue(ra) << 16)
+             | (shLow5 << 11)
+             | (xo << 2)
+             | (sh2 << 1)
              | rc;
     }
 

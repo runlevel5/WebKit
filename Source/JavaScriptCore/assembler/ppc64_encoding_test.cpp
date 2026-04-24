@@ -92,6 +92,18 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t xsForm(uint32_t opcode, RegID rs, RegID ra,
+                                 uint32_t sh, uint32_t xo, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(sh < 64);
+    assert(xo < 512);
+    assert(rc < 2);
+    uint32_t shLow5 = sh & 0x1F;
+    uint32_t sh2 = (sh >> 5) & 1;
+    return (opcode << 26) | (rs << 21) | (ra << 16) | (shLow5 << 11) | (xo << 2) | (sh2 << 1) | rc;
+}
+
 static constexpr uint32_t mFormImm(uint32_t opcode, RegID rs, RegID ra,
                                    uint32_t sh, uint32_t mb, uint32_t me, uint32_t rc)
 {
@@ -318,6 +330,26 @@ int main()
         { "divwu 3,4,5",               xoForm(31, 3, 4, 5, 0, 459, 0),                       0x7c642b96 },
         { "divd  3,4,5",               xoForm(31, 3, 4, 5, 0, 489, 0),                       0x7c642bd2 },
         { "divdu 3,4,5",               xoForm(31, 3, 4, 5, 0, 457, 0),                       0x7c642b92 },
+
+        // Count-leading-zeros / popcount X-form (opcode 31, RB slot=0).
+        { "cntlzw  3,4",               xForm(31, 4, 3, 0, 26,  0),                           0x7c830034 },
+        { "cntlzd  3,4",               xForm(31, 4, 3, 0, 58,  0),                           0x7c830074 },
+        { "popcntw 3,4",               xForm(31, 4, 3, 0, 378, 0),                           0x7c8302f4 },
+        { "popcntd 3,4",               xForm(31, 4, 3, 0, 506, 0),                           0x7c8303f4 },
+        { "popcntb 3,4",               xForm(31, 4, 3, 0, 122, 0),                           0x7c8300f4 },
+
+        // srawi (X-form, SH as immediate in RB slot).
+        { "srawi 3,4,8",               xForm(31, 4, 3, 8, 824, 0),                           0x7c834670 },
+        { "srawi 3,4,31",              xForm(31, 4, 3, 31, 824, 0),                          0x7c83fe70 },
+
+        // sradi (XS-form, split SH, XO=413, 9 bits).
+        { "sradi 3,4,8",               xsForm(31, 4, 3, 8,  413, 0),                         0x7c834674 },
+        { "sradi 3,4,32",              xsForm(31, 4, 3, 32, 413, 0),                         0x7c830676 },
+        { "sradi 3,4,63",              xsForm(31, 4, 3, 63, 413, 0),                         0x7c83fe76 },
+
+        // subfic D-form (opcode 8).
+        { "subfic 3,4,100",            dForm(8, 3, 4, 100),                                  0x20640064 },
+        { "subfic 3,4,-1",             dForm(8, 3, 4, static_cast<uint16_t>(-1)),            0x2064ffff },
 
         // M-form 32-bit rotate-and-mask. Simple 5-bit MB/ME, no swap.
         { "rlwinm 3,4,8,0,31",         mFormImm(21, 4, 3, 8,  0,  31, 0),                    0x5483403e },
