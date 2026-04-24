@@ -291,6 +291,46 @@ public:
     void mtctr(RegisterID rs) { mtspr(SPR_CTR, rs); }
 
     // ===================================================================
+    // Logical instructions (X-form). Power ISA v2.07B §3.3.9. Note: the
+    // assembler mnemonics `and`, `or`, `xor` are C++ alternative-operator
+    // tokens (reserved keywords), so our methods use trailing underscores.
+    // In Power ISA X-form notation the 5-bit slot at bits 6-10 is the
+    // source register (RS), and bits 11-15 hold the destination (RA) —
+    // the reverse of arithmetic XO-form where bits 6-10 are RT (dest).
+    // ===================================================================
+
+    // and_ — AND. Opcode 31, XO=28, Rc=0.
+    //   Encoding: [op=31 | RS(5) | RA(5) | RB(5) | XO=28 | Rc=0]
+    //   Semantics: RA <- RS & RB.
+    // Verified 2026-04-25: and 3,4,5 → 0x7c832838 (bytes 38 28 83 7c)
+    void and_(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 28, /*Rc*/ 0));
+    }
+
+    // or_ — OR. Opcode 31, XO=444, Rc=0.
+    // Verified: or 3,4,5 → 0x7c832b78 (bytes 78 2b 83 7c)
+    void or_(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 444, /*Rc*/ 0));
+    }
+
+    // xor_ — XOR. Opcode 31, XO=316, Rc=0.
+    // Verified: xor 3,4,5 → 0x7c832a78 (bytes 78 2a 83 7c)
+    void xor_(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 316, /*Rc*/ 0));
+    }
+
+    // mr — Move Register. Simplified mnemonic for `or_ RA, RS, RS`.
+    //   Semantics: RA <- RS.
+    // Verified: mr 7,8 → 0x7d074378 (bytes 78 43 07 7d)
+    void mr(RegisterID ra, RegisterID rs)
+    {
+        or_(ra, rs, rs);
+    }
+
+    // ===================================================================
     // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
     // D-form compare encodings diverge from the normal X/D shapes: the
     // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved
@@ -478,6 +518,25 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // X-form: [op(6) | RS(5) | RA(5) | RB(5) | XO(10) | Rc(1)]
+    // Power ISA v2.07B Book I §1.6.1. Differs from XO-form in two ways:
+    // (1) no OE bit at position 21, so XO occupies the full 10 bits at
+    // positions 21-30; (2) for logical ops, the 5-bit slot at bits 6-10
+    // is the source register RS and bits 11-15 are the destination RA.
+    // Callers must pass registers in that order.
+    static constexpr uint32_t xForm(uint32_t opcode, RegisterID rs, RegisterID ra, RegisterID rb, uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 1024);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (registerValue(rs) << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (xo << 1)
+             | rc;
     }
 
     // Compare X-form: [op(6) | BF(3) | /(1) | L(1) | RA(5) | RB(5) | XO(10) | /(1)]
