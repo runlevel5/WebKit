@@ -92,6 +92,25 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t cmpXForm(uint32_t opcode, uint32_t bf, uint32_t l,
+                                   RegID ra, RegID rb, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(bf < 8);
+    assert(l < 2);
+    assert(xo < 1024);
+    return (opcode << 26) | (bf << 23) | (l << 21) | (ra << 16) | (rb << 11) | (xo << 1);
+}
+
+static constexpr uint32_t cmpDForm(uint32_t opcode, uint32_t bf, uint32_t l,
+                                   RegID ra, uint16_t imm)
+{
+    assert(opcode < 64);
+    assert(bf < 8);
+    assert(l < 2);
+    return (opcode << 26) | (bf << 23) | (l << 21) | (ra << 16) | imm;
+}
+
 struct Test {
     const char* mnemonic;
     uint32_t encoding;
@@ -147,6 +166,20 @@ int main()
 
         // B-form (opcode 16 = bc). beq = BO 12 (branch-if-CR[BI]=1), BI 2 (CR0.EQ).
         { "beq  .-12 (bc 12,2,-12)",   bForm(16, 12, 2, -12, 0, 0),                          0x4182fff4 },
+
+        // Compare X-form (opcode 31, XO=0 = cmp, XO=32 = cmpl). L=1 for
+        // 64-bit (cmpd/cmpld), L=0 for 32-bit (cmpw/cmplw).
+        { "cmpd  0,3,4",               cmpXForm(31, 0, 1, 3, 4, 0),                          0x7c232000 },
+        { "cmpd  7,3,4",               cmpXForm(31, 7, 1, 3, 4, 0),                          0x7fa32000 },
+        { "cmpw  0,3,4",               cmpXForm(31, 0, 0, 3, 4, 0),                          0x7c032000 },
+        { "cmpld 0,3,4",               cmpXForm(31, 0, 1, 3, 4, 32),                         0x7c232040 },
+
+        // Compare D-form (opcode 11 = cmpi signed, opcode 10 = cmpli unsigned).
+        { "cmpdi  0,3,0",              cmpDForm(11, 0, 1, 3, 0),                             0x2c230000 },
+        { "cmpdi  0,3,-1",             cmpDForm(11, 0, 1, 3, static_cast<uint16_t>(-1)),     0x2c23ffff },
+        { "cmpdi  7,3,100",            cmpDForm(11, 7, 1, 3, 100),                           0x2fa30064 },
+        { "cmpldi 0,3,100",            cmpDForm(10, 0, 1, 3, 100),                           0x28230064 },
+        { "cmpwi  0,3,42",             cmpDForm(11, 0, 0, 3, 42),                            0x2c03002a },
 
         // XL-form (opcode 19, XO=16 = bclr, XO=528 = bcctr).
         { "blr   (= bclr 20,0,0)",     xlForm(19, 20, 0, 0, 16, 0),                          0x4e800020 },
