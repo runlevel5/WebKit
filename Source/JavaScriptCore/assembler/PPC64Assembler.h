@@ -450,6 +450,106 @@ public:
     }
 
     // ===================================================================
+    // Floating-point arithmetic (A-form). Power ISA v2.07B §3.3.4.
+    // A-form layout: [op(6) | FRT | FRA | FRB | FRC | XO(5) | Rc]
+    // Note the extra 5-bit FRC slot at bits 21-25, which is used by
+    // fmul/fmuls (as the second source) and by the 4-operand fused
+    // multiply-add family. For fadd/fsub/fdiv it's unused (set to 0).
+    //
+    // opcode 63 = double-precision, opcode 59 = single-precision.
+    // Single-precision ops round to single after computing in double.
+    //
+    //   fadd  / fadds   XO=21  FRT, FRA, FRB    (FRC unused)
+    //   fsub  / fsubs   XO=20  FRT, FRA, FRB    (FRC unused)
+    //   fmul  / fmuls   XO=25  FRT, FRA, FRC    (FRB unused)
+    //   fdiv  / fdivs   XO=18  FRT, FRA, FRB    (FRC unused)
+    //   fmadd           XO=29  FRT, FRA, FRC, FRB  (fused multiply-add)
+    //
+    // Verified on POWER9:
+    //   fadd  f3,f4,f5     → 0xfc64282a
+    //   fsub  f3,f4,f5     → 0xfc642828
+    //   fmul  f3,f4,f5     → 0xfc640172  (FRB=0, FRC=5)
+    //   fdiv  f3,f4,f5     → 0xfc642824
+    //   fadds f3,f4,f5     → 0xec64282a
+    //   fsubs f3,f4,f5     → 0xec642828
+    //   fmuls f3,f4,f5     → 0xec640172
+    //   fdivs f3,f4,f5     → 0xec642824
+    //   fmadd f3,f4,f5,f6  → 0xfc64317a  (FRA=4, FRB=6, FRC=5)
+    // ===================================================================
+
+    void fadd(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(63, frt, fra, frb, PPC64Registers::f0, /*XO*/ 21, /*Rc*/ 0));
+    }
+
+    void fsub(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(63, frt, fra, frb, PPC64Registers::f0, /*XO*/ 20, /*Rc*/ 0));
+    }
+
+    void fmul(FPRegisterID frt, FPRegisterID fra, FPRegisterID frc)
+    {
+        insn(aForm(63, frt, fra, PPC64Registers::f0, frc, /*XO*/ 25, /*Rc*/ 0));
+    }
+
+    void fdiv(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(63, frt, fra, frb, PPC64Registers::f0, /*XO*/ 18, /*Rc*/ 0));
+    }
+
+    void fadds(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(59, frt, fra, frb, PPC64Registers::f0, /*XO*/ 21, /*Rc*/ 0));
+    }
+
+    void fsubs(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(59, frt, fra, frb, PPC64Registers::f0, /*XO*/ 20, /*Rc*/ 0));
+    }
+
+    void fmuls(FPRegisterID frt, FPRegisterID fra, FPRegisterID frc)
+    {
+        insn(aForm(59, frt, fra, PPC64Registers::f0, frc, /*XO*/ 25, /*Rc*/ 0));
+    }
+
+    void fdivs(FPRegisterID frt, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(aForm(59, frt, fra, frb, PPC64Registers::f0, /*XO*/ 18, /*Rc*/ 0));
+    }
+
+    // fmadd  FRT, FRA, FRC, FRB  → FRT <- (FRA × FRC) + FRB (fused).
+    void fmadd(FPRegisterID frt, FPRegisterID fra, FPRegisterID frc, FPRegisterID frb)
+    {
+        insn(aForm(63, frt, fra, frb, frc, /*XO*/ 29, /*Rc*/ 0));
+    }
+
+    // ===================================================================
+    // Floating-point unary ops (X-form, opcode 63). FRA slot is unused
+    // (encoded as f0). Power ISA v2.07B §3.3.5.
+    //   fneg FRT, FRB — XO=40   (FRT <- -FRB)
+    //   fabs FRT, FRB — XO=264  (FRT <- |FRB|)
+    //   fmr  FRT, FRB — XO=72   (FRT <- FRB — move)
+    // Verified on POWER9:
+    //   fneg 3,4 → 0xfc602050
+    //   fabs 3,4 → 0xfc602210
+    //   fmr  3,4 → 0xfc602090
+    // ===================================================================
+    void fneg(FPRegisterID frt, FPRegisterID frb)
+    {
+        insn(xFormFp(63, frt, PPC64Registers::f0, frb, /*XO*/ 40, /*Rc*/ 0));
+    }
+
+    void fabs(FPRegisterID frt, FPRegisterID frb)
+    {
+        insn(xFormFp(63, frt, PPC64Registers::f0, frb, /*XO*/ 264, /*Rc*/ 0));
+    }
+
+    void fmr(FPRegisterID frt, FPRegisterID frb)
+    {
+        insn(xFormFp(63, frt, PPC64Registers::f0, frb, /*XO*/ 72, /*Rc*/ 0));
+    }
+
+    // ===================================================================
     // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
     // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
     // from a register (RB) rather than an immediate. Opcode 31 with
@@ -1153,6 +1253,44 @@ protected:
              | (fprValue(frtOrFrs) << 21)
              | (registerValue(ra) << 16)
              | imm;
+    }
+
+    // A-form (FP arithmetic):
+    //   [op(6) | FRT(5) | FRA(5) | FRB(5) | FRC(5) | XO(5) | Rc(1)]
+    // Power ISA v2.07B Book I §1.6.1. Differs from X-form in that the
+    // 10-bit XO slot (bits 21-30) is split into a 5-bit FRC at 21-25
+    // and a 5-bit XO at 26-30. This is the encoding used by every
+    // multi-operand FP arithmetic instruction.
+    static constexpr uint32_t aForm(uint32_t opcode, FPRegisterID frt, FPRegisterID fra,
+                                    FPRegisterID frb, FPRegisterID frc,
+                                    uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 32);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (fprValue(frt) << 21)
+             | (fprValue(fra) << 16)
+             | (fprValue(frb) << 11)
+             | (fprValue(frc) << 6)
+             | (xo << 1)
+             | rc;
+    }
+
+    // FP X-form: same bit layout as GPR X-form, FPR indices in the
+    // RT/RS/RA/RB slots.
+    static constexpr uint32_t xFormFp(uint32_t opcode, FPRegisterID frtOrFrs, FPRegisterID fra,
+                                      FPRegisterID frb, uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 1024);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (fprValue(frtOrFrs) << 21)
+             | (fprValue(fra) << 16)
+             | (fprValue(frb) << 11)
+             | (xo << 1)
+             | rc;
     }
 
 private:
