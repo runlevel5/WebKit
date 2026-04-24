@@ -92,6 +92,15 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t aForm(uint32_t opcode, RegID frt, RegID fra, RegID frb, RegID frc,
+                                uint32_t xo, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(xo < 32);
+    assert(rc < 2);
+    return (opcode << 26) | (frt << 21) | (fra << 16) | (frb << 11) | (frc << 6) | (xo << 1) | rc;
+}
+
 static constexpr uint32_t mdForm(uint32_t opcode, RegID rs, RegID ra,
                                  uint32_t sh, uint32_t mbOrMe, uint32_t xo, uint32_t rc)
 {
@@ -224,6 +233,23 @@ int main()
 
         // rldimi opcode 30, XO=3.
         { "rldimi 3,4,8,0",                mdForm(30, 4, 3, 8, 0,  3, 0),                     0x7883400c },
+
+        // FP A-form arithmetic. opcode 63 = double, opcode 59 = single.
+        // For fadd/fsub/fdiv FRC=0, for fmul FRB=0. fmadd uses all four.
+        { "fadd  3,4,5",               aForm(63, 3, 4, 5, 0, 21, 0),                         0xfc64282a },
+        { "fsub  3,4,5",               aForm(63, 3, 4, 5, 0, 20, 0),                         0xfc642828 },
+        { "fmul  3,4,5",               aForm(63, 3, 4, 0, 5, 25, 0),                         0xfc640172 },
+        { "fdiv  3,4,5",               aForm(63, 3, 4, 5, 0, 18, 0),                         0xfc642824 },
+        { "fadds 3,4,5",               aForm(59, 3, 4, 5, 0, 21, 0),                         0xec64282a },
+        { "fsubs 3,4,5",               aForm(59, 3, 4, 5, 0, 20, 0),                         0xec642828 },
+        { "fmuls 3,4,5",               aForm(59, 3, 4, 0, 5, 25, 0),                         0xec640172 },
+        { "fdivs 3,4,5",               aForm(59, 3, 4, 5, 0, 18, 0),                         0xec642824 },
+        { "fmadd 3,4,5,6",             aForm(63, 3, 4, 6, 5, 29, 0),                         0xfc64317a },
+
+        // FP unary X-form (opcode 63). FRA slot = 0 (unused).
+        { "fneg 3,4",                  xForm(63, 3, 0, 4, 40,  0),                           0xfc602050 },
+        { "fabs 3,4",                  xForm(63, 3, 0, 4, 264, 0),                           0xfc602210 },
+        { "fmr  3,4",                  xForm(63, 3, 0, 4, 72,  0),                           0xfc602090 },
 
         // FP load/store D-form. RT/RS slot holds an FPR number; bit layout
         // is otherwise identical to GPR D-form so we just use dForm() with
