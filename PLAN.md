@@ -247,9 +247,9 @@ All 11 failures are expected and explained:
 | `map-forEach.js` | default, bytecode-cache, mini-mode, lockdown | `ReferenceError: Can't find variable: WebAssembly` | We built with `-DENABLE_WEBASSEMBLY=OFF`; remove this flag to fix |
 | `many-substrings-of-rope-shouldnt-use-excessive-memory.js` | default | Expected ≤7 MB but used 25 MB | **PPC64LE 64K pages**: allocations rounded to 64 KB; threshold is tuned for 4K-page platforms |
 | `codeblock-destructor-access-unlinkedcodeblock.js` | default | SIGTERM (timeout) | Test has `//@ skip if $cloop` — the runner doesn't auto-skip, C_LOOP is too slow for the 3s test window |
-| `proxy-set-failure-inline-cache.js` | bytecode-cache only | `shouldBe(setCalls, 1e7)` → `setCalls=0` | Only fails in bytecode-cache mode. **Needs ARM64 oracle cross-check** — may be a pre-existing non-PPC bug in the bytecode-cache IC path |
+| `proxy-set-failure-inline-cache.js` | bytecode-cache only | `shouldBe(setCalls, 1e7)` → `setCalls=0` | **Upstream cross-platform JSC bytecode-cache race** — see dedicated section below. Happens on ARM64 too at sufficient concurrency. Not PPC64-specific. |
 
-**Verdict**: 10/11 failures are clearly config/environment artifacts, not PPC64 bugs. The one item needing follow-up (`proxy-set-failure-inline-cache.js.bytecode-cache`) should be reproduced on the ARM64 oracle first to rule out an existing bug.
+**Verdict**: all 11 failures are either config/environment artifacts or (in the case of `proxy-set-failure-inline-cache.js.bytecode-cache`) an upstream cross-platform JSC bug. Zero PPC64-specific regressions found.
 
 ### ARM64 reference oracle cross-check — ✅ DONE 2026-04-23
 
@@ -267,15 +267,51 @@ JSCTEST_timeout=60 \
 
 (`--memory-limited` skips 119 tests tagged `memoryHog!` to avoid OOM hangs on the 7.8 GB box.)
 
-Result: **17604/17604 PASS, 0 failures.**
+Result: **17604/17604 PASS, 0 failures** at the default runner concurrency level (`-c 8`).
 
-**Confirmed PPC64-specific bug**: `proxy-set-failure-inline-cache.js.bytecode-cache`
-- ARM64: PASS (bytecode-cache test helper exits 0)
-- PPC64: FAIL — `Exception: Error: Bad value: 0!` at `shouldBe(setCalls, 1e7)` — `setCalls=0` meaning the proxy set trap is never called during the cache-read pass
+Initial verdict of "PPC64-specific bug" for `proxy-set-failure-inline-cache.js.bytecode-cache` was **wrong** — see next section. It reproduces on ARM64 too once concurrency is high enough.
 
-The proxy set trap is bypassed entirely when the second `jsc` invocation loads the bytecode from cache. The first run (cache write) passes fine; the second run (cache read) reads back a stale IC state that skips the trap. Likely cause: IC state or cell type is serialized/deserialized incorrectly on PPC64LE (endianness, alignment, or pointer-width issue in the bytecode cache format). Root cause investigation is Phase 1 pre-work — reproduce via the exact `.tests/stress/` symlink tree that the stress runner creates, not via a bare `--useCodeCache` invocation.
+### Upstream cross-platform bug: bytecode-cache race under concurrent writers — investigated 2026-04-24
 
-Verdict: **10/11 PPC64 failures were config/environment artifacts.** The one true PPC64 bug is `proxy-set-failure-inline-cache.js.bytecode-cache`.
+`proxy-set-failure-inline-cache.js.bytecode-cache` appeared as a single PPC64 failure in the original `-c 16` stress run. Further investigation showed it is **a cross-platform JSC bug in the bytecode cache serialization path, not PPC64-specific**.
+
+**Reproducer** (works on both PPC64LE POWER9 and ARM64 Fedora 43):
+```sh
+# Copy the test 20× and run 20 parallel workers, each doing a pass-1 cache write + pass-2 forceDiskCache read
+for i in $(seq 1 20); do mkdir -p w$i; done
+for i in $(seq 1 20); do
+  ( JSC_diskCachePath=$(pwd)/w$i ./jsc proxy-set-failure-inline-cache.js > /dev/null
+    JSC_diskCachePath=$(pwd)/w$i JSC_forceDiskCache=true ./jsc proxy-set-failure-inline-cache.js > w-$i.out 2>&1
+  ) &
+done
+wait
+# Both platforms: 20/20 FAIL with `Exception: Error: Bad value: 0!`
+```
+
+**Root cause, narrowed** (not fully diagnosed):
+Diffing the cache files written under sequential vs concurrent pass-1 runs (`jsc -d` on the cached bytecode):
+
+| | Sequential (good) | Concurrent (bad) |
+|---|---|---|
+| PPC64LE cache size | 15024 B | 16992 B |
+| ARM64 cache size | 15024 B | 15808 B |
+| Proxy `set` handler bytecode | 7 insns / 134 bytes / 5 params | **3 insns / 5 bytes / 1 param** |
+
+On both platforms, the Proxy handler's `set` method is serialized as an **empty stub function** (body ≈ `function() { return undefined; }`) when pass-1 runs alongside other pass-1 instances. On the forceDiskCache pass-2, loading that stub makes `proxy.foo = i` trigger a no-op `set` trap that returns `undefined` (falsy). The caller is non-strict, so the falsy return is silent — the loop completes with `setCalls === 0` and the assertion fails.
+
+**What's been ruled out**:
+- Not LLInt IC caching (`--useLLIntICs=false` still fails 20/20)
+- Not concurrent JIT (`--useConcurrentJIT=false` still fails)
+- Not concurrent GC / marker threads (`--useConcurrentGC=false --numberOfGCMarkers=1` still fails)
+- Not CPU affinity (`taskset` per-core still fails 19/20)
+- Not specific to identical sources — 20 copies with distinct-but-equivalent source content all fail
+- Not specific to PPC64LE — ARM64 aarch64 fails identically
+
+**What triggers it**: the specific 4-block structure of the real test (IIFE with Proxy + `shouldThrow` with Proxy, each with a 1e7 loop). Simpler proxy tests — even with identical concurrency load — do not reproduce it. Reduced 1-block or 2-block versions pass 20/20.
+
+**Why we never saw this on the ARM64 oracle run**: the default stress runner concurrency is `-c 8` (one worker per core on the 8-core aarch64 box). At that level, the 17904-test batch hits the race rarely enough that this specific test happens to not land in a racing window. On the 32-core POWER9 box running `-c 16`, the race is likelier per-batch but still sporadic (we saw 1 of 17905 test instances fail). The reproducer amplifies it by running 20 identical racing pass-1 writers at once.
+
+**Status**: not a blocker for the PPC64 port. All 11 PPC64 failures from the original stress run are now accounted for (10 config/environment + 1 upstream cross-platform race). Will be reported to WebKit upstream separately; does not need resolution before Phase 1 starts.
 
 ### What Phase 0 did NOT prove
 
@@ -287,7 +323,8 @@ Verdict: **10/11 PPC64 failures were config/environment artifacts.** The one tru
 - ✅ 16/16 smoke-subset stress tests pass under C_LOOP.
 - ✅ Full `JSTests/stress/` run: 17894/17905 pass; all 11 failures explained.
 - ✅ CMake elseif-ordering bug fixed; PPC64LE branch added to `WebKitFeatures.cmake`.
-- ✅ ARM64 reference oracle cross-check: 17604/17604 PASS; `proxy-set-failure-inline-cache.js.bytecode-cache` confirmed PPC64-specific.
+- ✅ ARM64 reference oracle cross-check: 17604/17604 PASS at default concurrency.
+- ✅ `proxy-set-failure-inline-cache.js.bytecode-cache` root-cause investigation: cross-platform JSC upstream race, not a PPC64 port issue. Zero PPC64-specific bugs identified in Phase 0.
 
 ## Phase 1 — Assembler skeleton + register map
 
@@ -386,11 +423,11 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions
 
-Phase 0 is complete. Proceeding to Phase 1.
+Phase 0 is complete with zero PPC64-specific blockers. Proceeding to Phase 1.
 
-1. **Investigate `proxy-set-failure-inline-cache.js.bytecode-cache` (PPC64 bug).** Reproduce via the exact `.tests/stress/` symlink tree the stress runner creates (the `bytecode-cache-test-helper.sh` script requires that tree — bare `--useCodeCache` invocations don't replicate the same IC state path). Once reproducible, bisect to the bytecode-cache read path in `CodeCache.cpp` / `UnlinkedFunctionExecutable.cpp` looking for endianness or alignment issues on PPC64LE. File a WebKit bug.
-2. **Evaluate mimalloc on 64K pages.** Try `-DUSE_MIMALLOC=ON` rebuild on PPC64 box. If it works cleanly, update the Phase 0 recipe and drop `USE_SYSTEM_MALLOC=ON`; the PPC64LE `WebKitFeatures.cmake` branch should then default to mimalloc (matching RISCV64/MIPS).
-3. **Start Phase 1** — assembler skeleton (`PPC64Registers.h`, `PPC64Assembler.h`, `MacroAssemblerPPC64.h`) and wire into `MacroAssembler.h` / `TargetAssemblerDefinitions.h`. Read `Source/JavaScriptCore/assembler/RISCV64Assembler.h` and `Source/JavaScriptCore/assembler/ARM64Assembler.h` for structure reference before writing any PPC64 code.
+1. **Evaluate mimalloc on 64K pages.** Try `-DUSE_MIMALLOC=ON` rebuild on PPC64 box. If it works cleanly, update the Phase 0 recipe and drop `USE_SYSTEM_MALLOC=ON`; the PPC64LE `WebKitFeatures.cmake` branch should then default to mimalloc (matching RISCV64/MIPS).
+2. **Start Phase 1** — assembler skeleton (`PPC64Registers.h`, `PPC64Assembler.h`, `MacroAssemblerPPC64.h`) and wire into `MacroAssembler.h` / `TargetAssemblerDefinitions.h`. Read `Source/JavaScriptCore/assembler/RISCV64Assembler.h` and `Source/JavaScriptCore/assembler/ARM64Assembler.h` for structure reference before writing any PPC64 code.
+3. **Upstream bytecode-cache race** — out-of-band, not a port-work item. Report to WebKit upstream with the reproducer documented in the "Upstream cross-platform bug" section above.
 
 ## Appendix — commands cheat sheet
 
