@@ -209,6 +209,44 @@ public:
         insn(dsForm(62, rs, ra, byteOffset, /*XO*/ 0));
     }
 
+    // Special-Purpose Register numbers used by mfspr/mtspr (Power ISA v2.07B
+    // Book III §4.4.4 / Book I Appendix E). Only the SPRs we actually emit are
+    // listed; more will be added as needed.
+    static constexpr uint32_t SPR_XER = 1;
+    static constexpr uint32_t SPR_LR  = 8;
+    static constexpr uint32_t SPR_CTR = 9;
+
+    // mfspr — Move From Special-Purpose Register. Power ISA v2.07B §3.3.15,
+    //   XFX-form, opcode 31, XO=339.
+    //   Encoding: [op(6)=31 | RT(5) | spr(10) | XO(10)=339 | 0(1)]
+    //   The 10-bit spr field stores the SPR number with its two 5-bit halves
+    //   swapped: sprField = (spr_num[0:4] << 5) | spr_num[5:9]. For SPR#8 (LR)
+    //   this gives sprField = 0x100 (= 256); for SPR#9 (CTR), sprField = 0x120
+    //   (= 288).
+    // Verified 2026-04-24 on POWER9:
+    //   mflr  3 → mfspr 3,8 → 0x7c6802a6 (bytes a6 02 68 7c)
+    //   mfctr 3 → mfspr 3,9 → 0x7c6902a6 (bytes a6 02 69 7c)
+    void mfspr(RegisterID rt, uint32_t sprNum)
+    {
+        insn(xfxForm(31, rt, sprNum, /*XO*/ 339));
+    }
+
+    // mtspr — Move To Special-Purpose Register. Power ISA v2.07B §3.3.15,
+    //   XFX-form, opcode 31, XO=467. Same spr-field encoding as mfspr.
+    // Verified 2026-04-24 on POWER9:
+    //   mtlr  3 → mtspr 8,3 → 0x7c6803a6 (bytes a6 03 68 7c)
+    //   mtctr 3 → mtspr 9,3 → 0x7c6903a6 (bytes a6 03 69 7c)
+    void mtspr(uint32_t sprNum, RegisterID rs)
+    {
+        insn(xfxForm(31, rs, sprNum, /*XO*/ 467));
+    }
+
+    // Convenience wrappers for the SPRs JSC uses most.
+    void mflr(RegisterID rt)  { mfspr(rt, SPR_LR); }
+    void mtlr(RegisterID rs)  { mtspr(SPR_LR, rs); }
+    void mfctr(RegisterID rt) { mfspr(rt, SPR_CTR); }
+    void mtctr(RegisterID rs) { mtspr(SPR_CTR, rs); }
+
     // nop — Power ISA v2.07B §3.3.1.1 defines the preferred nop as
     //   `ori 0, 0, 0` → 0x60000000. Verified: `echo "nop" | as` emits
     //   the same bytes (00 00 00 60).
@@ -254,6 +292,23 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // XFX-form: [op(6) | RT/RS(5) | spr(10) | XO(10) | /(1)]
+    // See Power ISA v2.07B Book I §1.6.1 Figure 3. The 10-bit spr field at
+    // bits 11-20 encodes the SPR number with its two 5-bit halves swapped:
+    //   sprField = ((sprNum & 0x1F) << 5) | ((sprNum >> 5) & 0x1F)
+    // Bit 31 is reserved and must be 0.
+    static constexpr uint32_t xfxForm(uint32_t opcode, RegisterID rtOrRs, uint32_t sprNum, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(sprNum < 1024);
+        ASSERT(xo < 1024);
+        uint32_t sprField = ((sprNum & 0x1F) << 5) | ((sprNum >> 5) & 0x1F);
+        return (opcode << 26)
+             | (registerValue(rtOrRs) << 21)
+             | (sprField << 11)
+             | (xo << 1);
     }
 
     static constexpr uint32_t xoForm(uint32_t opcode, RegisterID rt, RegisterID ra, RegisterID rb,
