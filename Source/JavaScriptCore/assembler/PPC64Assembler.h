@@ -631,6 +631,71 @@ public:
     }
 
     // ===================================================================
+    // Rotate-and-mask (MD-form). Power ISA v2.07B §3.3.13. Four fused
+    // ops that rotate a 64-bit RS left by an immediate amount and then
+    // mask the result — the workhorses for 64-bit immediate shifts,
+    // field extraction, and field insertion.
+    //
+    //   rldicl RA, RS, SH, MB — opcode 30, XO=0 (rotate then clear left)
+    //   rldicr RA, RS, SH, ME — opcode 30, XO=1 (rotate then clear right)
+    //   rldic  RA, RS, SH, MB — opcode 30, XO=2 (rotate, clear left, clear bits outside SH)
+    //   rldimi RA, RS, SH, MB — opcode 30, XO=3 (rotate then mask-insert)
+    //
+    // Simplified mnemonics callers will actually use:
+    //   sldi  RA, RS, n = rldicr RA, RS, n,    63-n   (shift left  doubleword imm)
+    //   srdi  RA, RS, n = rldicl RA, RS, 64-n, n      (shift right doubleword imm, logical)
+    //   clrldi RA, RS, n = rldicl RA, RS, 0,   n      (clear high n bits)
+    //   clrrdi RA, RS, n = rldicr RA, RS, 0,   63-n   (clear low  n bits)
+    //
+    // Verified on POWER9 (see ppc64_encoding_test.cpp for exact hex).
+    // ===================================================================
+
+    void rldicl(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb)
+    {
+        insn(mdForm(30, rs, ra, sh, mb, /*XO*/ 0, /*Rc*/ 0));
+    }
+
+    void rldicr(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t me)
+    {
+        insn(mdForm(30, rs, ra, sh, me, /*XO*/ 1, /*Rc*/ 0));
+    }
+
+    void rldic(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb)
+    {
+        insn(mdForm(30, rs, ra, sh, mb, /*XO*/ 2, /*Rc*/ 0));
+    }
+
+    void rldimi(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb)
+    {
+        insn(mdForm(30, rs, ra, sh, mb, /*XO*/ 3, /*Rc*/ 0));
+    }
+
+    // Simplified mnemonics.
+    void sldi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 64);
+        rldicr(ra, rs, n, 63 - n);
+    }
+
+    void srdi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 64);
+        rldicl(ra, rs, (64 - n) % 64, n);
+    }
+
+    void clrldi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 64);
+        rldicl(ra, rs, 0, n);
+    }
+
+    void clrrdi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 64);
+        rldicr(ra, rs, 0, 63 - n);
+    }
+
+    // ===================================================================
     // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
     // D-form compare encodings diverge from the normal X/D shapes: the
     // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved
@@ -846,6 +911,43 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // MD-form: [op(6) | RS(5) | RA(5) | sh[0:4](5) | mb/me(6) | XO(3) | sh2(1) | Rc(1)]
+    //
+    // Power ISA v2.07B Book I §1.6.1. The 6-bit shift is SPLIT: bits 0-4
+    // (low 5) live at instruction bits 16-20, bit 5 (high) lives at
+    // instruction bit 30 (the "sh2" slot).
+    //
+    // The mb/me 6-bit mask-boundary field at instruction bits 21-26 is
+    // ALSO shuffled relative to a natural big-endian 6-bit value:
+    //   encoded[21..26] = mb[1], mb[2], mb[3], mb[4], mb[5], mb[0]
+    // where mb[0] is Power-MSB of the value. Equivalently the 6-bit
+    // encoded field value is ROTL6(mb, 1). Empirically confirmed on
+    // POWER9 with 8 distinct mb values — see the "MD-form probe"
+    // block in ppc64_encoding_test.cpp.
+    static constexpr uint32_t mdForm(uint32_t opcode, RegisterID rs, RegisterID ra,
+                                     uint32_t sh, uint32_t mbOrMe, uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(sh < 64);
+        ASSERT(mbOrMe < 64);
+        ASSERT(xo < 8);
+        ASSERT(rc < 2);
+        uint32_t shLow5 = sh & 0x1F;
+        uint32_t sh2 = (sh >> 5) & 1;
+        // Encode mb/me with the low 5 bits at instruction bits 21-25 and
+        // the high bit at bit 26 — i.e. a left-rotate-by-1 in the 6-bit
+        // field. See the block comment above for the empirical evidence.
+        uint32_t mbField = ((mbOrMe & 0x1F) << 1) | ((mbOrMe >> 5) & 1);
+        return (opcode << 26)
+             | (registerValue(rs) << 21)
+             | (registerValue(ra) << 16)
+             | (shLow5 << 11)
+             | (mbField << 5)
+             | (xo << 2)
+             | (sh2 << 1)
+             | rc;
     }
 
     // X-form: [op(6) | RT/RS(5) | RA(5) | RB(5) | XO(10) | Rc(1)]

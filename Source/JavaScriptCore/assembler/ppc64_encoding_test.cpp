@@ -92,6 +92,27 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t mdForm(uint32_t opcode, RegID rs, RegID ra,
+                                 uint32_t sh, uint32_t mbOrMe, uint32_t xo, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(sh < 64);
+    assert(mbOrMe < 64);
+    assert(xo < 8);
+    assert(rc < 2);
+    uint32_t shLow5 = sh & 0x1F;
+    uint32_t sh2 = (sh >> 5) & 1;
+    uint32_t mbField = ((mbOrMe & 0x1F) << 1) | ((mbOrMe >> 5) & 1);
+    return (opcode << 26)
+         | (rs << 21)
+         | (ra << 16)
+         | (shLow5 << 11)
+         | (mbField << 5)
+         | (xo << 2)
+         | (sh2 << 1)
+         | rc;
+}
+
 static constexpr uint32_t xForm(uint32_t opcode, RegID rs, RegID ra, RegID rb, uint32_t xo, uint32_t rc)
 {
     assert(opcode < 64);
@@ -174,6 +195,35 @@ int main()
         // mulli D-form (opcode 7).
         { "mulli  3,4,100",            dForm(7, 3, 4, 100),                                  0x1c640064 },
         { "mulli  3,4,-1",             dForm(7, 3, 4, static_cast<uint16_t>(-1)),            0x1c64ffff },
+
+        // MD-form probe: confirm the mb encoding rule with 8 single-bit
+        // mb values. GNU as disassembles these as simplified mnemonics
+        // (clrldi / rotldi) but the underlying hex is what matters.
+        // rldicl opcode 30, XO=0.
+        { "rldicl 3,4,0,0  (rotldi 0)",    mdForm(30, 4, 3, 0, 0,  0, 0),                     0x78830000 },
+        { "rldicl 3,4,0,1  (clrldi 1)",    mdForm(30, 4, 3, 0, 1,  0, 0),                     0x78830040 },
+        { "rldicl 3,4,0,2  (clrldi 2)",    mdForm(30, 4, 3, 0, 2,  0, 0),                     0x78830080 },
+        { "rldicl 3,4,0,4  (clrldi 4)",    mdForm(30, 4, 3, 0, 4,  0, 0),                     0x78830100 },
+        { "rldicl 3,4,0,8  (clrldi 8)",    mdForm(30, 4, 3, 0, 8,  0, 0),                     0x78830200 },
+        { "rldicl 3,4,0,16 (clrldi 16)",   mdForm(30, 4, 3, 0, 16, 0, 0),                     0x78830400 },
+        { "rldicl 3,4,0,32 (clrldi 32)",   mdForm(30, 4, 3, 0, 32, 0, 0),                     0x78830020 },
+        { "rldicl 3,4,0,63 (clrldi 63)",   mdForm(30, 4, 3, 0, 63, 0, 0),                     0x788307e0 },
+
+        // MD-form with non-trivial SH (exercises the sh2 split at bit 30).
+        // rldicl 3,4,56,8  (srdi 8)  — SH=56, MB=8.  sh_low5=24, sh2=1.
+        { "rldicl 3,4,56,8  (srdi 8)",     mdForm(30, 4, 3, 56, 8,  0, 0),                    0x7883c202 },
+        { "rldicl 3,4,32,32 (srdi 32)",    mdForm(30, 4, 3, 32, 32, 0, 0),                    0x78830022 },
+        { "rldicl 3,4,63,1  (srdi 1)",     mdForm(30, 4, 3, 63, 1,  0, 0),                    0x7883f842 },
+
+        // rldicr opcode 30, XO=1. sldi n = rldicr SH=n, ME=63-n.
+        { "rldicr 3,4,8,55  (sldi 8)",     mdForm(30, 4, 3, 8, 55, 1, 0),                     0x788345e4 },
+        { "rldicr 3,4,0,63  (clrrdi 0)",   mdForm(30, 4, 3, 0, 63, 1, 0),                     0x788307e4 },
+
+        // rldic  opcode 30, XO=2.
+        { "rldic  3,4,4,60",               mdForm(30, 4, 3, 4, 60, 2, 0),                     0x78832728 },
+
+        // rldimi opcode 30, XO=3.
+        { "rldimi 3,4,8,0",                mdForm(30, 4, 3, 8, 0,  3, 0),                     0x7883400c },
 
         // Sign-extend X-form (opcode 31). RB slot unused (0).
         { "extsb 3,4",                 xForm(31, 4, 3, 0, 954, 0),                           0x7c830774 },
