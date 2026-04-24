@@ -56,6 +56,42 @@ static constexpr uint32_t xfxForm(uint32_t opcode, RegID rtOrRs, uint32_t sprNum
     return (opcode << 26) | (rtOrRs << 21) | (sprField << 11) | (xo << 1);
 }
 
+static constexpr uint32_t iForm(uint32_t opcode, int32_t byteOffset, uint32_t aa, uint32_t lk)
+{
+    assert(opcode < 64);
+    assert(aa < 2);
+    assert(lk < 2);
+    assert((byteOffset & 0x3) == 0);
+    assert(byteOffset >= -(1 << 25) && byteOffset < (1 << 25));
+    return (opcode << 26) | (static_cast<uint32_t>(byteOffset) & 0x03FFFFFC) | (aa << 1) | lk;
+}
+
+static constexpr uint32_t bForm(uint32_t opcode, uint32_t bo, uint32_t bi,
+                                int32_t byteOffset, uint32_t aa, uint32_t lk)
+{
+    assert(opcode < 64);
+    assert(bo < 32);
+    assert(bi < 32);
+    assert(aa < 2);
+    assert(lk < 2);
+    assert((byteOffset & 0x3) == 0);
+    assert(byteOffset >= -(1 << 15) && byteOffset < (1 << 15));
+    return (opcode << 26) | (bo << 21) | (bi << 16)
+         | (static_cast<uint32_t>(byteOffset) & 0xFFFC) | (aa << 1) | lk;
+}
+
+static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
+                                 uint32_t bh, uint32_t xo, uint32_t lk)
+{
+    assert(opcode < 64);
+    assert(bo < 32);
+    assert(bi < 32);
+    assert(bh < 8);
+    assert(xo < 1024);
+    assert(lk < 2);
+    return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
+}
+
 struct Test {
     const char* mnemonic;
     uint32_t encoding;
@@ -94,6 +130,22 @@ int main()
         { "mtlr 3  (= mtspr 8,3)",     xfxForm(31, 3, 8, 467),                               0x7c6803a6 },
         { "mfctr 3 (= mfspr 3,9)",     xfxForm(31, 3, 9, 339),                               0x7c6902a6 },
         { "mtctr 3 (= mtspr 9,3)",     xfxForm(31, 3, 9, 467),                               0x7c6903a6 },
+
+        // I-form (opcode 18 = b / bl). GNU as emitted these at known addresses;
+        // we pass the resolved byte offset (not a symbol).
+        { "b    .   (offset 0)",       iForm(18, 0, 0, 0),                                   0x48000000 },
+        { "b    .+4 (offset 4)",       iForm(18, 4, 0, 0),                                   0x48000004 },
+        { "bl   .-8 (offset -8)",      iForm(18, -8, 0, 1),                                  0x4bfffff9 },
+
+        // B-form (opcode 16 = bc). beq = BO 12 (branch-if-CR[BI]=1), BI 2 (CR0.EQ).
+        { "beq  .-12 (bc 12,2,-12)",   bForm(16, 12, 2, -12, 0, 0),                          0x4182fff4 },
+
+        // XL-form (opcode 19, XO=16 = bclr, XO=528 = bcctr).
+        { "blr   (= bclr 20,0,0)",     xlForm(19, 20, 0, 0, 16, 0),                          0x4e800020 },
+        { "bctr  (= bcctr 20,0,0)",    xlForm(19, 20, 0, 0, 528, 0),                         0x4e800420 },
+        { "bctrl (= bcctr 20,0,0,1)",  xlForm(19, 20, 0, 0, 528, 1),                         0x4e800421 },
+        { "beqlr (= bclr 12,2,0)",     xlForm(19, 12, 2, 0, 16, 0),                          0x4d820020 },
+        { "bnelr (= bclr  4,2,0)",     xlForm(19,  4, 2, 0, 16, 0),                          0x4c820020 },
     };
 
     int failures = 0;
