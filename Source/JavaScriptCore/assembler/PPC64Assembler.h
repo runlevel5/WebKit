@@ -157,6 +157,18 @@ public:
         insn(dForm(24, rs, ra, ui));
     }
 
+    // add — Add. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=266.
+    //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5) | OE(1)=0 | XO(9)=266 | Rc(1)=0]
+    //   Semantics: RT <- RA + RB. Does not set CR and does not record overflow.
+    //   Sibling mnemonics add. (Rc=1) and addo (OE=1) will be added when needed.
+    // Verified 2026-04-24 on POWER9 / GCC as:
+    //   add 3,4,5 → 0x7c642a14 (bytes 14 2a 64 7c)
+    //   add 0,1,2 → 0x7c011214 (bytes 14 12 01 7c)
+    void add(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 266, /*Rc*/ 0));
+    }
+
     // addi — Add Immediate. Power ISA v2.07B §3.3.8, D-form, opcode 14.
     //   Encoding: [op(6)=14 | RT(5) | RA(5) | SI(16)]
     //   Semantics: if RA == 0, RT <- sign_extend(SI); else RT <- RA + sign_extend(SI).
@@ -194,6 +206,26 @@ protected:
              | (registerValue(rtOrRs) << 21)
              | (registerValue(ra) << 16)
              | imm;
+    }
+
+    // XO-form: [op(6) | RT(5) | RA(5) | RB(5) | OE(1) | XO(9) | Rc(1)]
+    // See Power ISA v2.07B Book I §1.6.1 Figure 3. Bit positions (MSB=0):
+    //   OE at bit 21 (shift 10 from LSB), XO at bits 22-30 (shift 1 from LSB),
+    //   Rc at bit 31 (shift 0).
+    static constexpr uint32_t xoForm(uint32_t opcode, RegisterID rt, RegisterID ra, RegisterID rb,
+                                     uint32_t oe, uint32_t xo, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(oe < 2);
+        ASSERT(xo < 512);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (registerValue(rt) << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (oe << 10)
+             | (xo << 1)
+             | rc;
     }
 
     static constexpr uint32_t registerValue(RegisterID r)
