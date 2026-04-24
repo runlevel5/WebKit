@@ -92,6 +92,14 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t xForm(uint32_t opcode, RegID rs, RegID ra, RegID rb, uint32_t xo, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(xo < 1024);
+    assert(rc < 2);
+    return (opcode << 26) | (rs << 21) | (ra << 16) | (rb << 11) | (xo << 1) | rc;
+}
+
 static constexpr uint32_t cmpXForm(uint32_t opcode, uint32_t bf, uint32_t l,
                                    RegID ra, RegID rb, uint32_t xo)
 {
@@ -166,6 +174,15 @@ int main()
 
         // B-form (opcode 16 = bc). beq = BO 12 (branch-if-CR[BI]=1), BI 2 (CR0.EQ).
         { "beq  .-12 (bc 12,2,-12)",   bForm(16, 12, 2, -12, 0, 0),                          0x4182fff4 },
+
+        // Logical X-form (opcode 31). In asm syntax the dest is first
+        // (RA) and the source is second (RS): "and 3,4,5" means
+        // RA=3 (dest), RS=4 (source1), RB=5 (source2). In our xForm
+        // helper RS comes first, RA second: xForm(31, rs=4, ra=3, rb=5, ...)
+        { "and 3,4,5",                 xForm(31, 4, 3, 5, 28, 0),                            0x7c832838 },
+        { "or  3,4,5",                 xForm(31, 4, 3, 5, 444, 0),                           0x7c832b78 },
+        { "xor 3,4,5",                 xForm(31, 4, 3, 5, 316, 0),                           0x7c832a78 },
+        { "mr 7,8 (= or 7,8,8)",       xForm(31, 8, 7, 8, 444, 0),                           0x7d074378 },
 
         // Compare X-form (opcode 31, XO=0 = cmp, XO=32 = cmpl). L=1 for
         // 64-bit (cmpd/cmpld), L=0 for 32-bit (cmpw/cmplw).
