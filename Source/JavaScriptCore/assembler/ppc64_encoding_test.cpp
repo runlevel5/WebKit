@@ -175,6 +175,12 @@ int main()
         { "mulli  3,4,100",            dForm(7, 3, 4, 100),                                  0x1c640064 },
         { "mulli  3,4,-1",             dForm(7, 3, 4, static_cast<uint16_t>(-1)),            0x1c64ffff },
 
+        // Divide XO-form (opcode 31).
+        { "divw  3,4,5",               xoForm(31, 3, 4, 5, 0, 491, 0),                       0x7c642bd6 },
+        { "divwu 3,4,5",               xoForm(31, 3, 4, 5, 0, 459, 0),                       0x7c642b96 },
+        { "divd  3,4,5",               xoForm(31, 3, 4, 5, 0, 489, 0),                       0x7c642bd2 },
+        { "divdu 3,4,5",               xoForm(31, 3, 4, 5, 0, 457, 0),                       0x7c642b92 },
+
         // tw 31,0,0 (= trap, opcode 31, XO=4, TO=31 = unconditional).
         // Built inline because the TO slot uses the same bits as our
         // xForm's rtOrRs (RegisterID typed) parameter.

@@ -216,6 +216,42 @@ public:
         insn(dForm(7, rt, ra, static_cast<uint16_t>(si)));
     }
 
+    // ===================================================================
+    // Divide (XO-form). Power ISA v2.07B §3.3.8. Signed / unsigned
+    // variants at 32-bit (divw / divwu) and 64-bit (divd / divdu).
+    // On divide-by-zero or signed-overflow the result is undefined
+    // unless OE=1, in which case XER[OV] is set and the caller must
+    // check — we emit OE=0 here.
+    // ===================================================================
+
+    // divw  RT, RA, RB — opcode 31, XO=491 (signed 32-bit: RA/RB).
+    // Verified: divw 3,4,5 → 0x7c642bd6 (bytes d6 2b 64 7c).
+    void divw(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 491, /*Rc*/ 0));
+    }
+
+    // divwu RT, RA, RB — opcode 31, XO=459 (unsigned 32-bit).
+    // Verified: divwu 3,4,5 → 0x7c642b96.
+    void divwu(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 459, /*Rc*/ 0));
+    }
+
+    // divd  RT, RA, RB — opcode 31, XO=489 (signed 64-bit).
+    // Verified: divd 3,4,5 → 0x7c642bd2.
+    void divd(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 489, /*Rc*/ 0));
+    }
+
+    // divdu RT, RA, RB — opcode 31, XO=457 (unsigned 64-bit).
+    // Verified: divdu 3,4,5 → 0x7c642b92.
+    void divdu(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 457, /*Rc*/ 0));
+    }
+
     // subf — Subtract From. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=40.
     //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5) | OE(1)=0 | XO(9)=40 | Rc(1)=0]
     //   Semantics: RT <- RB - RA   (**reverse operand order** vs. most ISAs).
