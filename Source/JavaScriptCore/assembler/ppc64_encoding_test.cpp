@@ -163,6 +163,18 @@ int main()
         { "lha 3,4(4)",                dForm(42, 3, 4, 4),                                   0xa8640004 },
         { "sth 3,6(4)",                dForm(44, 3, 4, 6),                                   0xb0640006 },
 
+        // Multiply XO-form (opcode 31): low/high × {32,64}-bit signed/unsigned.
+        { "mullw  3,4,5",              xoForm(31, 3, 4, 5, 0, 235, 0),                       0x7c6429d6 },
+        { "mulld  3,4,5",              xoForm(31, 3, 4, 5, 0, 233, 0),                       0x7c6429d2 },
+        { "mulhw  3,4,5",              xoForm(31, 3, 4, 5, 0, 75, 0),                        0x7c642896 },
+        { "mulhd  3,4,5",              xoForm(31, 3, 4, 5, 0, 73, 0),                        0x7c642892 },
+        { "mulhwu 3,4,5",              xoForm(31, 3, 4, 5, 0, 11, 0),                        0x7c642816 },
+        { "mulhdu 3,4,5",              xoForm(31, 3, 4, 5, 0, 9, 0),                         0x7c642812 },
+
+        // mulli D-form (opcode 7).
+        { "mulli  3,4,100",            dForm(7, 3, 4, 100),                                  0x1c640064 },
+        { "mulli  3,4,-1",             dForm(7, 3, 4, static_cast<uint16_t>(-1)),            0x1c64ffff },
+
         // tw 31,0,0 (= trap, opcode 31, XO=4, TO=31 = unconditional).
         // Built inline because the TO slot uses the same bits as our
         // xForm's rtOrRs (RegisterID typed) parameter.
