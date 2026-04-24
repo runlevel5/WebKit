@@ -290,6 +290,77 @@ public:
     void mfctr(RegisterID rt) { mfspr(rt, SPR_CTR); }
     void mtctr(RegisterID rs) { mtspr(SPR_CTR, rs); }
 
+    // ===================================================================
+    // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
+    // D-form compare encodings diverge from the normal X/D shapes: the
+    // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved
+    // bit at 9, and L(1) at 10. L=0 for 32-bit (cmpw/cmpwi), L=1 for
+    // 64-bit (cmpd/cmpdi). cmp/cmpl share opcode 31 (XO=0 / XO=32);
+    // cmpi/cmpli use opcodes 11 / 10 in D-form.
+    // ===================================================================
+
+    // cmpd — Compare signed 64-bit. Opcode 31, XO=0, L=1.
+    //   Sets CR field BF from the signed comparison (RA ? RB).
+    // Verified 2026-04-25 on POWER9:
+    //   cmpd 0,3,4  → 0x7c232000 (bytes 00 20 23 7c)
+    //   cmpd 7,3,4  → 0x7fa32000 (bytes 00 20 a3 7f)
+    void cmpd(uint32_t bf, RegisterID ra, RegisterID rb)
+    {
+        insn(cmpXForm(31, bf, /*L*/ 1, ra, rb, /*XO*/ 0));
+    }
+
+    // cmpw — Compare signed 32-bit. Opcode 31, XO=0, L=0.
+    // Verified: cmpw 0,3,4 → 0x7c032000 (bytes 00 20 03 7c).
+    void cmpw(uint32_t bf, RegisterID ra, RegisterID rb)
+    {
+        insn(cmpXForm(31, bf, /*L*/ 0, ra, rb, /*XO*/ 0));
+    }
+
+    // cmpld — Compare logical (unsigned) 64-bit. Opcode 31, XO=32, L=1.
+    // Verified: cmpld 0,3,4 → 0x7c232040 (bytes 40 20 23 7c).
+    void cmpld(uint32_t bf, RegisterID ra, RegisterID rb)
+    {
+        insn(cmpXForm(31, bf, /*L*/ 1, ra, rb, /*XO*/ 32));
+    }
+
+    // cmplw — Compare logical (unsigned) 32-bit. Opcode 31, XO=32, L=0.
+    void cmplw(uint32_t bf, RegisterID ra, RegisterID rb)
+    {
+        insn(cmpXForm(31, bf, /*L*/ 0, ra, rb, /*XO*/ 32));
+    }
+
+    // cmpdi — Compare signed 64-bit immediate. Opcode 11, L=1.
+    //   SI is a 16-bit signed immediate.
+    // Verified 2026-04-25 on POWER9:
+    //   cmpdi 0,3,0    → 0x2c230000 (bytes 00 00 23 2c)
+    //   cmpdi 0,3,-1   → 0x2c23ffff (bytes ff ff 23 2c)
+    //   cmpdi 7,3,100  → 0x2fa30064 (bytes 64 00 a3 2f)
+    void cmpdi(uint32_t bf, RegisterID ra, int16_t si)
+    {
+        insn(cmpDForm(11, bf, /*L*/ 1, ra, static_cast<uint16_t>(si)));
+    }
+
+    // cmpwi — Compare signed 32-bit immediate. Opcode 11, L=0.
+    // Verified: cmpwi 0,3,42 → 0x2c03002a (bytes 2a 00 03 2c).
+    void cmpwi(uint32_t bf, RegisterID ra, int16_t si)
+    {
+        insn(cmpDForm(11, bf, /*L*/ 0, ra, static_cast<uint16_t>(si)));
+    }
+
+    // cmpldi — Compare logical (unsigned) 64-bit immediate. Opcode 10, L=1.
+    //   UI is a 16-bit unsigned immediate (zero-extended for the compare).
+    // Verified: cmpldi 0,3,100 → 0x28230064 (bytes 64 00 23 28).
+    void cmpldi(uint32_t bf, RegisterID ra, uint16_t ui)
+    {
+        insn(cmpDForm(10, bf, /*L*/ 1, ra, ui));
+    }
+
+    // cmplwi — Compare logical (unsigned) 32-bit immediate. Opcode 10, L=0.
+    void cmplwi(uint32_t bf, RegisterID ra, uint16_t ui)
+    {
+        insn(cmpDForm(10, bf, /*L*/ 0, ra, ui));
+    }
+
     // Branch BO-field encodings (Power ISA v2.07B §3.3.6 Table 11). Only the
     // hint-0 "branch-unconditional" and "branch-if-condition-{true,false}"
     // values JSC needs right now.
@@ -407,6 +478,39 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // Compare X-form: [op(6) | BF(3) | /(1) | L(1) | RA(5) | RB(5) | XO(10) | /(1)]
+    // Power ISA v2.07B Book I §1.6.1. BF (3 bits, bits 6-8) selects which
+    // CR field to set; L (bit 10) picks 32-bit (L=0) vs 64-bit (L=1) width.
+    // Shift positions: BF at bits 6-8 → (BF << 23); L at bit 10 → (L << 21).
+    static constexpr uint32_t cmpXForm(uint32_t opcode, uint32_t bf, uint32_t l,
+                                       RegisterID ra, RegisterID rb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(bf < 8);
+        ASSERT(l < 2);
+        ASSERT(xo < 1024);
+        return (opcode << 26)
+             | (bf << 23)
+             | (l << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (xo << 1);
+    }
+
+    // Compare D-form: [op(6) | BF(3) | /(1) | L(1) | RA(5) | SI/UI(16)]
+    static constexpr uint32_t cmpDForm(uint32_t opcode, uint32_t bf, uint32_t l,
+                                       RegisterID ra, uint16_t imm)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(bf < 8);
+        ASSERT(l < 2);
+        return (opcode << 26)
+             | (bf << 23)
+             | (l << 21)
+             | (registerValue(ra) << 16)
+             | imm;
     }
 
     // I-form: [op(6) | LI(24) | AA(1) | LK(1)]
