@@ -54,6 +54,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #define TARGET_MACROASSEMBLER MacroAssemblerRISCV64
 #include "MacroAssemblerRISCV64.h"
 
+#elif CPU(PPC64LE)
+#define TARGET_MACROASSEMBLER MacroAssemblerPPC64
+#include "MacroAssemblerPPC64.h"
+
 #else
 #error "The MacroAssembler is not supported on this platform."
 #endif
