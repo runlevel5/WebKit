@@ -157,6 +157,65 @@ public:
         insn(dForm(24, rs, ra, ui));
     }
 
+    // ===================================================================
+    // Multiply (XO-form for register×register, D-form for ×immediate).
+    // Power ISA v2.07B §3.3.8. The "low" variants store the low N bits
+    // of the product into RT (where N = 32 for mullw, 64 for mulld).
+    // The "high" variants store the high N bits of a 2N-bit product;
+    // they come in signed (mulh{w,d}) and unsigned (mulh{w,d}u) forms.
+    // ===================================================================
+
+    // mullw RT, RA, RB — opcode 31, XO=235. RT[low32] <- (RA*RB)[low32]
+    //                    (high 32 of RT undefined per §3.3.8).
+    // Verified: mullw 3,4,5 → 0x7c6429d6 (bytes d6 29 64 7c)
+    void mullw(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 235, /*Rc*/ 0));
+    }
+
+    // mulld RT, RA, RB — opcode 31, XO=233. RT <- (RA*RB)[low64].
+    // Verified: mulld 3,4,5 → 0x7c6429d2
+    void mulld(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 233, /*Rc*/ 0));
+    }
+
+    // mulhw / mulhwu — high 32 bits of 32×32 → 64-bit product (signed/unsigned).
+    //   XO=75 (signed), XO=11 (unsigned). Verified:
+    //   mulhw  3,4,5 → 0x7c642896
+    //   mulhwu 3,4,5 → 0x7c642816
+    void mulhw(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 75, /*Rc*/ 0));
+    }
+
+    void mulhwu(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 11, /*Rc*/ 0));
+    }
+
+    // mulhd / mulhdu — high 64 bits of 64×64 → 128-bit product (signed/unsigned).
+    //   XO=73 (signed), XO=9 (unsigned). Verified:
+    //   mulhd  3,4,5 → 0x7c642892
+    //   mulhdu 3,4,5 → 0x7c642812
+    void mulhd(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 73, /*Rc*/ 0));
+    }
+
+    void mulhdu(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 9, /*Rc*/ 0));
+    }
+
+    // mulli RT, RA, SI — D-form, opcode 7. Multiply Low Immediate (16-bit
+    //   signed). RT <- (RA * sign_extend(SI))[low64].
+    // Verified: mulli 3,4,100 → 0x1c640064, mulli 3,4,-1 → 0x1c64ffff.
+    void mulli(RegisterID rt, RegisterID ra, int16_t si)
+    {
+        insn(dForm(7, rt, ra, static_cast<uint16_t>(si)));
+    }
+
     // subf — Subtract From. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=40.
     //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5) | OE(1)=0 | XO(9)=40 | Rc(1)=0]
     //   Semantics: RT <- RB - RA   (**reverse operand order** vs. most ISAs).
