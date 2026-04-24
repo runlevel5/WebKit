@@ -571,6 +571,36 @@ public:
     }
 
     // ===================================================================
+    // Floating-point ↔ integer conversion (X-form, opcode 63, FRA=0).
+    // Power ISA v2.07B §3.3.6.
+    //
+    // Signed:
+    //   fcfid   FRT, FRB — XO=846  (Convert From Int Doubleword → double)
+    //   fctid   FRT, FRB — XO=814  (Convert To   Int Doubleword,   round per FPSCR)
+    //   fctidz  FRT, FRB — XO=815  (  ... truncate toward zero)
+    //   fctiw   FRT, FRB — XO=14   (Convert To   Int Word,         round per FPSCR)
+    //   fctiwz  FRT, FRB — XO=15   (  ... truncate toward zero)
+    // Unsigned (Power ISA v2.06+; all on POWER8):
+    //   fcfidu  FRT, FRB — XO=974
+    //   fctidu  FRT, FRB — XO=942
+    //   fctiduz FRT, FRB — XO=943
+    //   fctiwu  FRT, FRB — XO=142
+    //   fctiwuz FRT, FRB — XO=143
+    //
+    // All verified on POWER9 with FRT=3, FRB=4 — see encoding test.
+    // ===================================================================
+    void fcfid(FPRegisterID frt, FPRegisterID frb)   { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 846, 0)); }
+    void fctid(FPRegisterID frt, FPRegisterID frb)   { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 814, 0)); }
+    void fctidz(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 815, 0)); }
+    void fctiw(FPRegisterID frt, FPRegisterID frb)   { insn(xFormFp(63, frt, PPC64Registers::f0, frb,  14, 0)); }
+    void fctiwz(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb,  15, 0)); }
+    void fcfidu(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 974, 0)); }
+    void fctidu(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 942, 0)); }
+    void fctiduz(FPRegisterID frt, FPRegisterID frb) { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 943, 0)); }
+    void fctiwu(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 142, 0)); }
+    void fctiwuz(FPRegisterID frt, FPRegisterID frb) { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 143, 0)); }
+
+    // ===================================================================
     // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
     // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
     // from a register (RB) rather than an immediate. Opcode 31 with

@@ -246,6 +246,18 @@ int main()
         { "fdivs 3,4,5",               aForm(59, 3, 4, 5, 0, 18, 0),                         0xec642824 },
         { "fmadd 3,4,5,6",             aForm(63, 3, 4, 6, 5, 29, 0),                         0xfc64317a },
 
+        // FP convert X-form (opcode 63, FRA=0). Verified against GNU as.
+        { "fcfid   3,4",               xForm(63, 3, 0, 4, 846, 0),                           0xfc60269c },
+        { "fctid   3,4",               xForm(63, 3, 0, 4, 814, 0),                           0xfc60265c },
+        { "fctidz  3,4",               xForm(63, 3, 0, 4, 815, 0),                           0xfc60265e },
+        { "fctiw   3,4",               xForm(63, 3, 0, 4,  14, 0),                           0xfc60201c },
+        { "fctiwz  3,4",               xForm(63, 3, 0, 4,  15, 0),                           0xfc60201e },
+        { "fcfidu  3,4",               xForm(63, 3, 0, 4, 974, 0),                           0xfc60279c },
+        { "fctidu  3,4",               xForm(63, 3, 0, 4, 942, 0),                           0xfc60275c },
+        { "fctiduz 3,4",               xForm(63, 3, 0, 4, 943, 0),                           0xfc60275e },
+        { "fctiwu  3,4",               xForm(63, 3, 0, 4, 142, 0),                           0xfc60211c },
+        { "fctiwuz 3,4",               xForm(63, 3, 0, 4, 143, 0),                           0xfc60211e },
+
         // FP compare — BF-shape X-form. bf<<23 at bits 6-8 matches
         // cmpXForm with L=0; FRA and FRB are FPR indices (which use the
         // same 5-bit slots as GPRs for encoding purposes).
