@@ -885,6 +885,66 @@ public:
     }
 
     // ===================================================================
+    // 32-bit rotate-and-mask (M-form). Power ISA v2.07B §3.3.13.
+    //
+    //   rlwinm RA, RS, SH, MB, ME — opcode 21 (rotate left imm then AND mask)
+    //   rlwimi RA, RS, SH, MB, ME — opcode 20 (rotate left imm then mask-insert)
+    //   rlwnm  RA, RS, RB, MB, ME — opcode 23 (rotate left by RB then AND mask)
+    //
+    // MB/ME are plain 5-bit fields at bits 21-25 and 26-30 — NO
+    // bit-swap encoding (unlike MD-form's 6-bit field). SH is a plain
+    // 5-bit immediate in rlwinm/rlwimi (range 0-31).
+    //
+    // Simplified mnemonics that JSC's MacroAssembler will actually use:
+    //   slwi   RA, RS, n = rlwinm RA, RS, n,     0,     31-n
+    //   srwi   RA, RS, n = rlwinm RA, RS, 32-n,  n,     31
+    //   clrlwi RA, RS, n = rlwinm RA, RS, 0,     n,     31
+    //   rotlwi RA, RS, n = rlwinm RA, RS, n,     0,     31
+    //
+    // Verified on POWER9 (see test; all self-assert + disassemble to the
+    // simplified mnemonic GNU as recognizes).
+    // ===================================================================
+    void rlwinm(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb, uint32_t me)
+    {
+        insn(mFormImm(21, rs, ra, sh, mb, me, /*Rc*/ 0));
+    }
+
+    void rlwimi(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb, uint32_t me)
+    {
+        insn(mFormImm(20, rs, ra, sh, mb, me, /*Rc*/ 0));
+    }
+
+    void rlwnm(RegisterID ra, RegisterID rs, RegisterID rb, uint32_t mb, uint32_t me)
+    {
+        insn(mFormReg(23, rs, ra, rb, mb, me, /*Rc*/ 0));
+    }
+
+    // 32-bit simplified mnemonics.
+    void slwi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 32);
+        rlwinm(ra, rs, n, 0, 31 - n);
+    }
+
+    void srwi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 32);
+        rlwinm(ra, rs, (32 - n) % 32, n, 31);
+    }
+
+    void clrlwi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 32);
+        rlwinm(ra, rs, 0, n, 31);
+    }
+
+    void rotlwi(RegisterID ra, RegisterID rs, uint32_t n)
+    {
+        ASSERT(n < 32);
+        rlwinm(ra, rs, n, 0, 31);
+    }
+
+    // ===================================================================
     // Compare instructions. Power ISA v2.07B §3.3.10. The X-form and
     // D-form compare encodings diverge from the normal X/D shapes: the
     // 5-bit slot at bits 6-10 is split into BF(3) at 6-8, a reserved
@@ -1216,6 +1276,46 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // M-form (32-bit rotate-and-mask):
+    //   [op(6) | RS(5) | RA(5) | SH/RB(5) | MB(5) | ME(5) | Rc(1)]
+    //
+    // Power ISA v2.07B Book I §1.6.1. Much simpler than MD-form — the
+    // shift is a 5-bit immediate (no bit-split) and MB/ME are plain
+    // 5-bit fields (no rotation of encoding). Two variants: SH comes
+    // from an immediate (rlwinm, rlwimi) or from RB (rlwnm).
+    static constexpr uint32_t mFormImm(uint32_t opcode, RegisterID rs, RegisterID ra,
+                                       uint32_t sh, uint32_t mb, uint32_t me, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(sh < 32);
+        ASSERT(mb < 32);
+        ASSERT(me < 32);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (registerValue(rs) << 21)
+             | (registerValue(ra) << 16)
+             | (sh << 11)
+             | (mb << 6)
+             | (me << 1)
+             | rc;
+    }
+
+    static constexpr uint32_t mFormReg(uint32_t opcode, RegisterID rs, RegisterID ra,
+                                       RegisterID rb, uint32_t mb, uint32_t me, uint32_t rc)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(mb < 32);
+        ASSERT(me < 32);
+        ASSERT(rc < 2);
+        return (opcode << 26)
+             | (registerValue(rs) << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (mb << 6)
+             | (me << 1)
+             | rc;
     }
 
     // MD-form: [op(6) | RS(5) | RA(5) | sh[0:4](5) | mb/me(6) | XO(3) | sh2(1) | Rc(1)]

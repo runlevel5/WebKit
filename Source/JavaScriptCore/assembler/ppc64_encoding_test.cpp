@@ -92,6 +92,27 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t mFormImm(uint32_t opcode, RegID rs, RegID ra,
+                                   uint32_t sh, uint32_t mb, uint32_t me, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(sh < 32);
+    assert(mb < 32);
+    assert(me < 32);
+    assert(rc < 2);
+    return (opcode << 26) | (rs << 21) | (ra << 16) | (sh << 11) | (mb << 6) | (me << 1) | rc;
+}
+
+static constexpr uint32_t mFormReg(uint32_t opcode, RegID rs, RegID ra,
+                                   RegID rb, uint32_t mb, uint32_t me, uint32_t rc)
+{
+    assert(opcode < 64);
+    assert(mb < 32);
+    assert(me < 32);
+    assert(rc < 2);
+    return (opcode << 26) | (rs << 21) | (ra << 16) | (rb << 11) | (mb << 6) | (me << 1) | rc;
+}
+
 static constexpr uint32_t aForm(uint32_t opcode, RegID frt, RegID fra, RegID frb, RegID frc,
                                 uint32_t xo, uint32_t rc)
 {
@@ -297,6 +318,17 @@ int main()
         { "divwu 3,4,5",               xoForm(31, 3, 4, 5, 0, 459, 0),                       0x7c642b96 },
         { "divd  3,4,5",               xoForm(31, 3, 4, 5, 0, 489, 0),                       0x7c642bd2 },
         { "divdu 3,4,5",               xoForm(31, 3, 4, 5, 0, 457, 0),                       0x7c642b92 },
+
+        // M-form 32-bit rotate-and-mask. Simple 5-bit MB/ME, no swap.
+        { "rlwinm 3,4,8,0,31",         mFormImm(21, 4, 3, 8,  0,  31, 0),                    0x5483403e },
+        { "rlwinm 3,4,0,24,31",        mFormImm(21, 4, 3, 0,  24, 31, 0),                    0x5483063e },
+        { "rlwinm 3,4,16,16,31",       mFormImm(21, 4, 3, 16, 16, 31, 0),                    0x5483843e },
+        { "rlwimi 3,4,8,0,23",         mFormImm(20, 4, 3, 8,  0,  23, 0),                    0x5083402e },
+        { "rlwnm  3,4,5,0,31",         mFormReg(23, 4, 3, 5,  0,  31, 0),                    0x5c83283e },
+        // Simplified mnemonics (slwi / srwi / clrlwi → rlwinm).
+        { "slwi   3,4,8  (rlwinm 3,4,8,0,23)",   mFormImm(21, 4, 3, 8,  0,  23, 0),          0x5483402e },
+        { "srwi   3,4,8  (rlwinm 3,4,24,8,31)",  mFormImm(21, 4, 3, 24, 8,  31, 0),          0x5483c23e },
+        { "clrlwi 3,4,16 (rlwinm 3,4,0,16,31)",  mFormImm(21, 4, 3, 0,  16, 31, 0),          0x5483043e },
 
         // Atomic LL/SC (X-form, opcode 31). store-cond. variants all use Rc=1.
         { "lwarx  3,4,5",              xForm(31, 3, 4, 5,  20, 0),                           0x7c642828 },
