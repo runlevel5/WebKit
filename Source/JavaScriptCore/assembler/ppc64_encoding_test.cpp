@@ -298,6 +298,16 @@ int main()
         { "divd  3,4,5",               xoForm(31, 3, 4, 5, 0, 489, 0),                       0x7c642bd2 },
         { "divdu 3,4,5",               xoForm(31, 3, 4, 5, 0, 457, 0),                       0x7c642b92 },
 
+        // Atomic LL/SC (X-form, opcode 31). store-cond. variants all use Rc=1.
+        { "lwarx  3,4,5",              xForm(31, 3, 4, 5,  20, 0),                           0x7c642828 },
+        { "ldarx  3,4,5",              xForm(31, 3, 4, 5,  84, 0),                           0x7c6428a8 },
+        { "lbarx  3,4,5",              xForm(31, 3, 4, 5,  52, 0),                           0x7c642868 },
+        { "lharx  3,4,5",              xForm(31, 3, 4, 5, 116, 0),                           0x7c6428e8 },
+        { "stwcx. 3,4,5",              xForm(31, 3, 4, 5, 150, 1),                           0x7c64292d },
+        { "stdcx. 3,4,5",              xForm(31, 3, 4, 5, 214, 1),                           0x7c6429ad },
+        { "stbcx. 3,4,5",              xForm(31, 3, 4, 5, 694, 1),                           0x7c642d6d },
+        { "sthcx. 3,4,5",              xForm(31, 3, 4, 5, 726, 1),                           0x7c642dad },
+
         // Memory barriers. sync L at opcode 31, XO=598 with L at Power bits
         // 9-10 (shift 21). isync = opcode 19, XO=150 (XL-form). eieio = 854.
         { "sync (hwsync)",             (31u<<26)|(0u<<21)|(598u<<1),                         0x7c0004ac },

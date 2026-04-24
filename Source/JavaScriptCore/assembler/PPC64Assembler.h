@@ -1108,6 +1108,77 @@ public:
         insn((31u << 26) | (854u << 1));
     }
 
+    // ===================================================================
+    // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
+    // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
+    // blocks for every atomic on PPC: compare-exchange, fetch-add,
+    // fetch-or, etc. All take indexed addressing (RA + RB, where RA=0
+    // means literal zero). The store-conditional variants always set
+    // Rc=1 (hence the trailing "." in the mnemonic) — CR0[EQ] is set to
+    // 1 if the conditional store succeeded, 0 if the reservation was
+    // lost.
+    //
+    //   lwarx   RT, RA, RB — opcode 31, XO=20   (32-bit)
+    //   ldarx   RT, RA, RB — opcode 31, XO=84   (64-bit)
+    //   lbarx   RT, RA, RB — opcode 31, XO=52   (8-bit,  POWER8+)
+    //   lharx   RT, RA, RB — opcode 31, XO=116  (16-bit, POWER8+)
+    //   stwcx.  RS, RA, RB — opcode 31, XO=150, Rc=1
+    //   stdcx.  RS, RA, RB — opcode 31, XO=214, Rc=1
+    //   stbcx.  RS, RA, RB — opcode 31, XO=694, Rc=1 (POWER8+)
+    //   sthcx.  RS, RA, RB — opcode 31, XO=726, Rc=1 (POWER8+)
+    //
+    // Important: the fail path of a reservation sequence LEAKS the
+    // reservation until it is cleared by a subsequent stwcx./stdcx. or
+    // an interrupt. PLAN.md "Lessons from SpiderMonkey" §Concurrency
+    // calls out this as an open hazard. Compare-exchange macros must
+    // route the fail path through a dummy store-conditional or equivalent.
+    //
+    // Verified on POWER9:
+    //   lwarx  3,4,5 → 0x7c642828     ldarx  3,4,5 → 0x7c6428a8
+    //   stwcx. 3,4,5 → 0x7c64292d     stdcx. 3,4,5 → 0x7c6429ad
+    //   lbarx  3,4,5 → 0x7c642868     lharx  3,4,5 → 0x7c6428e8
+    //   stbcx. 3,4,5 → 0x7c642d6d     sthcx. 3,4,5 → 0x7c642dad
+    // ===================================================================
+    void lwarx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 20, /*Rc*/ 0));
+    }
+
+    void ldarx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 84, /*Rc*/ 0));
+    }
+
+    void lbarx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 52, /*Rc*/ 0));
+    }
+
+    void lharx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 116, /*Rc*/ 0));
+    }
+
+    void stwcx_(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 150, /*Rc*/ 1));
+    }
+
+    void stdcx_(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 214, /*Rc*/ 1));
+    }
+
+    void stbcx_(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 694, /*Rc*/ 1));
+    }
+
+    void sthcx_(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 726, /*Rc*/ 1));
+    }
+
 protected:
     void insn(uint32_t instruction)
     {
