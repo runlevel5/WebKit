@@ -171,6 +171,22 @@ __asm__(
      ".previous" "\n"
 );
 
+#elif CPU(PPC64LE)
+// ELFv2: r1 is SP, r3 is the first argument/return GPR, LR holds the return
+// address (not a GPR — use blr to branch through it). `mr r3, r1` is the
+// simplified form of `or r3, r1, r1`. Verified 2026-04-25 on POWER9:
+//   mr 3,1 → 0x7c230b78 (bytes 78 0b 23 7c)
+//   blr    → 0x4e800020 (bytes 20 00 80 4e)
+__asm__(
+    ".text" "\n"
+    ".globl " SYMBOL_STRING(currentStackPointer) "\n"
+    SYMBOL_STRING(currentStackPointer) ":" "\n"
+
+    "mr 3, 1" "\n"
+    "blr" "\n"
+    ".previous" "\n"
+);
+
 #else
 #error "Unsupported platform: need implementation of currentStackPointer."
 #endif
