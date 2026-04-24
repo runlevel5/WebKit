@@ -225,6 +225,15 @@ int main()
         // rldimi opcode 30, XO=3.
         { "rldimi 3,4,8,0",                mdForm(30, 4, 3, 8, 0,  3, 0),                     0x7883400c },
 
+        // FP load/store D-form. RT/RS slot holds an FPR number; bit layout
+        // is otherwise identical to GPR D-form so we just use dForm() with
+        // the FPR number cast to RegID.
+        { "lfd  3,0(4)",               dForm(50, 3, 4, 0),                                   0xc8640000 },
+        { "stfd 3,0(4)",               dForm(54, 3, 4, 0),                                   0xd8640000 },
+        { "lfs  3,8(4)",               dForm(48, 3, 4, 8),                                   0xc0640008 },
+        { "stfs 3,16(4)",              dForm(52, 3, 4, 16),                                  0xd0640010 },
+        { "lfd  31,-8(1)",             dForm(50, 31, 1, static_cast<uint16_t>(-8)),          0xcbe1fff8 },
+
         // Sign-extend X-form (opcode 31). RB slot unused (0).
         { "extsb 3,4",                 xForm(31, 4, 3, 0, 954, 0),                           0x7c830774 },
         { "extsh 3,4",                 xForm(31, 4, 3, 0, 922, 0),                           0x7c830734 },
