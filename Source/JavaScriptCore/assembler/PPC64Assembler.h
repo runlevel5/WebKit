@@ -226,6 +226,68 @@ public:
         insn(dForm(14, rt, ra, static_cast<uint16_t>(si)));
     }
 
+    // ===================================================================
+    // Narrow load/store instructions (D-form). Power ISA v2.07B §3.3.2.
+    // These use the full 16-bit signed byte displacement (no DS-form
+    // alignment constraint). Zero-extending loads write zeros into the
+    // high bits of the 64-bit GPR; lha sign-extends a halfword; lwa
+    // (algebraic word) is DS-form and added separately when needed.
+    // ===================================================================
+
+    // lwz — Load Word Zero-extended (32-bit). Opcode 32.
+    // Verified 2026-04-25:
+    //   lwz 3,0(4)    → 0x80640000 (bytes 00 00 64 80)
+    //   lwz 3,100(4)  → 0x80640064 (bytes 64 00 64 80)
+    //   lwz 3,-4(4)   → 0x8064fffc (bytes fc ff 64 80)
+    void lwz(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(32, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // stw — Store Word (32-bit). Opcode 36.
+    // Verified:
+    //   stw 3,0(4)  → 0x90640000
+    //   stw 5,16(1) → 0x90a10010
+    void stw(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(36, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // lbz — Load Byte Zero-extended. Opcode 34.
+    // Verified: lbz 3,0(4) → 0x88640000
+    void lbz(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(34, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // stb — Store Byte. Opcode 38.
+    // Verified: stb 5,1(1) → 0x98a10001
+    void stb(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(38, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // lhz — Load Halfword Zero-extended (16-bit). Opcode 40.
+    // Verified: lhz 3,2(4) → 0xa0640002
+    void lhz(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(40, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // lha — Load Halfword Algebraic (sign-extended 16-bit). Opcode 42.
+    // Verified: lha 3,4(4) → 0xa8640004
+    void lha(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(42, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // sth — Store Halfword. Opcode 44.
+    // Verified: sth 3,6(4) → 0xb0640006
+    void sth(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(44, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
     // ld — Load Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 58, XO=0.
     //   Encoding: [op(6)=58 | RT(5) | RA(5) | DS(14) | XO(2)=0]
     //   Semantics: RT <- MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8)
