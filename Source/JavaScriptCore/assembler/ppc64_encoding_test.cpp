@@ -151,6 +151,18 @@ int main()
         { "lis 5,-1",                  dForm(15, 5, 0, static_cast<uint16_t>(-1)),           0x3ca0ffff },
         { "addis 6,7,-32768",          dForm(15, 6, 7, static_cast<uint16_t>(-32768)),       0x3cc78000 },
 
+        // D-form narrow loads/stores (full 16-bit signed byte displacement).
+        { "lwz 3,0(4)",                dForm(32, 3, 4, 0),                                   0x80640000 },
+        { "lwz 3,100(4)",              dForm(32, 3, 4, 100),                                 0x80640064 },
+        { "lwz 3,-4(4)",               dForm(32, 3, 4, static_cast<uint16_t>(-4)),           0x8064fffc },
+        { "stw 3,0(4)",                dForm(36, 3, 4, 0),                                   0x90640000 },
+        { "stw 5,16(1)",               dForm(36, 5, 1, 16),                                  0x90a10010 },
+        { "lbz 3,0(4)",                dForm(34, 3, 4, 0),                                   0x88640000 },
+        { "stb 5,1(1)",                dForm(38, 5, 1, 1),                                   0x98a10001 },
+        { "lhz 3,2(4)",                dForm(40, 3, 4, 2),                                   0xa0640002 },
+        { "lha 3,4(4)",                dForm(42, 3, 4, 4),                                   0xa8640004 },
+        { "sth 3,6(4)",                dForm(44, 3, 4, 6),                                   0xb0640006 },
+
         // DS-form (opcode 58 = ld, opcode 62 = std, XO=0)
         { "ld 3,0(4)",                 dsForm(58, 3, 4, 0, 0),                               0xe8640000 },
         { "ld 3,8(4)",                 dsForm(58, 3, 4, 8, 0),                               0xe8640008 },
