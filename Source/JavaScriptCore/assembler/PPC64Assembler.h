@@ -288,6 +288,69 @@ public:
         insn(dForm(44, rs, ra, static_cast<uint16_t>(byteOffset)));
     }
 
+    // ===================================================================
+    // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
+    // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
+    // from a register (RB) rather than an immediate. Opcode 31 with
+    // distinct XO values per operation.
+    // ===================================================================
+
+    // ldx   RT, RA, RB — opcode 31, XO=21  (Load Doubleword Indexed).
+    // Verified: ldx 3,4,5 → 0x7c64282a (bytes 2a 28 64 7c)
+    void ldx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 21, /*Rc*/ 0));
+    }
+
+    // stdx  RS, RA, RB — opcode 31, XO=149 (Store Doubleword Indexed).
+    // Verified: stdx 3,4,5 → 0x7c64292a
+    void stdx(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 149, /*Rc*/ 0));
+    }
+
+    // lwzx / stwx — 32-bit word indexed (XO=23 / XO=151).
+    // Verified: lwzx 3,4,5 → 0x7c64282e, stwx 3,4,5 → 0x7c64292e
+    void lwzx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 23, /*Rc*/ 0));
+    }
+
+    void stwx(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 151, /*Rc*/ 0));
+    }
+
+    // lbzx / stbx — byte indexed (XO=87 / XO=215).
+    // Verified: lbzx 3,4,5 → 0x7c6428ae, stbx 3,4,5 → 0x7c6429ae
+    void lbzx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 87, /*Rc*/ 0));
+    }
+
+    void stbx(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 215, /*Rc*/ 0));
+    }
+
+    // lhzx / lhax / sthx — halfword indexed (XO=279 zero-ext / XO=343
+    // sign-ext / XO=407 store).
+    // Verified: lhzx → 0x7c642a2e, lhax → 0x7c642aae, sthx → 0x7c642b2e
+    void lhzx(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 279, /*Rc*/ 0));
+    }
+
+    void lhax(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rt, ra, rb, /*XO*/ 343, /*Rc*/ 0));
+    }
+
+    void sthx(RegisterID rs, RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 407, /*Rc*/ 0));
+    }
+
     // ld — Load Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 58, XO=0.
     //   Encoding: [op(6)=58 | RT(5) | RA(5) | DS(14) | XO(2)=0]
     //   Semantics: RT <- MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8)
@@ -582,19 +645,18 @@ protected:
              | xo;
     }
 
-    // X-form: [op(6) | RS(5) | RA(5) | RB(5) | XO(10) | Rc(1)]
-    // Power ISA v2.07B Book I §1.6.1. Differs from XO-form in two ways:
-    // (1) no OE bit at position 21, so XO occupies the full 10 bits at
-    // positions 21-30; (2) for logical ops, the 5-bit slot at bits 6-10
-    // is the source register RS and bits 11-15 are the destination RA.
-    // Callers must pass registers in that order.
-    static constexpr uint32_t xForm(uint32_t opcode, RegisterID rs, RegisterID ra, RegisterID rb, uint32_t xo, uint32_t rc)
+    // X-form: [op(6) | RT/RS(5) | RA(5) | RB(5) | XO(10) | Rc(1)]
+    // Power ISA v2.07B Book I §1.6.1. Differs from XO-form in that bit 21
+    // is part of the 10-bit XO field (no OE). The 5-bit slot at bits 6-10
+    // is RT for loads (destination) and RS for logical ops (source);
+    // semantics depend on the opcode, the bit layout is identical.
+    static constexpr uint32_t xForm(uint32_t opcode, RegisterID rtOrRs, RegisterID ra, RegisterID rb, uint32_t xo, uint32_t rc)
     {
         ASSERT(opcode < 64);
         ASSERT(xo < 1024);
         ASSERT(rc < 2);
         return (opcode << 26)
-             | (registerValue(rs) << 21)
+             | (registerValue(rtOrRs) << 21)
              | (registerValue(ra) << 16)
              | (registerValue(rb) << 11)
              | (xo << 1)

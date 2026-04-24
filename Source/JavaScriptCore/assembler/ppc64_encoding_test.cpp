@@ -163,6 +163,17 @@ int main()
         { "lha 3,4(4)",                dForm(42, 3, 4, 4),                                   0xa8640004 },
         { "sth 3,6(4)",                dForm(44, 3, 4, 6),                                   0xb0640006 },
 
+        // X-form indexed loads/stores (opcode 31).
+        { "ldx  3,4,5",                xForm(31, 3, 4, 5, 21, 0),                            0x7c64282a },
+        { "stdx 3,4,5",                xForm(31, 3, 4, 5, 149, 0),                           0x7c64292a },
+        { "lwzx 3,4,5",                xForm(31, 3, 4, 5, 23, 0),                            0x7c64282e },
+        { "stwx 3,4,5",                xForm(31, 3, 4, 5, 151, 0),                           0x7c64292e },
+        { "lbzx 3,4,5",                xForm(31, 3, 4, 5, 87, 0),                            0x7c6428ae },
+        { "stbx 3,4,5",                xForm(31, 3, 4, 5, 215, 0),                           0x7c6429ae },
+        { "lhzx 3,4,5",                xForm(31, 3, 4, 5, 279, 0),                           0x7c642a2e },
+        { "lhax 3,4,5",                xForm(31, 3, 4, 5, 343, 0),                           0x7c642aae },
+        { "sthx 3,4,5",                xForm(31, 3, 4, 5, 407, 0),                           0x7c642b2e },
+
         // DS-form (opcode 58 = ld, opcode 62 = std, XO=0)
         { "ld 3,0(4)",                 dsForm(58, 3, 4, 0, 0),                               0xe8640000 },
         { "ld 3,8(4)",                 dsForm(58, 3, 4, 8, 0),                               0xe8640008 },
