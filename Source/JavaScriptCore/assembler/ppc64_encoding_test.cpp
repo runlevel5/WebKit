@@ -298,6 +298,14 @@ int main()
         { "divd  3,4,5",               xoForm(31, 3, 4, 5, 0, 489, 0),                       0x7c642bd2 },
         { "divdu 3,4,5",               xoForm(31, 3, 4, 5, 0, 457, 0),                       0x7c642b92 },
 
+        // Memory barriers. sync L at opcode 31, XO=598 with L at Power bits
+        // 9-10 (shift 21). isync = opcode 19, XO=150 (XL-form). eieio = 854.
+        { "sync (hwsync)",             (31u<<26)|(0u<<21)|(598u<<1),                         0x7c0004ac },
+        { "lwsync",                    (31u<<26)|(1u<<21)|(598u<<1),                         0x7c2004ac },
+        { "ptesync",                   (31u<<26)|(2u<<21)|(598u<<1),                         0x7c4004ac },
+        { "isync",                     (19u<<26)|(150u<<1),                                  0x4c00012c },
+        { "eieio",                     (31u<<26)|(854u<<1),                                  0x7c0006ac },
+
         // tw 31,0,0 (= trap, opcode 31, XO=4, TO=31 = unconditional).
         // Built inline because the TO slot uses the same bits as our
         // xForm's rtOrRs (RegisterID typed) parameter.

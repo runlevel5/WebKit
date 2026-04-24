@@ -1063,6 +1063,51 @@ public:
         tw(31, PPC64Registers::r0, PPC64Registers::r0);
     }
 
+    // ===================================================================
+    // Memory barriers. Power ISA v2.07B §3.3.1.3.
+    //
+    //   sync L   — opcode 31, XO=598. L at Power bits 9-10 (shift 21).
+    //              L=0 heavyweight (sync/hwsync): full orderings of
+    //                   memory accesses and I/O.
+    //              L=1 lightweight (lwsync): orders loads/stores but
+    //                   not I/O; cheaper; acquire/release barrier.
+    //              L=2 page-table entry (ptesync).
+    //   isync    — opcode 19, XO=150, XL-form. Instruction sync; flushes
+    //              the prefetch pipeline and re-fetches after any
+    //              preceding store that could modify subsequent code.
+    //   eieio    — opcode 31, XO=854. Enforce I/O ordering (for MMIO).
+    //
+    // JSC's writeBarrier and concurrent-JIT paths will primarily use
+    // lwsync for acquire/release and sync (L=0) only for seq-cst.
+    //
+    // Verified on POWER9:
+    //   sync 0 (hwsync) → 0x7c0004ac
+    //   sync 1 (lwsync) → 0x7c2004ac
+    //   sync 2 (ptesync)→ 0x7c4004ac
+    //   isync           → 0x4c00012c
+    //   eieio           → 0x7c0006ac
+    // ===================================================================
+    void sync(uint32_t l = 0)
+    {
+        ASSERT(l < 4);
+        insn((31u << 26) | (l << 21) | (598u << 1));
+    }
+
+    void lwsync() { sync(1); }
+    void hwsync() { sync(0); }
+    void ptesync() { sync(2); }
+
+    void isync()
+    {
+        // XL-form, opcode 19, XO=150, all register slots 0, LK=0.
+        insn((19u << 26) | (150u << 1));
+    }
+
+    void eieio()
+    {
+        insn((31u << 26) | (854u << 1));
+    }
+
 protected:
     void insn(uint32_t instruction)
     {
