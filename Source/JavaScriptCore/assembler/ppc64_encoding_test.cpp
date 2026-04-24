@@ -112,9 +112,17 @@ int main()
         { "li 5,-100",                 dForm(14, 5, 0, static_cast<uint16_t>(-100)),         0x38a0ff9c },
         { "li 3,42",                   dForm(14, 3, 0, 42),                                  0x3860002a },
 
-        // XO-form (opcode 31, XO=266 = add)
+        // XO-form (opcode 31, XO=266 = add, XO=40 = subf, XO=104 = neg)
         { "add 3,4,5",                 xoForm(31, 3, 4, 5, 0, 266, 0),                       0x7c642a14 },
         { "add 0,1,2",                 xoForm(31, 0, 1, 2, 0, 266, 0),                       0x7c011214 },
+        { "subf 3,4,5",                xoForm(31, 3, 4, 5, 0, 40, 0),                        0x7c642850 },
+        { "subf 0,1,2",                xoForm(31, 0, 1, 2, 0, 40, 0),                        0x7c011050 },
+        { "neg 3,4",                   xoForm(31, 3, 4, 0, 0, 104, 0),                       0x7c6400d0 },
+
+        // D-form opcode 15 = addis / lis (simplified mnemonic with RA=0)
+        { "lis 3,0x1234",              dForm(15, 3, 0, 0x1234),                              0x3c601234 },
+        { "lis 5,-1",                  dForm(15, 5, 0, static_cast<uint16_t>(-1)),           0x3ca0ffff },
+        { "addis 6,7,-32768",          dForm(15, 6, 7, static_cast<uint16_t>(-32768)),       0x3cc78000 },
 
         // DS-form (opcode 58 = ld, opcode 62 = std, XO=0)
         { "ld 3,0(4)",                 dsForm(58, 3, 4, 0, 0),                               0xe8640000 },

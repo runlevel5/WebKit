@@ -157,6 +157,49 @@ public:
         insn(dForm(24, rs, ra, ui));
     }
 
+    // subf — Subtract From. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=40.
+    //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5) | OE(1)=0 | XO(9)=40 | Rc(1)=0]
+    //   Semantics: RT <- RB - RA   (**reverse operand order** vs. most ISAs).
+    //   The "sub RT, RA, RB" simplified mnemonic maps to `subf RT, RB, RA`.
+    // Verified 2026-04-25 on POWER9:
+    //   subf 3,4,5 → 0x7c642850 (bytes 50 28 64 7c)
+    //   subf 0,1,2 → 0x7c011050 (bytes 50 10 01 7c)
+    void subf(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 40, /*Rc*/ 0));
+    }
+
+    // neg — Negate. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=104.
+    //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5)=0 | OE(1)=0 | XO(9)=104 | Rc(1)=0]
+    //   Semantics: RT <- -RA (two's complement).
+    // Verified 2026-04-25 on POWER9:
+    //   neg 3,4 → 0x7c6400d0 (bytes d0 00 64 7c)
+    void neg(RegisterID rt, RegisterID ra)
+    {
+        insn(xoForm(31, rt, ra, PPC64Registers::r0, /*OE*/ 0, /*XO*/ 104, /*Rc*/ 0));
+    }
+
+    // addis — Add Immediate Shifted. Power ISA v2.07B §3.3.8, D-form, opcode 15.
+    //   Encoding: [op(6)=15 | RT(5) | RA(5) | SI(16)]
+    //   Semantics: if RA == 0, RT <- sign_extend(SI) << 16
+    //              else         RT <- RA + (sign_extend(SI) << 16)
+    //   The lis RT, SI simplified mnemonic is addis RT, 0, SI — loads a
+    //   16-bit signed immediate into the high half of RT with low half 0.
+    // Verified 2026-04-25 on POWER9:
+    //   lis   3,0x1234   → 0x3c601234 (bytes 34 12 60 3c)
+    //   lis   5,-1       → 0x3ca0ffff (bytes ff ff a0 3c)
+    //   addis 6,7,0x8000 → 0x3cc78000 (bytes 00 80 c7 3c)
+    void addis(RegisterID rt, RegisterID ra, int16_t si)
+    {
+        insn(dForm(15, rt, ra, static_cast<uint16_t>(si)));
+    }
+
+    // lis — Load Immediate Shifted. Simplified mnemonic for `addis RT, 0, SI`.
+    void lis(RegisterID rt, int16_t si)
+    {
+        addis(rt, PPC64Registers::r0, si);
+    }
+
     // add — Add. Power ISA v2.07B §3.3.8, XO-form, opcode 31, XO=266.
     //   Encoding: [op(6)=31 | RT(5) | RA(5) | RB(5) | OE(1)=0 | XO(9)=266 | Rc(1)=0]
     //   Semantics: RT <- RA + RB. Does not set CR and does not record overflow.
