@@ -372,6 +372,12 @@ int main()
         { "stbcx. 3,4,5",              xForm(31, 3, 4, 5, 694, 1),                           0x7c642d6d },
         { "sthcx. 3,4,5",              xForm(31, 3, 4, 5, 726, 1),                           0x7c642dad },
 
+        // Cache block ops. X-form, RT/RS slot = 0.
+        { "dcbst 0,3",                 xForm(31, 0, 0, 3, 54,   0),                          0x7c00186c },
+        { "dcbf  0,3",                 xForm(31, 0, 0, 3, 86,   0),                          0x7c0018ac },
+        { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
+        { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
+
         // Memory barriers. sync L at opcode 31, XO=598 with L at Power bits
         // 9-10 (shift 21). isync = opcode 19, XO=150 (XL-form). eieio = 854.
         { "sync (hwsync)",             (31u<<26)|(0u<<21)|(598u<<1),                         0x7c0004ac },

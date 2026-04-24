@@ -1259,6 +1259,53 @@ public:
     }
 
     // ===================================================================
+    // Cache block management (X-form, opcode 31, RT/RS slot = 0).
+    // Power ISA v2.07B §3.3.1.1. The core icache-flush primitives; JSC
+    // needs these after emitting self-modifying code, including every
+    // linkJump / linkCall patch.
+    //
+    //   dcbst RA, RB — XO=54    (Data Cache Block Store — write back
+    //                            dirty line to memory; doesn't invalidate)
+    //   dcbf  RA, RB — XO=86    (Data Cache Block Flush — write back
+    //                            and invalidate)
+    //   icbi  RA, RB — XO=982   (Instruction Cache Block Invalidate)
+    //   dcbz  RA, RB — XO=1014  (Data Cache Block set to Zero)
+    //
+    // Effective address is (RA==0 ? 0 : RA) + RB.
+    //
+    // Standard JIT icache-flush sequence after code patching:
+    //     dcbst 0, addr      ; flush dcache line to memory
+    //     sync               ; barrier
+    //     icbi  0, addr      ; invalidate icache line
+    //     isync              ; flush prefetch pipeline
+    // GCC's __builtin___clear_cache expands to this on PPC — we emit
+    // the same sequence by hand from our patching paths.
+    //
+    // Verified on POWER9:
+    //   dcbst 0,3 → 0x7c00186c    dcbf 0,3 → 0x7c0018ac
+    //   icbi  0,3 → 0x7c001fac    dcbz 0,3 → 0x7c001fec
+    // ===================================================================
+    void dcbst(RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, PPC64Registers::r0, ra, rb, /*XO*/ 54, /*Rc*/ 0));
+    }
+
+    void dcbf(RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, PPC64Registers::r0, ra, rb, /*XO*/ 86, /*Rc*/ 0));
+    }
+
+    void icbi(RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, PPC64Registers::r0, ra, rb, /*XO*/ 982, /*Rc*/ 0));
+    }
+
+    void dcbz(RegisterID ra, RegisterID rb)
+    {
+        insn(xForm(31, PPC64Registers::r0, ra, rb, /*XO*/ 1014, /*Rc*/ 0));
+    }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
