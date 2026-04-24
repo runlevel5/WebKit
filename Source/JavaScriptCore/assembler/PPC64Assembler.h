@@ -412,6 +412,44 @@ public:
     }
 
     // ===================================================================
+    // Floating-point load/store (D-form with FRT/FRS in the RT/RS slot).
+    // Power ISA v2.07B §3.3.3. The bit layout is identical to GPR D-form
+    // — 16-bit signed byte displacement in the low half — but the 5-bit
+    // slot at bits 6-10 holds an FPR number, interpreted by the opcode.
+    //
+    //   lfd  FRT, D(RA) — opcode 50 (Load Floating Double)
+    //   stfd FRS, D(RA) — opcode 54 (Store Floating Double)
+    //   lfs  FRT, D(RA) — opcode 48 (Load Floating Single → converted to double on load)
+    //   stfs FRS, D(RA) — opcode 52 (Store Floating Single ← round-to-single on store)
+    //
+    // Verified on POWER9:
+    //   lfd  3,0(4)  → 0xc8640000
+    //   stfd 3,0(4)  → 0xd8640000
+    //   lfs  3,8(4)  → 0xc0640008
+    //   stfs 3,16(4) → 0xd0640010
+    //   lfd  31,-8(1)→ 0xcbe1fff8
+    // ===================================================================
+    void lfd(FPRegisterID frt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(50, frt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stfd(FPRegisterID frs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(54, frs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void lfs(FPRegisterID frt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(48, frt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stfs(FPRegisterID frs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(52, frs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // ===================================================================
     // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
     // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
     // from a register (RB) rather than an immediate. Opcode 31 with
@@ -1098,6 +1136,23 @@ protected:
     {
         ASSERT(r >= firstRegister() && r <= lastRegister());
         return static_cast<uint32_t>(r);
+    }
+
+    static constexpr uint32_t fprValue(FPRegisterID r)
+    {
+        ASSERT(r >= firstFPRegister() && r <= lastFPRegister());
+        return static_cast<uint32_t>(r);
+    }
+
+    // FP D-form: same bit layout as GPR D-form but the 5-bit RT/RS slot
+    // holds an FPR number rather than a GPR.
+    static constexpr uint32_t dFormFp(uint32_t opcode, FPRegisterID frtOrFrs, RegisterID ra, uint16_t imm)
+    {
+        ASSERT(opcode < 64);
+        return (opcode << 26)
+             | (fprValue(frtOrFrs) << 21)
+             | (registerValue(ra) << 16)
+             | imm;
     }
 
 private:
