@@ -550,6 +550,27 @@ public:
     }
 
     // ===================================================================
+    // Floating-point compare (X-form variant with 3-bit BF). Power ISA
+    // v2.07B §3.3.6.
+    //   fcmpu BF, FRA, FRB — opcode 63, XO=0  (Unordered: QNaN → FPCC, no VXSNAN)
+    //   fcmpo BF, FRA, FRB — opcode 63, XO=32 (Ordered: signaling on SNaN and QNaN)
+    // Both set CR[BF] to reflect LT/GT/EQ/UN of the FP compare.
+    // Verified on POWER9:
+    //   fcmpu 0,3,4 → 0xfc032000
+    //   fcmpu 7,3,4 → 0xff832000
+    //   fcmpo 0,3,4 → 0xfc032040
+    // ===================================================================
+    void fcmpu(uint32_t bf, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(fpCmpXForm(63, bf, fra, frb, /*XO*/ 0));
+    }
+
+    void fcmpo(uint32_t bf, FPRegisterID fra, FPRegisterID frb)
+    {
+        insn(fpCmpXForm(63, bf, fra, frb, /*XO*/ 32));
+    }
+
+    // ===================================================================
     // Indexed load/store instructions (X-form). Power ISA v2.07B §3.3.2.
     // Effective address is (RA == 0 ? 0 : RA) + RB — the offset comes
     // from a register (RB) rather than an immediate. Opcode 31 with
@@ -1291,6 +1312,22 @@ protected:
              | (fprValue(frb) << 11)
              | (xo << 1)
              | rc;
+    }
+
+    // FP compare X-form. Same shape as integer cmpXForm but always L=0
+    // (the reserved bit 10) and operands are FPRs.
+    //   [op=63 | BF(3) | //(2) | FRA(5) | FRB(5) | XO(10) | /(1)]
+    static constexpr uint32_t fpCmpXForm(uint32_t opcode, uint32_t bf,
+                                         FPRegisterID fra, FPRegisterID frb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(bf < 8);
+        ASSERT(xo < 1024);
+        return (opcode << 26)
+             | (bf << 23)
+             | (fprValue(fra) << 16)
+             | (fprValue(frb) << 11)
+             | (xo << 1);
     }
 
 private:

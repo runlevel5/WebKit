@@ -246,6 +246,13 @@ int main()
         { "fdivs 3,4,5",               aForm(59, 3, 4, 5, 0, 18, 0),                         0xec642824 },
         { "fmadd 3,4,5,6",             aForm(63, 3, 4, 6, 5, 29, 0),                         0xfc64317a },
 
+        // FP compare — BF-shape X-form. bf<<23 at bits 6-8 matches
+        // cmpXForm with L=0; FRA and FRB are FPR indices (which use the
+        // same 5-bit slots as GPRs for encoding purposes).
+        { "fcmpu 0,3,4",               cmpXForm(63, 0, 0, 3, 4, 0),                          0xfc032000 },
+        { "fcmpu 7,3,4",               cmpXForm(63, 7, 0, 3, 4, 0),                          0xff832000 },
+        { "fcmpo 0,3,4",               cmpXForm(63, 0, 0, 3, 4, 32),                         0xfc032040 },
+
         // FP unary X-form (opcode 63). FRA slot = 0 (unused).
         { "fneg 3,4",                  xForm(63, 3, 0, 4, 40,  0),                           0xfc602050 },
         { "fabs 3,4",                  xForm(63, 3, 0, 4, 264, 0),                           0xfc602210 },
