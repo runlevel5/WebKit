@@ -247,6 +247,78 @@ public:
     void mfctr(RegisterID rt) { mfspr(rt, SPR_CTR); }
     void mtctr(RegisterID rs) { mtspr(SPR_CTR, rs); }
 
+    // Branch BO-field encodings (Power ISA v2.07B §3.3.6 Table 11). Only the
+    // hint-0 "branch-unconditional" and "branch-if-condition-{true,false}"
+    // values JSC needs right now.
+    static constexpr uint32_t BO_ALWAYS        = 20; // 0b10100 — "branch always"
+    static constexpr uint32_t BO_IF_TRUE       = 12; // 0b01100 — "branch if CR[BI]=1"
+    static constexpr uint32_t BO_IF_FALSE      =  4; // 0b00100 — "branch if CR[BI]=0"
+
+    // Bits within a CR field (§3.3.10): LT, GT, EQ, SO. Callers pass
+    // BI = 4*crField + {LT,GT,EQ,SO} to address a specific CR field bit.
+    static constexpr uint32_t CR_LT = 0;
+    static constexpr uint32_t CR_GT = 1;
+    static constexpr uint32_t CR_EQ = 2;
+    static constexpr uint32_t CR_SO = 3;
+
+    // b — Branch. Power ISA v2.07B §3.3.6, I-form, opcode 18.
+    //   Encoding: [op(6)=18 | LI(24) | AA(1) | LK(1)]
+    //   Semantics: NIA ← (AA ? sign_extend(LI||0b00) : CIA + sign_extend(LI||0b00))
+    //   LK=1 records return address into LR ("bl"). Byte offset range is
+    //   ±32MB (24-bit signed word offset).
+    // Verified 2026-04-24 on POWER9:
+    //   `b .` (self)        → 0x48000000
+    //   `b .+4` (next)      → 0x48000004
+    //   `bl <-8 bytes back>`→ 0x4bfffff9
+    void b(int32_t byteOffset)
+    {
+        insn(iForm(18, byteOffset, /*AA*/ 0, /*LK*/ 0));
+    }
+
+    void bl(int32_t byteOffset)
+    {
+        insn(iForm(18, byteOffset, /*AA*/ 0, /*LK*/ 1));
+    }
+
+    // bc — Branch Conditional. Power ISA v2.07B §3.3.6, B-form, opcode 16.
+    //   Encoding: [op(6)=16 | BO(5) | BI(5) | BD(14) | AA(1) | LK(1)]
+    //   BO selects the branch-operation (decrement/no-decrement × cond);
+    //   BI selects the CR bit to test. Byte offset range is ±32KB
+    //   (14-bit signed word offset).
+    // Verified 2026-04-24 on POWER9:
+    //   `beq .-12` (bc 12, 2, -12) → 0x4182fff4
+    void bc(uint32_t bo, uint32_t bi, int32_t byteOffset)
+    {
+        insn(bForm(16, bo, bi, byteOffset, /*AA*/ 0, /*LK*/ 0));
+    }
+
+    // bclr / bcctr — Branch Conditional to LR / CTR. Power ISA v2.07B §3.3.6,
+    //   XL-form, opcode 19, XO=16 (bclr) or 528 (bcctr).
+    //   Encoding: [op(6)=19 | BO(5) | BI(5) | BH(3) | //(2) | XO(10) | LK(1)]
+    //   BH is a branch-prediction hint (usually 0). LK=1 makes it a subroutine
+    //   call (blrl / bcctrl) that also writes the return address to LR.
+    // Verified 2026-04-24 on POWER9:
+    //   blr   → bclr 20,0,0    → 0x4e800020
+    //   bctr  → bcctr 20,0,0   → 0x4e800420
+    //   bctrl → bcctr 20,0,0,1 → 0x4e800421
+    //   beqlr → bclr 12,2,0    → 0x4d820020
+    //   bnelr → bclr  4,2,0    → 0x4c820020
+    void bclr(uint32_t bo, uint32_t bi, uint32_t bh = 0, uint32_t lk = 0)
+    {
+        insn(xlForm(19, bo, bi, bh, /*XO*/ 16, lk));
+    }
+
+    void bcctr(uint32_t bo, uint32_t bi, uint32_t bh = 0, uint32_t lk = 0)
+    {
+        insn(xlForm(19, bo, bi, bh, /*XO*/ 528, lk));
+    }
+
+    // Convenience wrappers: unconditional indirect branches and return-from-call.
+    void blr()   { bclr(BO_ALWAYS, 0, 0, 0); }
+    void blrl()  { bclr(BO_ALWAYS, 0, 0, 1); }
+    void bctr()  { bcctr(BO_ALWAYS, 0, 0, 0); }
+    void bctrl() { bcctr(BO_ALWAYS, 0, 0, 1); }
+
     // nop — Power ISA v2.07B §3.3.1.1 defines the preferred nop as
     //   `ori 0, 0, 0` → 0x60000000. Verified: `echo "nop" | as` emits
     //   the same bytes (00 00 00 60).
@@ -292,6 +364,66 @@ protected:
              | (registerValue(ra) << 16)
              | (static_cast<uint32_t>(static_cast<uint16_t>(byteOffset)) & 0xFFFC)
              | xo;
+    }
+
+    // I-form: [op(6) | LI(24) | AA(1) | LK(1)]
+    // See Power ISA v2.07B Book I §1.6.1 Figure 3. LI is a 24-bit signed
+    // word-displacement; effective byte offset is sign_extend(LI || 0b00).
+    // Since the byte offset has its low 2 bits = 0, we can pack it directly
+    // into bits 2-25 of the instruction (mask 0x03FFFFFC).
+    static constexpr uint32_t iForm(uint32_t opcode, int32_t byteOffset, uint32_t aa, uint32_t lk)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(aa < 2);
+        ASSERT(lk < 2);
+        ASSERT((byteOffset & 0x3) == 0);
+        // 26-bit signed byte range: [-2^25, 2^25 - 4].
+        ASSERT(byteOffset >= -(1 << 25) && byteOffset < (1 << 25));
+        return (opcode << 26)
+             | (static_cast<uint32_t>(byteOffset) & 0x03FFFFFC)
+             | (aa << 1)
+             | lk;
+    }
+
+    // B-form: [op(6) | BO(5) | BI(5) | BD(14) | AA(1) | LK(1)]
+    // BD is a 14-bit signed word-displacement.
+    static constexpr uint32_t bForm(uint32_t opcode, uint32_t bo, uint32_t bi,
+                                    int32_t byteOffset, uint32_t aa, uint32_t lk)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(bo < 32);
+        ASSERT(bi < 32);
+        ASSERT(aa < 2);
+        ASSERT(lk < 2);
+        ASSERT((byteOffset & 0x3) == 0);
+        // 16-bit signed byte range: [-2^15, 2^15 - 4].
+        ASSERT(byteOffset >= -(1 << 15) && byteOffset < (1 << 15));
+        return (opcode << 26)
+             | (bo << 21)
+             | (bi << 16)
+             | (static_cast<uint32_t>(byteOffset) & 0xFFFC)
+             | (aa << 1)
+             | lk;
+    }
+
+    // XL-form: [op(6) | BO(5) | BI(5) | BH(3) | //(2) | XO(10) | LK(1)]
+    // BH is a 3-bit branch-prediction hint at bits 16-18; bits 19-20 are
+    // reserved (must be 0). XO at bits 21-30 (shift 1 from LSB).
+    static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
+                                     uint32_t bh, uint32_t xo, uint32_t lk)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(bo < 32);
+        ASSERT(bi < 32);
+        ASSERT(bh < 8);
+        ASSERT(xo < 1024);
+        ASSERT(lk < 2);
+        return (opcode << 26)
+             | (bo << 21)
+             | (bi << 16)
+             | (bh << 13)
+             | (xo << 1)
+             | lk;
     }
 
     // XFX-form: [op(6) | RT/RS(5) | spr(10) | XO(10) | /(1)]
