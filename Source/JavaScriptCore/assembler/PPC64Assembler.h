@@ -1787,25 +1787,27 @@ public:
 
     // ===================================================================
     // VMX 4-operand instructions (VA-form, opcode 4). Power ISA v2.07B
-    // §6.7-§6.10. Critical for shuffles, byte permutes, and any
-    // SIMD multiply-add fast path.
+    // §6.7-§6.10. Each method here maps to a concrete JSC use site:
     //
-    //   vperm   VRT, VRA, VRB, VRC — XO=43 (per-byte select: VRT[i] is
-    //                              VRA[VRC[i] & 0x1F] or VRB[..]+16 etc.)
-    //   vsel    VRT, VRA, VRB, VRC — XO=42 (bitwise select: VRT = (VRC ?
-    //                              VRB : VRA), bit-by-bit, 128-bit-wide)
-    //   vmaddfp VRT, VRA, VRC, VRB — XO=46 (VRT = VRA*VRC + VRB; asm
-    //                              syntax reorders VRC before VRB!)
-    //   vnmsubfp VRT, VRA, VRC, VRB — XO=47 (VRT = -(VRA*VRC - VRB))
-    //   vmsumubm VRT, VRA, VRB, VRC — XO=36 (sum-of-products byte→word)
+    //   vperm   VRT, VRA, VRB, VRC — XO=43  vectorShuffle (byte permute)
+    //   vsel    VRT, VRA, VRB, VRC — XO=42  vectorBitselect
+    //   vmaddfp VRT, VRA, VRC, VRB — XO=46  f32x4 fused multiply-add
+    //                                       (asm reorders VRC before VRB)
     //
     // POWER9 future-stubs:
     //   - v3.0 vpermr (XO=59, bit-reverse permute) — eliminates several
-    //     byte-swap costs but requires gating
-    //   - v3.0 fused multiply-add for vector double (xvmaddadp etc.)
-    //     lives in VSX (opcode 60), not VA-form
+    //     byte-swap costs in PPC64LE shuffle paths
+    //   - v3.0 VSX FMA double-precision (xvmaddadp at opcode 60) — add
+    //     when FTL emits f64x2 fused-multiply-add
     //
-    // Verified on POWER9 (5 cases).
+    // Removed in audit-cleanup (no JSC use):
+    //   - vnmsubfp — Newton-Raphson reciprocal helper; we rely on VSX
+    //     hardware divide/sqrt when needed, no NR iterations on PPC
+    //   - vmsumubm — byte-granularity sum-of-products doesn't match
+    //     WASM SIMD's i32x4.dot_i16x8_s (halfword); re-add vmsumshs /
+    //     vmsumshm with a citation when MacroAssembler asks
+    //
+    // Verified on POWER9 (3 cases).
     // ===================================================================
     void vperm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
     {
@@ -1825,48 +1827,42 @@ public:
         insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 46));
     }
 
-    void vnmsubfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrc, VRegisterID vrb)
-    {
-        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 47));
-    }
-
-    void vmsumubm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
-    {
-        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 36));
-    }
-
     // ===================================================================
     // VMX floating-point lane-wise arithmetic. Power ISA v2.07B §6.13.
     // VMX FP is **single-precision only** — each 128-bit register holds
     // 4 floats. Double-precision SIMD comes via VSX (Phase 5 territory).
     //
+    // Scope rule for this file: every method here maps to a JSC
+    // MacroAssembler call site or a WASM SIMD128 instruction. The
+    // earlier draft included vrefp / vrsqrtefp / vexptefp / vlogefp /
+    // vcmpbfp; those are removed because no JSC method ends up
+    // emitting them. Re-add only with a citation to the use site.
+    //
     // VX-form (opcode 4):
-    //   vaddfp  VRT, VRA, VRB — XO=10    (lane-wise FP add)
-    //   vsubfp  VRT, VRA, VRB — XO=74    (lane-wise FP sub)
-    //   vminfp  VRT, VRA, VRB — XO=1098  (FP min)
-    //   vmaxfp  VRT, VRA, VRB — XO=1034  (FP max)
+    //   vaddfp  VRT, VRA, VRB — XO=10    f32x4.add
+    //   vsubfp  VRT, VRA, VRB — XO=74    f32x4.sub
+    //   vminfp  VRT, VRA, VRB — XO=1098  f32x4.min
+    //   vmaxfp  VRT, VRA, VRB — XO=1034  f32x4.max
     //
     // VX-form FP unary (VRA slot = 0):
-    //   vrefp     VRT, VRB — XO=266   reciprocal estimate (low precision)
-    //   vrsqrtefp VRT, VRB — XO=330   reciprocal sqrt estimate
-    //   vexptefp  VRT, VRB — XO=394   2^x estimate
-    //   vlogefp   VRT, VRB — XO=458   log2 estimate
-    //   vrfin     VRT, VRB — XO=522   round to nearest integer
-    //   vrfiz     VRT, VRB — XO=586   round toward zero (trunc)
-    //   vrfip     VRT, VRB — XO=650   round toward +inf (ceil)
-    //   vrfim     VRT, VRB — XO=714   round toward -inf (floor)
+    //   vrfin   VRT, VRB — XO=522   f32x4.nearest
+    //   vrfiz   VRT, VRB — XO=586   f32x4.trunc
+    //   vrfip   VRT, VRB — XO=650   f32x4.ceil
+    //   vrfim   VRT, VRB — XO=714   f32x4.floor
     //
     // VC-form FP compares (XO at bits 22-31, Rc at bit 21):
-    //   vcmpeqfp  VRT, VRA, VRB — XO=198  equal
-    //   vcmpgefp  VRT, VRA, VRB — XO=454  greater-or-equal
-    //   vcmpgtfp  VRT, VRA, VRB — XO=710  greater-than
-    //   vcmpbfp   VRT, VRA, VRB — XO=966  bounds check (clamping helper)
+    //   vcmpeqfp  VRT, VRA, VRB — XO=198  f32x4.eq
+    //   vcmpgefp  VRT, VRA, VRB — XO=454  f32x4.ge
+    //   vcmpgtfp  VRT, VRA, VRB — XO=710  f32x4.gt
     //
     // POWER9 future-stubs:
-    //   - v3.0 adds vrlqmi/vrlq for 128-bit rotates and a few new
-    //     FP-vector ops; not in v2.07B
     //   - VSX is the modern path for FP-vector double-precision
-    //     (xvadddp/xvsubdp/xvmuldp etc., opcode 60); add when FTL needs
+    //     (xvadddp/xvsubdp/xvmuldp at opcode 60); add when FTL needs
+    //   - For libm-style transcendentals (Math.exp / Math.log / 1/x /
+    //     1/sqrt), v2.07B's vrefp / vrsqrtefp / vexptefp / vlogefp
+    //     ESTIMATE ops can be useful. Not added here because no JSC
+    //     method emits them — re-introduce with citation if/when an
+    //     inline-libm fast path on PPC64 needs them.
     //
     // Verified on POWER9 (11 cases).
     // ===================================================================
@@ -1875,19 +1871,17 @@ public:
     void vminfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1098)); }
     void vmaxfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1034)); }
 
-    void vrefp(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 266)); }
-    void vrsqrtefp(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 330)); }
-    void vexptefp(VRegisterID vrt, VRegisterID vrb)  { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 394)); }
-    void vlogefp(VRegisterID vrt, VRegisterID vrb)   { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 458)); }
-    void vrfin(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 522)); }
-    void vrfiz(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 586)); }
-    void vrfip(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 650)); }
-    void vrfim(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 714)); }
+    void vrfin(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 522)); }
+    void vrfiz(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 586)); }
+    void vrfip(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 650)); }
+    void vrfim(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 714)); }
 
     void vcmpeqfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 198)); }
     void vcmpgefp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 454)); }
     void vcmpgtfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 710)); }
-    void vcmpbfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vcForm(4, vrt, vra, vrb, 0, 966)); }
+    // Removed in audit-cleanup (no JSC use):
+    //   - vrefp / vrsqrtefp / vexptefp / vlogefp (FP estimates)
+    //   - vcmpbfp (Power-specific bounds compare)
 
     // ===================================================================
     // VSX (Vector-Scalar Extension) — first taste. Power ISA v2.07B §7.
@@ -2460,12 +2454,11 @@ protected:
     }
 
     // VA-form (VMX 4-operand): [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | VRC(5) | XO(6)]
-    // Power ISA v2.07B Book I §1.6.1. Used by vperm, vsel, vmaddfp,
-    // vnmsubfp, vmsumubm and a few other 4-source ops. XO is only 6 bits
-    // here — fewer values are possible than VX-form's 11-bit XO. NOTE: a
-    // few asm mnemonics reorder the operand list (vmaddfp asm syntax
-    // is "vmaddfp VRT, VRA, VRC, VRB" — VRC before VRB) — the helper
-    // takes the encoding-order (VRT, VRA, VRB, VRC).
+    // Power ISA v2.07B Book I §1.6.1. Used by vperm, vsel, vmaddfp.
+    // XO is only 6 bits here — fewer values are possible than VX-form's
+    // 11-bit XO. NOTE: a few asm mnemonics reorder the operand list
+    // (vmaddfp asm syntax is "vmaddfp VRT, VRA, VRC, VRB" — VRC before
+    // VRB) — the helper takes the encoding-order (VRT, VRA, VRB, VRC).
     static constexpr uint32_t vaForm(uint32_t opcode, VRegisterID vrt, VRegisterID vra,
                                      VRegisterID vrb, VRegisterID vrc, uint32_t xo)
     {
