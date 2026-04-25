@@ -71,6 +71,19 @@ typedef enum : int8_t {
     InvalidFPRReg = -1,
 } FPRegisterID;
 
+// VMX vector registers v0-v31. Distinct enum from FPRegisterID because
+// although both share the underlying VSR file (v0..v31 ≡ VSR32..VSR63,
+// f0..f31 ≡ VSR0..VSR31's high half), the encodings live in different
+// instruction-form slots and the calling-convention save/restore rules
+// differ. JSC's PPC64 backend will track Simd128 values in this set.
+typedef enum : int8_t {
+#define REGISTER_ID(id, name, r, cs) id,
+    FOR_EACH_VR_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
+
+    InvalidVRReg = -1,
+} VRegisterID;
+
 } // namespace PPC64Registers
 
 class PPC64Assembler {
@@ -78,6 +91,7 @@ public:
     using RegisterID = PPC64Registers::RegisterID;
     using SPRegisterID = PPC64Registers::SPRegisterID;
     using FPRegisterID = PPC64Registers::FPRegisterID;
+    using VRegisterID = PPC64Registers::VRegisterID;
 
     static constexpr RegisterID firstRegister() { return PPC64Registers::r0; }
     static constexpr RegisterID lastRegister() { return PPC64Registers::r31; }
@@ -90,6 +104,10 @@ public:
     static constexpr FPRegisterID firstFPRegister() { return PPC64Registers::f0; }
     static constexpr FPRegisterID lastFPRegister() { return PPC64Registers::f31; }
     static constexpr unsigned numberOfFPRegisters() { return lastFPRegister() - firstFPRegister() + 1; }
+
+    static constexpr VRegisterID firstVRegister() { return PPC64Registers::v0; }
+    static constexpr VRegisterID lastVRegister() { return PPC64Registers::v31; }
+    static constexpr unsigned numberOfVRegisters() { return lastVRegister() - firstVRegister() + 1; }
 
     static ASCIILiteral gprName(RegisterID id)
     {
@@ -119,6 +137,17 @@ public:
         static constexpr ASCIILiteral nameForRegister[numberOfFPRegisters()] = {
 #define REGISTER_NAME(id, name, r, cs) name,
             FOR_EACH_FP_REGISTER(REGISTER_NAME)
+#undef REGISTER_NAME
+        };
+        return nameForRegister[id];
+    }
+
+    static ASCIILiteral vrName(VRegisterID id)
+    {
+        ASSERT(id >= firstVRegister() && id <= lastVRegister());
+        static constexpr ASCIILiteral nameForRegister[numberOfVRegisters()] = {
+#define REGISTER_NAME(id, name, r, cs) name,
+            FOR_EACH_VR_REGISTER(REGISTER_NAME)
 #undef REGISTER_NAME
         };
         return nameForRegister[id];
@@ -1802,6 +1831,12 @@ protected:
     static constexpr uint32_t fprValue(FPRegisterID r)
     {
         ASSERT(r >= firstFPRegister() && r <= lastFPRegister());
+        return static_cast<uint32_t>(r);
+    }
+
+    static constexpr uint32_t vrValue(VRegisterID r)
+    {
+        ASSERT(r >= firstVRegister() && r <= lastVRegister());
         return static_cast<uint32_t>(r);
     }
 

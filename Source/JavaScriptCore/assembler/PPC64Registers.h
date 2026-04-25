@@ -136,4 +136,49 @@
     macro(f30, "f30"_s, 0, 1)        \
     macro(f31, "f31"_s, 0, 1)
 
+// VMX (Altivec) vector registers v0-v31. In VSX terms these alias the
+// upper 32 of the 64 VSRs (VSR32-VSR63), so save/restore between VMX
+// and VSX views needs care. ELFv2 §3.2.4 calling convention:
+//   v0-v1   volatile (often used for syscall scratch)
+//   v2-v13  argument / return (volatile)
+//   v14-v19 volatile
+//   v20-v31 non-volatile (callee-saved)
+//
+// PLAN.md "Quick reference" reserves v0 as ScratchSimd128Reg, treating
+// v0-v19 as volatile and v20-v31 as non-volatile callee-saved — matches
+// the SM port's post-Phase-2 convention.
+#define FOR_EACH_VR_REGISTER(macro) \
+    macro(v0, "v0"_s, 0, 0)          \
+    macro(v1, "v1"_s, 0, 0)          \
+    macro(v2, "v2"_s, 0, 0)          \
+    macro(v3, "v3"_s, 0, 0)          \
+    macro(v4, "v4"_s, 0, 0)          \
+    macro(v5, "v5"_s, 0, 0)          \
+    macro(v6, "v6"_s, 0, 0)          \
+    macro(v7, "v7"_s, 0, 0)          \
+    macro(v8, "v8"_s, 0, 0)          \
+    macro(v9, "v9"_s, 0, 0)          \
+    macro(v10, "v10"_s, 0, 0)        \
+    macro(v11, "v11"_s, 0, 0)        \
+    macro(v12, "v12"_s, 0, 0)        \
+    macro(v13, "v13"_s, 0, 0)        \
+    macro(v14, "v14"_s, 0, 0)        \
+    macro(v15, "v15"_s, 0, 0)        \
+    macro(v16, "v16"_s, 0, 0)        \
+    macro(v17, "v17"_s, 0, 0)        \
+    macro(v18, "v18"_s, 0, 0)        \
+    macro(v19, "v19"_s, 0, 0)        \
+    macro(v20, "v20"_s, 0, 1)        \
+    macro(v21, "v21"_s, 0, 1)        \
+    macro(v22, "v22"_s, 0, 1)        \
+    macro(v23, "v23"_s, 0, 1)        \
+    macro(v24, "v24"_s, 0, 1)        \
+    macro(v25, "v25"_s, 0, 1)        \
+    macro(v26, "v26"_s, 0, 1)        \
+    macro(v27, "v27"_s, 0, 1)        \
+    macro(v28, "v28"_s, 0, 1)        \
+    macro(v29, "v29"_s, 0, 1)        \
+    macro(v30, "v30"_s, 0, 1)        \
+    macro(v31, "v31"_s, 0, 1)
+
 #endif // CPU(PPC64LE)
