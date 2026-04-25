@@ -552,6 +552,43 @@ public:
     void urshift64(TrustedImm32, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
     void urshift64(RegisterID, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
     void urshift64(RegisterID, TrustedImm32, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // neg64 (MacroAssembler::negPtr)
+    void neg64(RegisterID)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void neg64(RegisterID, RegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional or64 overloads (MacroAssembler::orPtr)
+    void or64(TrustedImm64, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void or64(RegisterID, RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
+    void or64(TrustedImm32, RegisterID, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
+
+    // rotateRight64 (MacroAssembler::rotateRightPtr)
+    void rotateRight64(TrustedImm32, RegisterID)                 { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional sub64 overloads (MacroAssembler::subPtr)
+    void sub64(RegisterID, TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void sub64(TrustedImm64, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional xor64 overloads (MacroAssembler::xorPtr)
+    void xor64(Address, RegisterID)                              { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(RegisterID, Address)                              { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(TrustedImm64, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional load64 overloads (MacroAssembler::loadPtr)
+    void load64(BaseIndex, RegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+    void load64(const void*, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // loadPair64 (MacroAssembler::loadPairPtr)
+    void loadPair64(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void loadPair64(RegisterID, TrustedImm32, RegisterID, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
+    void loadPair64(Address, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional store64 overloads (MacroAssembler::storePtr)
+    void store64(RegisterID, BaseIndex)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(RegisterID, void*)                              { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(TrustedImm64, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(TrustedImm32, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(TrustedImm64, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
