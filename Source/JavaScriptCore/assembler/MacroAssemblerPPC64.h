@@ -318,6 +318,45 @@ public:
         move(imm, dataTempRegister);
         m_assembler.add(dest, src, dataTempRegister);
     }
+
+    // ===================================================================
+    // 64-bit subtract. Power ISA: `subf RT, RA, RB` → RT = RB - RA
+    // (note the REVERSED operand order versus most ISAs).
+    // ===================================================================
+
+    // dest = dest - src
+    void sub64(RegisterID src, RegisterID dest)
+    {
+        m_assembler.subf(dest, src, dest);
+    }
+
+    // dest = src1 - src2
+    void sub64(RegisterID src1, RegisterID src2, RegisterID dest)
+    {
+        // subf reverses: RT = RB - RA, so pass (dest, src2, src1).
+        m_assembler.subf(dest, src2, src1);
+    }
+
+    // dest = dest - imm
+    void sub64(TrustedImm32 imm, RegisterID dest)
+    {
+        sub64(imm, dest, dest);
+    }
+
+    // dest = src - imm
+    void sub64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        // Implement as `dest = src + (-imm)` when -imm fits in int16_t.
+        // The lower bound is -INT16_MAX rather than INT16_MIN because
+        // negating INT16_MIN (= -32768) overflows int16_t.
+        if (imm.m_value >= -INT16_MAX && imm.m_value <= INT16_MAX) {
+            m_assembler.addi(dest, src, static_cast<int16_t>(-imm.m_value));
+            return;
+        }
+        // Out of negatable-int16 range: materialize imm in scratch, subf.
+        move(imm, dataTempRegister);
+        m_assembler.subf(dest, dataTempRegister, src);
+    }
 };
 
 } // namespace JSC
