@@ -2206,6 +2206,43 @@ public:
     void xxlnor(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)  { insn(xx3Form(60, vsrT, vsrA, vsrB, 162)); }
 
     // ===================================================================
+    // VSX f32x4 / f64x2 arithmetic (XX3-form, opcode 60). Power ISA
+    // v2.07B §7.6. These are the WASM SIMD f-vector primitives that
+    // VMX can't express (no plain vmulfp; no FP divide; no FP sqrt).
+    //
+    // Direct WASM SIMD mapping:
+    //   f32x4.mul   →  xvmulsp  (XO=80)
+    //   f32x4.div   →  xvdivsp  (XO=88)
+    //   f32x4.sqrt  →  xvsqrtsp (XO=139, XX2-form)
+    //   f64x2.add   →  xvadddp  (XO=96)
+    //   f64x2.sub   →  xvsubdp  (XO=104)
+    //   f64x2.mul   →  xvmuldp  (XO=112)
+    //   f64x2.div   →  xvdivdp  (XO=120)
+    //   f64x2.sqrt  →  xvsqrtdp (XO=203, XX2-form)
+    //
+    // Note: f32x4.add and f32x4.sub already have VMX paths
+    // (vaddfp / vsubfp). VSX provides xvaddsp (XO=64) and xvsubsp
+    // (XO=72) as alternatives — skipped to avoid two ways to do the
+    // same thing. MacroAssembler picks the VMX form (which keeps the
+    // result in VR space for cheaper interop with the rest of our VR-
+    // based Simd128 path).
+    //
+    // POWER9 future-stub: v3.0 doesn't change these; it adds prefixed
+    // XX-form variants but the unprefixed v2.07B forms remain canonical.
+    //
+    // Verified on POWER9 (8 cases including XX2-form sqrt).
+    // ===================================================================
+    void xvmulsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB,  80)); }
+    void xvdivsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB,  88)); }
+    void xvadddp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB,  96)); }
+    void xvsubdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 104)); }
+    void xvmuldp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 112)); }
+    void xvdivdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 120)); }
+
+    void xvsqrtsp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 139)); }
+    void xvsqrtdp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 203)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -2678,6 +2715,26 @@ protected:
              | (registerValue(rb) << 11)
              | (xo << 1)
              | tx;
+    }
+
+    // XX2-form: [op | T(5) | //(5) | B(5) | XO(9) | BX(1) | TX(1)]
+    // Power ISA v2.07B Book I §1.6.1. VSX unary scalar/vector ops.
+    // Bits 11-15 are reserved (zero) for the ops we care about
+    // (xvsqrtsp/xvsqrtdp etc.); some VSX ops use them as a small
+    // immediate (e.g. xxsel uses them differently — handled elsewhere
+    // when needed). XO at bits 21-29 (9 bits), shift 2 from LSB.
+    static constexpr uint32_t xx2Form(uint32_t opcode, uint32_t vsrT, uint32_t vsrB, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(vsrT < 64);
+        ASSERT(vsrB < 64);
+        ASSERT(xo < 512);
+        return (opcode << 26)
+             | ((vsrT & 0x1F) << 21)
+             | ((vsrB & 0x1F) << 11)
+             | (xo << 2)
+             | (((vsrB >> 5) & 1) << 1)
+             | ((vsrT >> 5) & 1);
     }
 
     // XX3-form: [op=60 | T(5) | A(5) | B(5) | XO(8) | AX(1) | BX(1) | TX(1)]
