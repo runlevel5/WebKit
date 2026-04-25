@@ -159,6 +159,35 @@ public:
         DoubleLessThanOrUnordered,
         DoubleLessThanOrEqualOrUnordered,
     };
+
+    // ===================================================================
+    // Method implementations begin here. Phase 1 strategy:
+    //   * Methods named in PLAN.md "minimal compile" list (nop, breakpoint,
+    //     move, load64, store64, add64, sub64, jump, call, ret, push, pop)
+    //     get real implementations that emit the right Power ISA.
+    //   * All other MacroAssembler methods get `UNREACHABLE_FOR_PLATFORM()`
+    //     bodies, added on demand as the JIT/DFG/FTL/Wasm builds surface
+    //     them. This keeps unverified code from accumulating.
+    //
+    // Cross-platform reference for what each method's BODY needs to do:
+    // MacroAssemblerARM64.h. We follow ARM64's contract here and use
+    // PPC64Assembler primitives to emit the right encodings.
+    // ===================================================================
+
+    // nop — single-instruction no-op. Power ISA preferred form is
+    //   `ori 0, 0, 0` → 0x60000000.
+    void nop()
+    {
+        m_assembler.nop();
+    }
+
+    // breakpoint — emit a trap that delivers SIGTRAP to the process when
+    //   executed. Used by JSC's JIT-debug paths and as a marker after
+    //   unreachable codegen. Power ISA encoding: `tw 31, 0, 0` → 0x7fe00008.
+    void breakpoint()
+    {
+        m_assembler.trap();
+    }
 };
 
 } // namespace JSC
