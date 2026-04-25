@@ -1545,6 +1545,39 @@ public:
     void vsubudm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1216)); }
 
     // ===================================================================
+    // VMX load/store (X-form, opcode 31). Power ISA v2.07B §6.6.
+    //
+    //   lvx   VRT, RA, RB — XO=103  (load 16 bytes; addr forced to 16B align)
+    //   stvx  VRS, RA, RB — XO=231  (store 16 bytes; addr forced to 16B align)
+    //   lvebx VRT, RA, RB — XO=7    (load 1 byte into the lane addressed by EA[60:63])
+    //   lvehx VRT, RA, RB — XO=39   (load 2 bytes into halfword lane)
+    //   lvewx VRT, RA, RB — XO=71   (load 4 bytes into word lane)
+    //   stvebx VRS, RA, RB — XO=135 (store byte from lane)
+    //   stvehx VRS, RA, RB — XO=167 (store halfword from lane)
+    //   stvewx VRS, RA, RB — XO=199 (store word from lane)
+    //
+    // Important quirk: lvx/stvx silently mask the low 4 bits of the
+    // effective address to enforce 16-byte alignment. Callers that need
+    // unaligned vector loads must use lxvd2x/stxvd2x (VSX, separate
+    // helper) or lvsl + permute. PLAN.md "Lessons" §SIMD calls out
+    // unaligned VMX loads as a footgun.
+    //
+    // POWER9 future-stubs: lxv (VSX scalar load 128b, opcode 61), stxv
+    // (opcode 61), lxvb16x / lxvh8x / lxvw4x / lxvd2x for VSX byte-swap
+    // big-endian loads. We will add when MacroAssembler asks.
+    //
+    // Verified on POWER9 (8 cases; see encoding test).
+    // ===================================================================
+    void lvx(VRegisterID vrt, RegisterID ra, RegisterID rb)    { insn(xFormVrMem(31, vrt, ra, rb, 103)); }
+    void stvx(VRegisterID vrs, RegisterID ra, RegisterID rb)   { insn(xFormVrMem(31, vrs, ra, rb, 231)); }
+    void lvebx(VRegisterID vrt, RegisterID ra, RegisterID rb)  { insn(xFormVrMem(31, vrt, ra, rb,   7)); }
+    void lvehx(VRegisterID vrt, RegisterID ra, RegisterID rb)  { insn(xFormVrMem(31, vrt, ra, rb,  39)); }
+    void lvewx(VRegisterID vrt, RegisterID ra, RegisterID rb)  { insn(xFormVrMem(31, vrt, ra, rb,  71)); }
+    void stvebx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 135)); }
+    void stvehx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 167)); }
+    void stvewx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 199)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -1980,6 +2013,20 @@ protected:
              | (fprValue(frb) << 11)
              | (xo << 1)
              | rc;
+    }
+
+    // X-form VMX indexed load/store: VR in RT/RS slot, GPRs for base+index.
+    // Used by lvx/stvx and the per-element lv{e,h,w}{b,h,w}x variants.
+    static constexpr uint32_t xFormVrMem(uint32_t opcode, VRegisterID vrtOrVrs,
+                                         RegisterID ra, RegisterID rb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 1024);
+        return (opcode << 26)
+             | (vrValue(vrtOrVrs) << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (xo << 1);
     }
 
     // VX-form (VMX vector). Power ISA v2.07B Book I §6.1.
