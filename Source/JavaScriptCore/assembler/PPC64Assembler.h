@@ -1467,6 +1467,52 @@ public:
     }
 
     // ===================================================================
+    // VMX (Altivec) logical instructions — VX-form, opcode 4.
+    // Power ISA v2.07B Book I §6.9. All operate on full 128-bit vectors;
+    // the lane interpretation doesn't matter for bitwise ops.
+    //
+    //   vand   VRT, VRA, VRB — XO=1028 (VRT <- VRA AND VRB)
+    //   vor    VRT, VRA, VRB — XO=1156 (VRT <- VRA OR  VRB)
+    //   vxor   VRT, VRA, VRB — XO=1220 (VRT <- VRA XOR VRB)
+    //   vnor   VRT, VRA, VRB — XO=1284 (VRT <- ~(VRA OR VRB))
+    //   vandc  VRT, VRA, VRB — XO=1092 (VRT <- VRA AND ~VRB)
+    //
+    // POWER9 future-stub: veqv (XO=1668) and vorc (XO=1348) are POWER8
+    // additions on POWER ISA v2.07B but already supported by us as
+    // "v2.07B baseline" — we will add them here when MacroAssembler asks.
+    // POWER10 v3.1 adds prefixed/MMA forms that won't be relevant.
+    //
+    // Verified on POWER9:
+    //   vand  3,4,5 → 0x10642c04   vor   3,4,5 → 0x10642c84
+    //   vxor  3,4,5 → 0x10642cc4   vnor  3,4,5 → 0x10642d04
+    //   vandc 3,4,5 → 0x10642c44
+    // ===================================================================
+    void vand(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)
+    {
+        insn(vxForm(4, vrt, vra, vrb, /*XO*/ 1028));
+    }
+
+    void vor(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)
+    {
+        insn(vxForm(4, vrt, vra, vrb, /*XO*/ 1156));
+    }
+
+    void vxor(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)
+    {
+        insn(vxForm(4, vrt, vra, vrb, /*XO*/ 1220));
+    }
+
+    void vnor(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)
+    {
+        insn(vxForm(4, vrt, vra, vrb, /*XO*/ 1284));
+    }
+
+    void vandc(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)
+    {
+        insn(vxForm(4, vrt, vra, vrb, /*XO*/ 1092));
+    }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -1902,6 +1948,22 @@ protected:
              | (fprValue(frb) << 11)
              | (xo << 1)
              | rc;
+    }
+
+    // VX-form (VMX vector). Power ISA v2.07B Book I §6.1.
+    //   [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | XO(11)]
+    // XO occupies the entire low 11 bits of the instruction (bits 21-31)
+    // — no shift needed when packing.
+    static constexpr uint32_t vxForm(uint32_t opcode, VRegisterID vrt, VRegisterID vra,
+                                     VRegisterID vrb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 2048);
+        return (opcode << 26)
+             | (vrValue(vrt) << 21)
+             | (vrValue(vra) << 16)
+             | (vrValue(vrb) << 11)
+             | xo;
     }
 
     // FP compare X-form. Same shape as integer cmpXForm but always L=0

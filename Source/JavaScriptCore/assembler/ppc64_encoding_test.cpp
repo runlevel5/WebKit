@@ -92,6 +92,13 @@ static constexpr uint32_t xlForm(uint32_t opcode, uint32_t bo, uint32_t bi,
     return (opcode << 26) | (bo << 21) | (bi << 16) | (bh << 13) | (xo << 1) | lk;
 }
 
+static constexpr uint32_t vxForm(uint32_t opcode, RegID vrt, RegID vra, RegID vrb, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(xo < 2048);
+    return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | xo;
+}
+
 static constexpr uint32_t xsForm(uint32_t opcode, RegID rs, RegID ra,
                                  uint32_t sh, uint32_t xo, uint32_t rc)
 {
@@ -377,6 +384,13 @@ int main()
         { "dcbf  0,3",                 xForm(31, 0, 0, 3, 86,   0),                          0x7c0018ac },
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
+
+        // VMX (Altivec) logical, VX-form (opcode 4).
+        { "vand  3,4,5",               vxForm(4, 3, 4, 5, 1028),                             0x10642c04 },
+        { "vor   3,4,5",               vxForm(4, 3, 4, 5, 1156),                             0x10642c84 },
+        { "vxor  3,4,5",               vxForm(4, 3, 4, 5, 1220),                             0x10642cc4 },
+        { "vnor  3,4,5",               vxForm(4, 3, 4, 5, 1284),                             0x10642d04 },
+        { "vandc 3,4,5",               vxForm(4, 3, 4, 5, 1092),                             0x10642c44 },
 
         // Memory barriers. sync L at opcode 31, XO=598 with L at Power bits
         // 9-10 (shift 21). isync = opcode 19, XO=150 (XL-form). eieio = 854.
