@@ -99,6 +99,28 @@ static constexpr uint32_t vxForm(uint32_t opcode, RegID vrt, RegID vra, RegID vr
     return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | xo;
 }
 
+static constexpr uint32_t xx1Form(uint32_t opcode, uint32_t vsrT, RegID ra, RegID rb, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(vsrT < 64);
+    assert(xo < 1024);
+    return (opcode << 26) | ((vsrT & 0x1F) << 21) | (ra << 16) | (rb << 11)
+         | (xo << 1) | ((vsrT >> 5) & 1);
+}
+
+static constexpr uint32_t xx3Form(uint32_t opcode, uint32_t vsrT, uint32_t vsrA,
+                                  uint32_t vsrB, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(vsrT < 64);
+    assert(vsrA < 64);
+    assert(vsrB < 64);
+    assert(xo < 256);
+    return (opcode << 26) | ((vsrT & 0x1F) << 21) | ((vsrA & 0x1F) << 16)
+         | ((vsrB & 0x1F) << 11) | (xo << 3)
+         | (((vsrA >> 5) & 1) << 2) | (((vsrB >> 5) & 1) << 1) | ((vsrT >> 5) & 1);
+}
+
 static constexpr uint32_t vaForm(uint32_t opcode, RegID vrt, RegID vra, RegID vrb, RegID vrc, uint32_t xo)
 {
     assert(opcode < 64);
@@ -417,6 +439,19 @@ int main()
         { "vcmpeqfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 198),                           0x106428c6 },
         { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
         { "vcmpgtfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 710),                           0x10642ac6 },
+
+        // VSX XX1-form load/store (opcode 31). VSR# is split: low 5
+        // bits in T-slot, high bit at bit 31. vs35 exercises TX=1.
+        { "lxvd2x  vs3,r4,r5",         xx1Form(31, 3,  4, 5, 844),                           0x7c642e98 },
+        { "lxvd2x  vs35,r4,r5",        xx1Form(31, 35, 4, 5, 844),                           0x7c642e99 },
+        { "stxvd2x vs3,r4,r5",         xx1Form(31, 3,  4, 5, 972),                           0x7c642f98 },
+        { "lxvw4x  vs3,r4,r5",         xx1Form(31, 3,  4, 5, 780),                           0x7c642e18 },
+        { "stxvw4x vs3,r4,r5",         xx1Form(31, 3,  4, 5, 908),                           0x7c642f18 },
+
+        // VSX XX3-form bitwise (opcode 60).
+        { "xxlor  vs3,vs4,vs5",        xx3Form(60, 3, 4, 5, 146),                            0xf0642c90 },
+        { "xxlxor vs3,vs4,vs5",        xx3Form(60, 3, 4, 5, 154),                            0xf0642cd0 },
+        { "xxland vs3,vs4,vs5",        xx3Form(60, 3, 4, 5, 130),                            0xf0642c10 },
 
         // VA-form 4-operand. Note vmaddfp/vnmsubfp asm syntax reorders
         // (VRT,VRA,VRC,VRB) but the encoding is (VRT,VRA,VRB,VRC).
