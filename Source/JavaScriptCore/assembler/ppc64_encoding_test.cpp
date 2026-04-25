@@ -539,6 +539,14 @@ int main()
         { "stvehx 3,4,5",              xForm(31, 3, 4, 5, 167, 0),                           0x7c64294e },
         { "stvewx 3,4,5",              xForm(31, 3, 4, 5, 199, 0),                           0x7c64298e },
 
+        // VMX vector multiply for WASM SIMD i16x8/i32x4/i64x2.mul + dot.
+        { "vmuluwm  3,4,5",            vxForm(4, 3, 4, 5, 137),                              0x10642889 },
+        { "vmulesh  3,4,5",            vxForm(4, 3, 4, 5, 840),                              0x10642b48 },
+        { "vmulosh  3,4,5",            vxForm(4, 3, 4, 5, 328),                              0x10642948 },
+        { "vmulesw  3,4,5",            vxForm(4, 3, 4, 5, 904),                              0x10642b88 },
+        { "vmulosw  3,4,5",            vxForm(4, 3, 4, 5, 392),                              0x10642988 },
+        { "vmsumshm 3,4,5,6",          vaForm(4, 3, 4, 5, 6, 40),                            0x106429a8 },
+
         // VMX integer add/sub SATURATING (12 cases).
         { "vaddubs 3,4,5",             vxForm(4, 3, 4, 5,  512),                             0x10642a00 },
         { "vadduhs 3,4,5",             vxForm(4, 3, 4, 5,  576),                             0x10642a40 },
