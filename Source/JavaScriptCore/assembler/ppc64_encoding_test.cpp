@@ -403,6 +403,11 @@ int main()
         { "vcmpgtub 3,4,5",            vcForm(4, 3, 4, 5, 0, 518),                           0x10642a06 },
         { "vcmpgtsb 3,4,5",            vcForm(4, 3, 4, 5, 0, 774),                           0x10642b06 },
         { "vcmpgtsd 3,4,5",            vcForm(4, 3, 4, 5, 0, 967),                           0x10642bc7 },
+        { "vcmpgtuh 3,4,5",            vcForm(4, 3, 4, 5, 0, 582),                           0x10642a46 },
+        { "vcmpgtuw 3,4,5",            vcForm(4, 3, 4, 5, 0, 646),                           0x10642a86 },
+        { "vcmpgtud 3,4,5",            vcForm(4, 3, 4, 5, 0, 711),                           0x10642ac7 },
+        { "vcmpgtsh 3,4,5",            vcForm(4, 3, 4, 5, 0, 838),                           0x10642b46 },
+        { "vcmpgtsw 3,4,5",            vcForm(4, 3, 4, 5, 0, 902),                           0x10642b86 },
 
         // VMX load/store (X-form, opcode 31, VR in RT/RS slot).
         { "lvx    3,4,5",              xForm(31, 3, 4, 5, 103, 0),                           0x7c6428ce },
