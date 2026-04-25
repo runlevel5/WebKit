@@ -357,6 +357,38 @@ public:
         move(imm, dataTempRegister);
         m_assembler.subf(dest, dataTempRegister, src);
     }
+
+    // ===================================================================
+    // 64-bit memory access. Power ISA `ld` / `std` are DS-form: 14-bit
+    // signed displacement, 4-byte aligned (low 2 bits of byte offset
+    // forced to 0 — they hold the DS-form XO field). For arbitrary
+    // offsets we fall through to compute-address-into-scratch + ldx/stdx.
+    // ===================================================================
+
+    void load64(Address address, RegisterID dest)
+    {
+        int32_t offset = address.offset;
+        // ld can encode offset in [-32768, 32767] AND multiple of 4.
+        if (offset >= INT16_MIN && offset <= INT16_MAX && (offset & 0x3) == 0) {
+            m_assembler.ld(dest, static_cast<int16_t>(offset), address.base);
+            return;
+        }
+        // Out-of-range / unaligned offset: materialize the offset in
+        // memoryTempRegister (r12), then load via indexed form.
+        move(TrustedImm32(offset), memoryTempRegister);
+        m_assembler.ldx(dest, address.base, memoryTempRegister);
+    }
+
+    void store64(RegisterID src, Address address)
+    {
+        int32_t offset = address.offset;
+        if (offset >= INT16_MIN && offset <= INT16_MAX && (offset & 0x3) == 0) {
+            m_assembler.std(src, static_cast<int16_t>(offset), address.base);
+            return;
+        }
+        move(TrustedImm32(offset), memoryTempRegister);
+        m_assembler.stdx(src, address.base, memoryTempRegister);
+    }
 };
 
 } // namespace JSC
