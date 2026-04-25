@@ -663,6 +663,138 @@ public:
         insn(xForm(31, rs, ra, rb, /*XO*/ 407, /*Rc*/ 0));
     }
 
+    // ===================================================================
+    // Load/store with update (auto-update RA = effective address). Power
+    // ISA v2.07B §3.3.2. Useful for stack push/pop and for stepping
+    // through arrays without a separate addi after every access.
+    //
+    // Pattern: opcode = base_opcode + 1 for D-form variants. DS-form uses
+    // the same opcode as ld/std but sets XO=1 instead of 0. Indexed
+    // variants use base XO + 32 (X-form, opcode 31).
+    //
+    // The semantics: load/store completes, AND THEN RA <- effective_addr.
+    // Trap if RA == 0 or RA == RT (it's a programmer error to alias).
+    // ===================================================================
+
+    // DS-form update: opcode 58/62, XO=1.
+    //   ldu  RT, DS(RA), stdu RS, DS(RA)
+    // Verified:
+    //   ldu  3,8(4)   → 0xe8640009
+    //   stdu 3,-8(1)  → 0xf861fff9
+    void ldu(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dsForm(58, rt, ra, byteOffset, /*XO*/ 1));
+    }
+
+    void stdu(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dsForm(62, rs, ra, byteOffset, /*XO*/ 1));
+    }
+
+    // D-form update (opcode = base + 1):
+    //   lwzu  RT, D(RA) — opcode 33   stwu  RS, D(RA) — opcode 37
+    //   lbzu  RT, D(RA) — opcode 35   stbu  RS, D(RA) — opcode 39
+    //   lhzu  RT, D(RA) — opcode 41   lhau  RT, D(RA) — opcode 43
+    //   sthu  RS, D(RA) — opcode 45
+    // Verified on POWER9 — see encoding test.
+    void lwzu(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(33, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stwu(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(37, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void lbzu(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(35, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stbu(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(39, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void lhzu(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(41, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void lhau(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(43, rt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void sthu(RegisterID rs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dForm(45, rs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    // X-form indexed update (opcode 31, XO = base + 32).
+    //   ldux  RT, RA, RB — XO=53     stdux RS, RA, RB — XO=181
+    //   lwzux RT, RA, RB — XO=55     stwux RS, RA, RB — XO=183
+    //   lbzux RT, RA, RB — XO=119    stbux RS, RA, RB — XO=247
+    //   lhzux RT, RA, RB — XO=311    lhaux RT, RA, RB — XO=375
+    //   sthux RS, RA, RB — XO=439
+    // Verified on POWER9 — see encoding test.
+    void ldux(RegisterID rt, RegisterID ra, RegisterID rb)   { insn(xForm(31, rt, ra, rb,  53, 0)); }
+    void stdux(RegisterID rs, RegisterID ra, RegisterID rb)  { insn(xForm(31, rs, ra, rb, 181, 0)); }
+    void lwzux(RegisterID rt, RegisterID ra, RegisterID rb)  { insn(xForm(31, rt, ra, rb,  55, 0)); }
+    void stwux(RegisterID rs, RegisterID ra, RegisterID rb)  { insn(xForm(31, rs, ra, rb, 183, 0)); }
+    void lbzux(RegisterID rt, RegisterID ra, RegisterID rb)  { insn(xForm(31, rt, ra, rb, 119, 0)); }
+    void stbux(RegisterID rs, RegisterID ra, RegisterID rb)  { insn(xForm(31, rs, ra, rb, 247, 0)); }
+    void lhzux(RegisterID rt, RegisterID ra, RegisterID rb)  { insn(xForm(31, rt, ra, rb, 311, 0)); }
+    void lhaux(RegisterID rt, RegisterID ra, RegisterID rb)  { insn(xForm(31, rt, ra, rb, 375, 0)); }
+    void sthux(RegisterID rs, RegisterID ra, RegisterID rb)  { insn(xForm(31, rs, ra, rb, 439, 0)); }
+
+    // ===================================================================
+    // FP indexed load/store (X-form) and FP update variants. Power ISA
+    // v2.07B §3.3.3. Indexed = effective addr from RA + RB; update = also
+    // writes effective addr back to RA after the access.
+    //
+    // Indexed (X-form, opcode 31):
+    //   lfdx FRT, RA, RB — XO=599    stfdx FRS, RA, RB — XO=727
+    //   lfsx FRT, RA, RB — XO=535    stfsx FRS, RA, RB — XO=663
+    //
+    // Indexed update (XO = indexed + 32):
+    //   lfdux  FRT, RA, RB — XO=631  stfdux FRS, RA, RB — XO=759
+    //   lfsux  FRT, RA, RB — XO=567  stfsux FRS, RA, RB — XO=695
+    //
+    // D-form FP update (opcode = base FP + 1):
+    //   lfdu  FRT, D(RA) — opcode 51    stfdu FRS, D(RA) — opcode 55
+    //   lfsu  FRT, D(RA) — opcode 49    stfsu FRS, D(RA) — opcode 53
+    // ===================================================================
+    void lfdx(FPRegisterID frt, RegisterID ra, RegisterID rb)   { insn(xFormFpMem(31, frt, ra, rb, 599)); }
+    void stfdx(FPRegisterID frs, RegisterID ra, RegisterID rb)  { insn(xFormFpMem(31, frs, ra, rb, 727)); }
+    void lfsx(FPRegisterID frt, RegisterID ra, RegisterID rb)   { insn(xFormFpMem(31, frt, ra, rb, 535)); }
+    void stfsx(FPRegisterID frs, RegisterID ra, RegisterID rb)  { insn(xFormFpMem(31, frs, ra, rb, 663)); }
+    void lfdux(FPRegisterID frt, RegisterID ra, RegisterID rb)  { insn(xFormFpMem(31, frt, ra, rb, 631)); }
+    void stfdux(FPRegisterID frs, RegisterID ra, RegisterID rb) { insn(xFormFpMem(31, frs, ra, rb, 759)); }
+    void lfsux(FPRegisterID frt, RegisterID ra, RegisterID rb)  { insn(xFormFpMem(31, frt, ra, rb, 567)); }
+    void stfsux(FPRegisterID frs, RegisterID ra, RegisterID rb) { insn(xFormFpMem(31, frs, ra, rb, 695)); }
+
+    void lfdu(FPRegisterID frt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(51, frt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stfdu(FPRegisterID frs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(55, frs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void lfsu(FPRegisterID frt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(49, frt, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
+    void stfsu(FPRegisterID frs, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dFormFp(53, frs, ra, static_cast<uint16_t>(byteOffset)));
+    }
+
     // ld — Load Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 58, XO=0.
     //   Encoding: [op(6)=58 | RT(5) | RA(5) | DS(14) | XO(2)=0]
     //   Semantics: RT <- MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8)
@@ -1682,6 +1814,21 @@ protected:
              | (fprValue(frtOrFrs) << 21)
              | (registerValue(ra) << 16)
              | imm;
+    }
+
+    // X-form FP indexed load/store: FPR in the first slot, GPRs for the
+    // base (RA) and index (RB). Used by lfdx/stfdx/lfsx/stfsx and their
+    // update variants.
+    static constexpr uint32_t xFormFpMem(uint32_t opcode, FPRegisterID frtOrFrs,
+                                         RegisterID ra, RegisterID rb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 1024);
+        return (opcode << 26)
+             | (fprValue(frtOrFrs) << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (xo << 1);
     }
 
     // A-form (FP arithmetic):
