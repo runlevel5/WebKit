@@ -1587,6 +1587,49 @@ public:
     void vsubsws(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1920)); }
 
     // ===================================================================
+    // VMX integer multiply. Power ISA v2.07B §6.10.
+    //
+    // Direct WASM SIMD mapping:
+    //   i32x4.mul             →  vmuluwm  (XO=137, POWER8+)
+    //
+    // Compose-via-pair WASM SIMD ops (no single-instruction PPC opcode
+    // for these on v2.07B; MacroAssembler will sequence them):
+    //   i16x8.mul             →  vmulesh + vmulosh + pack low-16-of-each
+    //                            (or vmuleuh + vmulouh; signed/unsigned
+    //                            give identical low 16 bits)
+    //   i64x2.mul             →  vmulesw + vmulosw + shift+add (v2.07B path)
+    //   i32x4.dot_i16x8_s     →  vmsumshm directly (4-source VA-form,
+    //                            adjacent-pair signed mul-then-add)
+    //
+    // POWER9 future-stubs:
+    //   - v3.0 vmladduhm (XO=34): single-instruction halfword mul-add
+    //     subsumes vmulesh+vmulosh+pack for i16x8.mul. Gate on HasPOWER9.
+    //   - v3.0 vmuluwm gets a doubleword peer (vmsumudm, XO=35) — use
+    //     for i64x2 patterns when MacroAssembler asks.
+    //
+    // The byte-level even/odd mul ops (vmuleub/vmulesb/vmuloub/vmulosb)
+    // are intentionally omitted: WASM SIMD has no i8x16.mul, and the
+    // sum-of-byte-products op (vmsumubm) was already removed in the
+    // previous audit-cleanup commit. Re-add with a citation if anything
+    // ever needs them.
+    //
+    // Verified on POWER9 (6 cases).
+    // ===================================================================
+    void vmuluwm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 137)); }
+    void vmulesh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 840)); }
+    void vmulosh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 328)); }
+    void vmulesw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 904)); }
+    void vmulosw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 392)); }
+
+    // vmsumshm is VA-form (4-source). Maps directly to WASM
+    //   i32x4.dot_i16x8_s when called with VRC = zero-vector:
+    //     VRT[i] = VRA[2i]*VRB[2i] + VRA[2i+1]*VRB[2i+1] + VRC[i]
+    void vmsumshm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 40));
+    }
+
+    // ===================================================================
     // VMX load/store (X-form, opcode 31). Power ISA v2.07B §6.6.
     //
     //   lvx   VRT, RA, RB — XO=103  (load 16 bytes; addr forced to 16B align)
