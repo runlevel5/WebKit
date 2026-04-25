@@ -199,6 +199,8 @@ static inline void*& stackPointerImpl(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.sp);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_SP]);
+#elif CPU(PPC64LE)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[1]); // r1 = SP
 #else
 #error Unknown Architecture
 #endif
@@ -319,6 +321,8 @@ static inline void*& framePointerImpl(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.regs[29]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_S0]);
+#elif CPU(PPC64LE)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[31]); // r31 = FP/CFR
 #else
 #error Unknown Architecture
 #endif
@@ -479,6 +483,8 @@ static inline void*& instructionPointerImpl(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.pc);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_PC]);
+#elif CPU(PPC64LE)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[32]); // NIP = PC
 #else
 #error Unknown Architecture
 #endif
@@ -655,6 +661,8 @@ inline void*& argumentPointer<1>(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.regs[1]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_A0 + 1]);
+#elif CPU(PPC64LE)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[4]); // r4 = 2nd arg
 #else
 #error Unknown Architecture
 #endif
@@ -712,6 +720,8 @@ inline void* wasmInstancePointer(const mcontext_t& machineContext)
     return reinterpret_cast<void*>((uintptr_t) machineContext.regs[19]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*>((uintptr_t) machineContext.__gregs[9]);
+#elif CPU(PPC64LE)
+    return reinterpret_cast<void*>((uintptr_t) machineContext.gp_regs[14]); // r14 = regCS0 = wasmContextInstancePointer
 #else
 #error Unknown Architecture
 #endif
@@ -832,6 +842,9 @@ inline void*& llintInstructionPointer(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.regs[4]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[14]);
+#elif CPU(PPC64LE)
+    static_assert(LLInt::LLIntPC == PPC64Registers::r7, "Wrong LLInt PC.");
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[7]); // r7 = regT4 = LLIntPC
 #else
 #error Unknown Architecture
 #endif

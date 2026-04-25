@@ -220,7 +220,7 @@ constexpr size_t prologueStackPointerDelta()
 #elif CPU(X86_64)
     // Prologue only saves the framePointerRegister
     return sizeof(CPURegister);
-#elif CPU(ARM_THUMB2) || CPU(ARM64) || CPU(RISCV64)
+#elif CPU(ARM_THUMB2) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     // Prologue saves the framePointerRegister and linkRegister
     return 2 * sizeof(CPURegister);
 #else
