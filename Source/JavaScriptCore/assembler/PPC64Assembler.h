@@ -1964,6 +1964,55 @@ public:
     void vcmpeqfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 198)); }
     void vcmpgefp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 454)); }
     void vcmpgtfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 710)); }
+
+    // ===================================================================
+    // VMX FP↔int conversions. Power ISA v2.07B §6.13. UIMM in VRA slot
+    // is a 5-bit fractional-bit-position; pass 0 for plain FP↔int.
+    //
+    // Direct WASM SIMD mapping (all with UIMM=0):
+    //   i32x4.trunc_sat_f32x4_s  →  vctsxs VRT, VRB, 0
+    //   i32x4.trunc_sat_f32x4_u  →  vctuxs VRT, VRB, 0
+    //   f32x4.convert_i32x4_s    →  vcfsx  VRT, VRB, 0
+    //   f32x4.convert_i32x4_u    →  vcfux  VRT, VRB, 0
+    //
+    // The vctsxs/vctuxs ops saturate on overflow (the WASM "_sat"
+    // suffix), trapping NaN→0 and clamping ±Inf to INT_MIN / INT_MAX.
+    //
+    //   vctsxs VRT, VRB, UIMM — XO=970 (FP → signed fixed-point, sat)
+    //   vctuxs VRT, VRB, UIMM — XO=906 (FP → unsigned fixed-point, sat)
+    //   vcfsx  VRT, VRB, UIMM — XO=842 (signed fixed-point → FP)
+    //   vcfux  VRT, VRB, UIMM — XO=778 (unsigned fixed-point → FP)
+    //
+    // POWER9 future-stub: v3.0 adds VSX-flavored f32↔i32 (xvcvspsxws,
+    // xvcvspuxws, xvcvsxwsp, xvcvuxwsp at opcode 60) which subsume
+    // these for VSR-namespace registers; we emit VMX here because the
+    // baseline backend keeps Simd128 in VR space (VSR32-63).
+    //
+    // Verified on POWER9 (4 cases + UIMM-non-zero sanity).
+    // ===================================================================
+    void vctsxs(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 32);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 970u);
+    }
+
+    void vctuxs(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 32);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 906u);
+    }
+
+    void vcfsx(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 32);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 842u);
+    }
+
+    void vcfux(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 32);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 778u);
+    }
     // Removed in audit-cleanup (no JSC use):
     //   - vrefp / vrsqrtefp / vexptefp / vlogefp (FP estimates)
     //   - vcmpbfp (Power-specific bounds compare)

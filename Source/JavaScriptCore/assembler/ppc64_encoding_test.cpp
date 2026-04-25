@@ -435,6 +435,14 @@ int main()
         { "vrfim 3,4",                 vxForm(4, 3, 0, 4, 714),                              0x106022ca },
         { "vrfiz 3,4",                 vxForm(4, 3, 0, 4, 586),                              0x1060224a },
 
+        // VMX FP↔int conversions (UIMM in VRA slot, fractional-bit-position).
+        { "vctsxs 3,4,0",              vxForm(4, 3, 0, 4, 970),                              0x106023ca },
+        { "vctuxs 3,4,0",              vxForm(4, 3, 0, 4, 906),                              0x1060238a },
+        { "vcfsx  3,4,0",              vxForm(4, 3, 0, 4, 842),                              0x1060234a },
+        { "vcfux  3,4,0",              vxForm(4, 3, 0, 4, 778),                              0x1060230a },
+        { "vctsxs 3,4,5 (UIMM=5)",     vxForm(4, 3, 5, 4, 970),                              0x106523ca },
+        { "vcfsx  3,4,3 (UIMM=3)",     vxForm(4, 3, 3, 4, 842),                              0x1063234a },
+
         // VMX FP compares (VC-form, Rc=0).
         { "vcmpeqfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 198),                           0x106428c6 },
         { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
