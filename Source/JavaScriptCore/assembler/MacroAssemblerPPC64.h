@@ -648,6 +648,26 @@ public:
     void and32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
     void or32(TrustedImm32, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
     void sub32(RegisterID, TrustedImm32, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void xor32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void mul32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 3-operand 32-bit shifts.
+    void lshift32(RegisterID, TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void lshift32(TrustedImm32, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift32(RegisterID, TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift32(TrustedImm32, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift32(RegisterID, TrustedImm32, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift32(TrustedImm32, RegisterID, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional branchAdd32 / branchMul32 / branchSub32 overloads.
+    Jump branchAdd32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchMul32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub32(ResultCondition, RegisterID, RegisterID, RegisterID)    { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // nearCall / nearTailCall — required by MacroAssembler::nearCallThunk/nearTailCallThunk.
+    Call nearCall()     { UNREACHABLE_FOR_PLATFORM(); return Call(); }
+    Call nearTailCall() { UNREACHABLE_FOR_PLATFORM(); return Call(); }
 };
 
 } // namespace JSC
