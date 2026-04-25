@@ -1578,6 +1578,42 @@ public:
     void stvewx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 199)); }
 
     // ===================================================================
+    // VMX vector compares (VC-form, opcode 4). Power ISA v2.07B §6.10.
+    // Each lane is set to all-ones (true) or all-zeros (false). The Rc=1
+    // variants additionally update CR6 with summary bits ([all-true,
+    // -, all-false, -]); we expose Rc=0 by default and add `Dot`
+    // variants for callers that need the CR update.
+    //
+    // Equality (XO):
+    //   vcmpequb XO=6   vcmpequh XO=70   vcmpequw XO=134
+    //   vcmpequd XO=199 (POWER8+)
+    // Greater-than unsigned (XO):
+    //   vcmpgtub XO=518 vcmpgtuh XO=582  vcmpgtuw XO=646
+    //   vcmpgtud XO=711 (POWER8+)
+    // Greater-than signed (XO):
+    //   vcmpgtsb XO=774 vcmpgtsh XO=838  vcmpgtsw XO=902
+    //   vcmpgtsd XO=967 (POWER8+)
+    //
+    // POWER9 future-stubs: v3.0 adds vcmpneb/vcmpneh/vcmpnew (not-equal)
+    // and vcmpnezb/.../vcmpnezw (not-equal-or-zero) — useful for some
+    // string/permute fast paths but not in v2.07B.
+    //
+    // Verified on POWER9; see encoding test for hex values.
+    // ===================================================================
+    void vcmpequb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0,  6)); }
+    void vcmpequh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 70)); }
+    void vcmpequw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 134)); }
+    void vcmpequd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 199)); }
+    void vcmpgtub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 518)); }
+    void vcmpgtuh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 582)); }
+    void vcmpgtuw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 646)); }
+    void vcmpgtud(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 711)); }
+    void vcmpgtsb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 774)); }
+    void vcmpgtsh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 838)); }
+    void vcmpgtsw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 902)); }
+    void vcmpgtsd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 967)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -2027,6 +2063,23 @@ protected:
              | (registerValue(ra) << 16)
              | (registerValue(rb) << 11)
              | (xo << 1);
+    }
+
+    // VC-form (VMX compare): [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | Rc(1) | XO(10)]
+    // Power ISA v2.07B Book I §1.6.1. Used by all vcmp* instructions.
+    // Rc=1 (the assembler "." suffix) also writes a summary into CR6.
+    static constexpr uint32_t vcForm(uint32_t opcode, VRegisterID vrt, VRegisterID vra,
+                                     VRegisterID vrb, uint32_t rc, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(rc < 2);
+        ASSERT(xo < 1024);
+        return (opcode << 26)
+             | (vrValue(vrt) << 21)
+             | (vrValue(vra) << 16)
+             | (vrValue(vrb) << 11)
+             | (rc << 10)
+             | xo;
     }
 
     // VX-form (VMX vector). Power ISA v2.07B Book I §6.1.
