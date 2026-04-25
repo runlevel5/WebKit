@@ -391,6 +391,46 @@ int main()
         // xForm's rtOrRs (RegisterID typed) parameter.
         { "trap (tw 31,0,0)",          (31u<<26)|(31u<<21)|(0u<<16)|(0u<<11)|(4u<<1),        0x7fe00008 },
 
+        // D-form/DS-form load/store with update.
+        { "ldu  3,8(4)",               dsForm(58, 3, 4, 8,  1),                              0xe8640009 },
+        { "stdu 3,-8(1)",              dsForm(62, 3, 1, -8, 1),                              0xf861fff9 },
+        { "lwzu 3,4(4)",               dForm(33, 3, 4, 4),                                   0x84640004 },
+        { "stwu 3,-16(1)",             dForm(37, 3, 1, static_cast<uint16_t>(-16)),          0x9461fff0 },
+        { "lbzu 3,1(4)",               dForm(35, 3, 4, 1),                                   0x8c640001 },
+        { "stbu 3,-1(4)",              dForm(39, 3, 4, static_cast<uint16_t>(-1)),           0x9c64ffff },
+        { "lhzu 3,2(4)",               dForm(41, 3, 4, 2),                                   0xa4640002 },
+        { "lhau 3,2(4)",               dForm(43, 3, 4, 2),                                   0xac640002 },
+        { "sthu 3,-2(4)",              dForm(45, 3, 4, static_cast<uint16_t>(-2)),           0xb464fffe },
+
+        // X-form indexed update (opcode 31, XO = base XO + 32).
+        { "ldux  3,4,5",               xForm(31, 3, 4, 5,  53, 0),                           0x7c64286a },
+        { "stdux 3,4,5",               xForm(31, 3, 4, 5, 181, 0),                           0x7c64296a },
+        { "lwzux 3,4,5",               xForm(31, 3, 4, 5,  55, 0),                           0x7c64286e },
+        { "stwux 3,4,5",               xForm(31, 3, 4, 5, 183, 0),                           0x7c64296e },
+        { "lbzux 3,4,5",               xForm(31, 3, 4, 5, 119, 0),                           0x7c6428ee },
+        { "stbux 3,4,5",               xForm(31, 3, 4, 5, 247, 0),                           0x7c6429ee },
+        { "lhzux 3,4,5",               xForm(31, 3, 4, 5, 311, 0),                           0x7c642a6e },
+        { "lhaux 3,4,5",               xForm(31, 3, 4, 5, 375, 0),                           0x7c642aee },
+        { "sthux 3,4,5",               xForm(31, 3, 4, 5, 439, 0),                           0x7c642b6e },
+
+        // FP indexed load/store (X-form, opcode 31).
+        { "lfdx  3,4,5",               xForm(31, 3, 4, 5, 599, 0),                           0x7c642cae },
+        { "stfdx 3,4,5",               xForm(31, 3, 4, 5, 727, 0),                           0x7c642dae },
+        { "lfsx  3,4,5",               xForm(31, 3, 4, 5, 535, 0),                           0x7c642c2e },
+        { "stfsx 3,4,5",               xForm(31, 3, 4, 5, 663, 0),                           0x7c642d2e },
+
+        // FP indexed update (XO = indexed XO + 32).
+        { "lfdux  3,4,5",              xForm(31, 3, 4, 5, 631, 0),                           0x7c642cee },
+        { "stfdux 3,4,5",              xForm(31, 3, 4, 5, 759, 0),                           0x7c642dee },
+        { "lfsux  3,4,5",              xForm(31, 3, 4, 5, 567, 0),                           0x7c642c6e },
+        { "stfsux 3,4,5",              xForm(31, 3, 4, 5, 695, 0),                           0x7c642d6e },
+
+        // FP D-form update (opcode = base FP opcode + 1).
+        { "lfdu  3,8(4)",              dForm(51, 3, 4, 8),                                   0xcc640008 },
+        { "stfdu 3,-8(1)",             dForm(55, 3, 1, static_cast<uint16_t>(-8)),           0xdc61fff8 },
+        { "lfsu  3,4(4)",              dForm(49, 3, 4, 4),                                   0xc4640004 },
+        { "stfsu 3,-4(1)",             dForm(53, 3, 1, static_cast<uint16_t>(-4)),           0xd461fffc },
+
         // X-form indexed loads/stores (opcode 31).
         { "ldx  3,4,5",                xForm(31, 3, 4, 5, 21, 0),                            0x7c64282a },
         { "stdx 3,4,5",                xForm(31, 3, 4, 5, 149, 0),                           0x7c64292a },
