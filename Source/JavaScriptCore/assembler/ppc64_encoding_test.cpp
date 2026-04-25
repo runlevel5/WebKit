@@ -487,6 +487,19 @@ int main()
         { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
         { "vcmpgtfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 710),                           0x10642ac6 },
 
+        // VSX f64x2 compare / min-max / unary (WASM SIMD f64x2 surface).
+        { "xvcmpeqdp vs3,vs4,vs5",     xx3Form(60, 3, 4, 5,  99),                            0xf0642b18 },
+        { "xvcmpgtdp vs3,vs4,vs5",     xx3Form(60, 3, 4, 5, 107),                            0xf0642b58 },
+        { "xvcmpgedp vs3,vs4,vs5",     xx3Form(60, 3, 4, 5, 115),                            0xf0642b98 },
+        { "xvmindp   vs3,vs4,vs5",     xx3Form(60, 3, 4, 5, 232),                            0xf0642f40 },
+        { "xvmaxdp   vs3,vs4,vs5",     xx3Form(60, 3, 4, 5, 224),                            0xf0642f00 },
+        { "xvnegdp   vs3,vs4",         xx2Form(60, 3, 4, 505),                               0xf06027e4 },
+        { "xvabsdp   vs3,vs4",         xx2Form(60, 3, 4, 473),                               0xf0602764 },
+        { "xvrdpip   vs3,vs4",         xx2Form(60, 3, 4, 233),                               0xf06023a4 },
+        { "xvrdpim   vs3,vs4",         xx2Form(60, 3, 4, 249),                               0xf06023e4 },
+        { "xvrdpiz   vs3,vs4",         xx2Form(60, 3, 4, 217),                               0xf0602364 },
+        { "xvrdpic   vs3,vs4",         xx2Form(60, 3, 4, 235),                               0xf06023ac },
+
         // VSX FP arithmetic (XX3 binary, XX2 sqrt). f32x4.mul/div/sqrt
         // and full f64x2 arithmetic — none expressible in pure VMX.
         { "xvmulsp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5,  80),                            0xf0642a80 },

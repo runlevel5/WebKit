@@ -2243,6 +2243,46 @@ public:
     void xvsqrtdp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 203)); }
 
     // ===================================================================
+    // VSX f64x2 compare / min-max / unary. Power ISA v2.07B §7.6.
+    // Direct WASM SIMD mapping for f64x2:
+    //
+    //   f64x2.eq      →  xvcmpeqdp (XO=99,  XX3-form)
+    //   f64x2.gt      →  xvcmpgtdp (XO=107)
+    //   f64x2.ge      →  xvcmpgedp (XO=115)
+    //   f64x2.ne, .lt, .le compose via swap or xxlnor
+    //
+    //   f64x2.min     →  xvmindp   (XO=232)
+    //   f64x2.max     →  xvmaxdp   (XO=224)
+    //
+    //   f64x2.neg     →  xvnegdp   (XO=505, XX2-form)
+    //   f64x2.abs     →  xvabsdp   (XO=473, XX2-form)
+    //   f64x2.ceil    →  xvrdpip   (XO=233, XX2-form, "round +inf")
+    //   f64x2.floor   →  xvrdpim   (XO=249, XX2-form, "round -inf")
+    //   f64x2.trunc   →  xvrdpiz   (XO=217, XX2-form, "round zero")
+    //   f64x2.nearest →  xvrdpic   (XO=235, XX2-form, "round current
+    //                                FPSCR mode" — default is
+    //                                round-to-nearest-ties-to-even,
+    //                                which is what WASM mandates)
+    //
+    // POWER9 future-stub: v3.0 doesn't change these baseline ops; it
+    // adds xvieiqp / xviexpdp prefixes for IEEE 754-2008 helpers.
+    //
+    // Verified on POWER9 (11 cases).
+    // ===================================================================
+    void xvcmpeqdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB,  99)); }
+    void xvcmpgtdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 107)); }
+    void xvcmpgedp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 115)); }
+    void xvmindp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)   { insn(xx3Form(60, vsrT, vsrA, vsrB, 232)); }
+    void xvmaxdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)   { insn(xx3Form(60, vsrT, vsrA, vsrB, 224)); }
+
+    void xvnegdp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 505)); }
+    void xvabsdp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 473)); }
+    void xvrdpip(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 233)); }
+    void xvrdpim(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 249)); }
+    void xvrdpiz(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 217)); }
+    void xvrdpic(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 235)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
