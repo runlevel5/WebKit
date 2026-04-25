@@ -282,6 +282,42 @@ public:
         m_assembler.oris(dest, dest, loHi16);
         m_assembler.ori(dest, dest, lo16);
     }
+
+    // ===================================================================
+    // 64-bit add. Power ISA: `add RT, RA, RB` → RT = RA + RB (XO-form).
+    // For immediate variants: `addi RT, RA, SI` → RT = RA + sign_extend(SI).
+    // ===================================================================
+
+    // dest = dest + src
+    void add64(RegisterID src, RegisterID dest)
+    {
+        m_assembler.add(dest, dest, src);
+    }
+
+    // dest = src1 + src2
+    void add64(RegisterID src1, RegisterID src2, RegisterID dest)
+    {
+        m_assembler.add(dest, src1, src2);
+    }
+
+    // dest = dest + imm
+    void add64(TrustedImm32 imm, RegisterID dest)
+    {
+        add64(imm, dest, dest);
+    }
+
+    // dest = src + imm
+    void add64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        if (imm.m_value >= INT16_MIN && imm.m_value <= INT16_MAX) {
+            m_assembler.addi(dest, src, static_cast<int16_t>(imm.m_value));
+            return;
+        }
+        // Out of 16-bit range: load imm into scratch, then add.
+        // Use dataTempRegister (r11) as the scratch.
+        move(imm, dataTempRegister);
+        m_assembler.add(dest, src, dataTempRegister);
+    }
 };
 
 } // namespace JSC
