@@ -188,6 +188,17 @@ public:
     {
         m_assembler.trap();
     }
+
+    // move — 64-bit register-to-register copy. The `if (src != dest)`
+    // guard avoids emitting a no-op `mr rN, rN` (self-move) which some
+    // JIT call sites emit redundantly. Power ISA: `mr RA, RS` is the
+    // simplified mnemonic for `or RA, RS, RS` (X-form, opcode 31,
+    // XO=444). Verified earlier: mr 7,8 → 0x7d074378.
+    void move(RegisterID src, RegisterID dest)
+    {
+        if (src != dest)
+            m_assembler.mr(dest, src);
+    }
 };
 
 } // namespace JSC
