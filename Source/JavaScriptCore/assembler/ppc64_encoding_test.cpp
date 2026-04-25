@@ -435,6 +435,22 @@ int main()
         { "vrfim 3,4",                 vxForm(4, 3, 0, 4, 714),                              0x106022ca },
         { "vrfiz 3,4",                 vxForm(4, 3, 0, 4, 586),                              0x1060224a },
 
+        // VMX popcount per lane (VRA = 0).
+        { "vpopcntb 3,4",              vxForm(4, 3, 0, 4, 1795),                             0x10602703 },
+        { "vpopcnth 3,4",              vxForm(4, 3, 0, 4, 1859),                             0x10602743 },
+        { "vpopcntw 3,4",              vxForm(4, 3, 0, 4, 1923),                             0x10602783 },
+        { "vpopcntd 3,4",              vxForm(4, 3, 0, 4, 1987),                             0x106027c3 },
+
+        // VMX unpack-and-sign-extend (VRA = 0). Mnemonic high/low are
+        // BE-named — on PPC64LE, vupkhsb actually unpacks the wasm-LOW
+        // lanes; see PLAN.md SIMD lessons.
+        { "vupkhsb 3,4",               vxForm(4, 3, 0, 4,  526),                             0x1060220e },
+        { "vupklsb 3,4",               vxForm(4, 3, 0, 4,  654),                             0x1060228e },
+        { "vupkhsh 3,4",               vxForm(4, 3, 0, 4,  590),                             0x1060224e },
+        { "vupklsh 3,4",               vxForm(4, 3, 0, 4,  718),                             0x106022ce },
+        { "vupkhsw 3,4",               vxForm(4, 3, 0, 4, 1614),                             0x1060264e },
+        { "vupklsw 3,4",               vxForm(4, 3, 0, 4, 1742),                             0x106026ce },
+
         // VMX FP↔int conversions (UIMM in VRA slot, fractional-bit-position).
         { "vctsxs 3,4,0",              vxForm(4, 3, 0, 4, 970),                              0x106023ca },
         { "vctuxs 3,4,0",              vxForm(4, 3, 0, 4, 906),                              0x1060238a },

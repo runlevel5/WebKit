@@ -2013,6 +2013,66 @@ public:
         ASSERT(uimm < 32);
         insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 778u);
     }
+
+    // ===================================================================
+    // VMX popcount per lane. VRA slot = 0 (unused).
+    // Direct WASM SIMD mapping:
+    //   i8x16.popcnt   →  vpopcntb (XO=1795)
+    // The wider variants aren't WASM SIMD ops but ARM64 NEON (and JSC's
+    // MacroAssembler) emits per-halfword/word popcount in some
+    // intrinsic paths — we include them for parity since they're part
+    // of the same v2.07B opcode family (POWER8 added vpopcntd).
+    //
+    //   vpopcntb XO=1795   vpopcnth XO=1859
+    //   vpopcntw XO=1923   vpopcntd XO=1987 (POWER8+)
+    //
+    // Verified on POWER9 (4 cases).
+    // ===================================================================
+    void vpopcntb(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1795)); }
+    void vpopcnth(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1859)); }
+    void vpopcntw(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1923)); }
+    void vpopcntd(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1987)); }
+
+    // ===================================================================
+    // VMX unpack-and-sign-extend. VRA slot = 0 (unused).
+    //
+    // Direct WASM SIMD mapping (signed extends):
+    //   i16x8.extend_low_i8x16_s   →  vupklsb on PPC64LE (NOT vupkhsb!
+    //                                  the "high"/"low" suffix is BE)
+    //   i16x8.extend_high_i8x16_s  →  vupkhsb
+    //   i32x4.extend_low_i16x8_s   →  vupklsh
+    //   i32x4.extend_high_i16x8_s  →  vupkhsh
+    //   i64x2.extend_low_i32x4_s   →  vupklsw  (POWER8+)
+    //   i64x2.extend_high_i32x4_s  →  vupkhsw  (POWER8+)
+    //
+    // **PPC64LE LANE TRAP** (PLAN.md SIMD lessons §"PPC64 LE inverts
+    // VMX 'high'/'low'"): the VMX mnemonics use big-endian lane
+    // numbering. On PPC64LE, vupkhsb actually unpacks what wasm-lane
+    // code calls the LOW lanes, and vupklsb unpacks the HIGH lanes.
+    // MacroAssembler must use wasm-lane-direction naming at every
+    // callsite to avoid the SM port's argon2 miscompile pattern.
+    //
+    //   vupkhsb XO=526   vupklsb XO=654
+    //   vupkhsh XO=590   vupklsh XO=718
+    //   vupkhsw XO=1614  vupklsw XO=1742  (POWER8+)
+    //
+    // For the UNSIGNED extend WASM ops (`extend_low_i8x16_u` etc.)
+    // there is no v2.07B unpack-zero-extend. MacroAssembler will
+    // compose via vmrgX{b,h,w} against a zero vector. Document at the
+    // call site; not a single opcode per WASM op.
+    //
+    // POWER9 future-stub: v3.0 adds vextract* / vextend* opcodes that
+    // make several of these single-instruction. Add when feature gate
+    // lands.
+    //
+    // Verified on POWER9 (6 cases).
+    // ===================================================================
+    void vupkhsb(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb,  526)); }
+    void vupklsb(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb,  654)); }
+    void vupkhsh(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb,  590)); }
+    void vupklsh(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb,  718)); }
+    void vupkhsw(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1614)); }
+    void vupklsw(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1742)); }
     // Removed in audit-cleanup (no JSC use):
     //   - vrefp / vrsqrtefp / vexptefp / vlogefp (FP estimates)
     //   - vcmpbfp (Power-specific bounds compare)
