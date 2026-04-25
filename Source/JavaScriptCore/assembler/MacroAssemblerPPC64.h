@@ -620,6 +620,34 @@ public:
     Jump branchSub64(ResultCondition, TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchSub64(ResultCondition, RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchSub64(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // move(TrustedImm64) — used by blinding helpers in MacroAssembler.
+    void move(TrustedImm64, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // convertInt32ToDouble(TrustedImm32) — blinding path in MacroAssembler.
+    void convertInt32ToDouble(TrustedImm32, FPRegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
+    void and64(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void and64(TrustedImm64, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void and64(TrustedImm64, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(TrustedImm64, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void or64(TrustedImm64, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void sub64(RegisterID, TrustedImm64, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void compare64(RelationalCondition, RegisterID, TrustedImm64, RegisterID){ UNREACHABLE_FOR_PLATFORM(); }
+
+    // move32ToFloat / move64ToDouble with immediate forms.
+    void move32ToFloat(TrustedImm32, FPRegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+    void move64ToDouble(TrustedImm64, FPRegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+
+    // branchDouble — used by MacroAssembler::compareDouble on non-X86/ARM64.
+    Jump branchDouble(DoubleCondition, FPRegisterID, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // 3-operand 32-bit forms (MacroAssembler blinding helpers + lea32).
+    void add32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void and32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(TrustedImm32, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void sub32(RegisterID, TrustedImm32, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
