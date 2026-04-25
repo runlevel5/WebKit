@@ -1681,6 +1681,35 @@ public:
     }
 
     // ===================================================================
+    // VMX merge — interleave lanes from two source vectors. Power ISA
+    // v2.07B §6.8. Foundation for shuffle / unpack patterns.
+    //
+    //   vmrghb VRT, VRA, VRB — XO=12   merge HIGH bytes
+    //   vmrghh VRT, VRA, VRB — XO=76   merge HIGH halfwords
+    //   vmrghw VRT, VRA, VRB — XO=140  merge HIGH words
+    //   vmrglb VRT, VRA, VRB — XO=268  merge LOW  bytes
+    //   vmrglh VRT, VRA, VRB — XO=332  merge LOW  halfwords
+    //   vmrglw VRT, VRA, VRB — XO=396  merge LOW  words
+    //   vmrgew VRT, VRA, VRB — XO=1932 merge EVEN words (POWER8+)
+    //   vmrgow VRT, VRA, VRB — XO=1676 merge ODD  words (POWER8+)
+    //
+    // **PPC64LE TRAP**: VMX naming uses big-endian "high"/"low". On
+    // PPC64LE, vmrghb actually combines what wasm-lane-direction code
+    // would call the LOW bytes. Always reason in WASM-lane terms in
+    // JSC source comments — see PLAN.md SIMD lessons.
+    //
+    // Verified on POWER9 (8 cases).
+    // ===================================================================
+    void vmrghb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,   12)); }
+    void vmrghh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,   76)); }
+    void vmrghw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  140)); }
+    void vmrglb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  268)); }
+    void vmrglh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  332)); }
+    void vmrglw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  396)); }
+    void vmrgew(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1932)); }
+    void vmrgow(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1676)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,

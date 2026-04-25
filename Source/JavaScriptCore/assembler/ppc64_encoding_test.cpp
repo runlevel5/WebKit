@@ -394,6 +394,16 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX merge — interleave high/low/even/odd lanes from two vectors.
+        { "vmrghb 3,4,5",              vxForm(4, 3, 4, 5,   12),                             0x1064280c },
+        { "vmrghh 3,4,5",              vxForm(4, 3, 4, 5,   76),                             0x1064284c },
+        { "vmrghw 3,4,5",              vxForm(4, 3, 4, 5,  140),                             0x1064288c },
+        { "vmrglb 3,4,5",              vxForm(4, 3, 4, 5,  268),                             0x1064290c },
+        { "vmrglh 3,4,5",              vxForm(4, 3, 4, 5,  332),                             0x1064294c },
+        { "vmrglw 3,4,5",              vxForm(4, 3, 4, 5,  396),                             0x1064298c },
+        { "vmrgew 3,4,5",              vxForm(4, 3, 4, 5, 1932),                             0x10642f8c },
+        { "vmrgow 3,4,5",              vxForm(4, 3, 4, 5, 1676),                             0x10642e8c },
+
         // VMX splat (lane-from-vector). UIMM in VRA slot.
         { "vspltb 3,4,7",              vxForm(4, 3, 7, 4, 524),                              0x1067220c },
         { "vsplth 3,4,3",              vxForm(4, 3, 3, 4, 588),                              0x1063224c },
