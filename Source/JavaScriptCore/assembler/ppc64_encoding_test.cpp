@@ -487,6 +487,16 @@ int main()
         { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
         { "vcmpgtfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 710),                           0x10642ac6 },
 
+        // VSX f32x4 unary + cross-precision conversions.
+        { "xvnegsp    vs3,vs4",        xx2Form(60, 3, 4, 441),                               0xf06026e4 },
+        { "xvabssp    vs3,vs4",        xx2Form(60, 3, 4, 409),                               0xf0602664 },
+        { "xvcvdpsxws vs3,vs4",        xx2Form(60, 3, 4, 216),                               0xf0602360 },
+        { "xvcvdpuxws vs3,vs4",        xx2Form(60, 3, 4, 200),                               0xf0602320 },
+        { "xvcvsxwdp  vs3,vs4",        xx2Form(60, 3, 4, 248),                               0xf06023e0 },
+        { "xvcvuxwdp  vs3,vs4",        xx2Form(60, 3, 4, 232),                               0xf06023a0 },
+        { "xvcvdpsp   vs3,vs4",        xx2Form(60, 3, 4, 393),                               0xf0602624 },
+        { "xvcvspdp   vs3,vs4",        xx2Form(60, 3, 4, 457),                               0xf0602724 },
+
         // VSX f64x2 compare / min-max / unary (WASM SIMD f64x2 surface).
         { "xvcmpeqdp vs3,vs4,vs5",     xx3Form(60, 3, 4, 5,  99),                            0xf0642b18 },
         { "xvcmpgtdp vs3,vs4,vs5",     xx3Form(60, 3, 4, 5, 107),                            0xf0642b58 },
