@@ -504,6 +504,33 @@ public:
     void move64ToDouble(RegisterID, FPRegisterID)    { UNREACHABLE_FOR_PLATFORM(); }
     void moveVector(FPRegisterID, FPRegisterID)      { UNREACHABLE_FOR_PLATFORM(); }
     void convertInt32ToDouble(RegisterID, FPRegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Push (stub) — TrustedImm32 overload required by MacroAssembler.h wrappers.
+    void push(TrustedImm32)                          { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 32-bit / float / double / vector loads and stores (stub)
+    void load32(Address, RegisterID)                 { UNREACHABLE_FOR_PLATFORM(); }
+    void loadDouble(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
+    void storeDouble(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFloat(Address, FPRegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
+    void storeFloat(FPRegisterID, Address)           { UNREACHABLE_FOR_PLATFORM(); }
+    void loadVector(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
+    void storeVector(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional branch32 overloads (stub)
+    Jump branch32(RelationalCondition, AbsoluteAddress, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch32(RelationalCondition, RegisterID, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch32(RelationalCondition, Address, TrustedImm32)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest32(ResultCondition, RegisterID, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch8(RelationalCondition, Address, TrustedImm32)                 { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch16(RelationalCondition, Address, TrustedImm32)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // Patchable branch stubs
+    Jump branchPtrWithPatch(RelationalCondition, Address, DataLabelPtr&, TrustedImmPtr = TrustedImmPtr(nullptr)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch32WithPatch(RelationalCondition, Address, DataLabel32&, TrustedImm32 = TrustedImm32(0))           { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
+    void abortWithReason(AbortReason)                { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
