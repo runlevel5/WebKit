@@ -399,7 +399,7 @@ public:
         {
         }
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
         explicit constexpr TrustedImm64(TrustedImmPtr ptr)
             : m_value(ptr.asIntptr())
         {
