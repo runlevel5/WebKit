@@ -1786,6 +1786,56 @@ public:
     void vmaxsd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 450)); }
 
     // ===================================================================
+    // VMX 4-operand instructions (VA-form, opcode 4). Power ISA v2.07B
+    // §6.7-§6.10. Critical for shuffles, byte permutes, and any
+    // SIMD multiply-add fast path.
+    //
+    //   vperm   VRT, VRA, VRB, VRC — XO=43 (per-byte select: VRT[i] is
+    //                              VRA[VRC[i] & 0x1F] or VRB[..]+16 etc.)
+    //   vsel    VRT, VRA, VRB, VRC — XO=42 (bitwise select: VRT = (VRC ?
+    //                              VRB : VRA), bit-by-bit, 128-bit-wide)
+    //   vmaddfp VRT, VRA, VRC, VRB — XO=46 (VRT = VRA*VRC + VRB; asm
+    //                              syntax reorders VRC before VRB!)
+    //   vnmsubfp VRT, VRA, VRC, VRB — XO=47 (VRT = -(VRA*VRC - VRB))
+    //   vmsumubm VRT, VRA, VRB, VRC — XO=36 (sum-of-products byte→word)
+    //
+    // POWER9 future-stubs:
+    //   - v3.0 vpermr (XO=59, bit-reverse permute) — eliminates several
+    //     byte-swap costs but requires gating
+    //   - v3.0 fused multiply-add for vector double (xvmaddadp etc.)
+    //     lives in VSX (opcode 60), not VA-form
+    //
+    // Verified on POWER9 (5 cases).
+    // ===================================================================
+    void vperm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 43));
+    }
+
+    void vsel(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 42));
+    }
+
+    // vmaddfp asm operand order is (VRT, VRA, VRC, VRB) — reordered to
+    // group multiplicands. Method takes them in asm order to avoid
+    // surprises; we forward to vaForm in the encoding (VRT,VRA,VRB,VRC).
+    void vmaddfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrc, VRegisterID vrb)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 46));
+    }
+
+    void vnmsubfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrc, VRegisterID vrb)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 47));
+    }
+
+    void vmsumubm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 36));
+    }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -2235,6 +2285,26 @@ protected:
              | (registerValue(ra) << 16)
              | (registerValue(rb) << 11)
              | (xo << 1);
+    }
+
+    // VA-form (VMX 4-operand): [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | VRC(5) | XO(6)]
+    // Power ISA v2.07B Book I §1.6.1. Used by vperm, vsel, vmaddfp,
+    // vnmsubfp, vmsumubm and a few other 4-source ops. XO is only 6 bits
+    // here — fewer values are possible than VX-form's 11-bit XO. NOTE: a
+    // few asm mnemonics reorder the operand list (vmaddfp asm syntax
+    // is "vmaddfp VRT, VRA, VRC, VRB" — VRC before VRB) — the helper
+    // takes the encoding-order (VRT, VRA, VRB, VRC).
+    static constexpr uint32_t vaForm(uint32_t opcode, VRegisterID vrt, VRegisterID vra,
+                                     VRegisterID vrb, VRegisterID vrc, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(xo < 64);
+        return (opcode << 26)
+             | (vrValue(vrt) << 21)
+             | (vrValue(vra) << 16)
+             | (vrValue(vrb) << 11)
+             | (vrValue(vrc) << 6)
+             | xo;
     }
 
     // VC-form (VMX compare): [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | Rc(1) | XO(10)]

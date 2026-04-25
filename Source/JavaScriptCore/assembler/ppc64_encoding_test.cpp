@@ -99,6 +99,13 @@ static constexpr uint32_t vxForm(uint32_t opcode, RegID vrt, RegID vra, RegID vr
     return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | xo;
 }
 
+static constexpr uint32_t vaForm(uint32_t opcode, RegID vrt, RegID vra, RegID vrb, RegID vrc, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(xo < 64);
+    return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | (vrc << 6) | xo;
+}
+
 static constexpr uint32_t vcForm(uint32_t opcode, RegID vrt, RegID vra, RegID vrb,
                                  uint32_t rc, uint32_t xo)
 {
@@ -393,6 +400,14 @@ int main()
         { "dcbf  0,3",                 xForm(31, 0, 0, 3, 86,   0),                          0x7c0018ac },
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
+
+        // VA-form 4-operand. Note vmaddfp/vnmsubfp asm syntax reorders
+        // (VRT,VRA,VRC,VRB) but the encoding is (VRT,VRA,VRB,VRC).
+        { "vperm    3,4,5,6",          vaForm(4, 3, 4, 5, 6, 43),                            0x106429ab },
+        { "vsel     3,4,5,6",          vaForm(4, 3, 4, 5, 6, 42),                            0x106429aa },
+        { "vmaddfp  3,4,6,5  (asm)",   vaForm(4, 3, 4, 5, 6, 46),                            0x106429ae },
+        { "vnmsubfp 3,4,6,5  (asm)",   vaForm(4, 3, 4, 5, 6, 47),                            0x106429af },
+        { "vmsumubm 3,4,5,6",          vaForm(4, 3, 4, 5, 6, 36),                            0x106429a4 },
 
         // VMX lane-wise min/max (16 cases).
         { "vminub 3,4,5",              vxForm(4, 3, 4, 5, 514),                              0x10642a02 },
