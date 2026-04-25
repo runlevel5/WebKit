@@ -118,11 +118,11 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_C_LOOP_DEFAULT OFF)
         set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
     elseif (WTF_CPU_PPC64LE)
-        # Phase 1: JIT layer compiles (all stubs); C_LOOP keeps the interpreter
-        # running while the native LLInt offlineasm backend (ppc64le.rb) and
-        # real MacroAssembler bodies are developed. FTL stays off until B3/Air
-        # has a PPC64LE backend. Sampling profiler off (requires JIT frames).
-        set(ENABLE_JIT_DEFAULT ON)
+        # Phase 1: C_LOOP interpreter keeps jsc running while ppc64le.rb and
+        # the real MacroAssembler bodies are developed. JIT stays off until
+        # ppc64le.rb lands in WORKING_BACKENDS (Phase 2). FTL and sampling
+        # profiler both require native JIT frames, so keep them off too.
+        set(ENABLE_JIT_DEFAULT OFF)
         set(ENABLE_FTL_DEFAULT OFF)
         set(USE_SYSTEM_MALLOC_DEFAULT ON)
         set(USE_MIMALLOC_DEFAULT OFF)
