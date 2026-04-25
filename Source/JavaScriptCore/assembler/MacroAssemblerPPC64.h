@@ -242,6 +242,46 @@ public:
         m_assembler.lis(dest, hi16);
         m_assembler.ori(dest, dest, lo16);
     }
+
+    // move — load a 64-bit pointer immediate. Always emits the
+    // 5-instruction full sequence; small-pointer optimization can be
+    // added when MacroAssembler is integrated and we can profile.
+    //
+    //   lis  dest, bits[48:63]              (sign-extends into upper 48)
+    //   ori  dest, dest, bits[32:47]         (set bits[15:0] of dest)
+    //   sldi dest, dest, 32                  (shift up; upper 32 = old low 32)
+    //   oris dest, dest, bits[16:31]         (set bits[31:16] of low half)
+    //   ori  dest, dest, bits[0:15]          (set bits[15:0] of low half)
+    //
+    // Trace for v = 0x123456789ABCDEF0:
+    //   after lis(0x1234)         dest = 0x0000000012340000
+    //   after ori(_, 0x5678)      dest = 0x0000000012345678
+    //   after sldi 32             dest = 0x1234567800000000
+    //   after oris(_, 0x9ABC)     dest = 0x123456789ABC0000
+    //   after ori(_, 0xDEF0)      dest = 0x123456789ABCDEF0  ✓
+    //
+    // The lis sign-extension is handled correctly: for high pointers
+    // with bit 63 set, the lis-loaded sign extension contributes the
+    // intended top bits before the sldi shifts the value into place.
+    void move(TrustedImmPtr imm, RegisterID dest)
+    {
+        uintptr_t v = reinterpret_cast<uintptr_t>(imm.m_value);
+
+        // Cast through unsigned types first to avoid implementation-defined
+        // behavior of narrowing a wider signed value; the final
+        // static_cast<int16_t>(uint16_t) is well-defined on all 2's-complement
+        // platforms (and standardized in C++20).
+        int16_t  hiHi16 = static_cast<int16_t>(static_cast<uint16_t>(v >> 48));
+        uint16_t hiLo16 = static_cast<uint16_t>(v >> 32);
+        uint16_t loHi16 = static_cast<uint16_t>(v >> 16);
+        uint16_t lo16   = static_cast<uint16_t>(v);
+
+        m_assembler.lis(dest, hiHi16);
+        m_assembler.ori(dest, dest, hiLo16);
+        m_assembler.sldi(dest, dest, 32);
+        m_assembler.oris(dest, dest, loHi16);
+        m_assembler.ori(dest, dest, lo16);
+    }
 };
 
 } // namespace JSC
