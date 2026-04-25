@@ -1890,6 +1890,80 @@ public:
     void vcmpbfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vcForm(4, vrt, vra, vrb, 0, 966)); }
 
     // ===================================================================
+    // VSX (Vector-Scalar Extension) — first taste. Power ISA v2.07B §7.
+    //
+    // VSX adds a 64-register file (VSR0-VSR63) that overlays the 32 FPRs
+    // (VSR0..VSR31 ≡ FPRs) and 32 VRs (VSR32..VSR63 ≡ v0..v31). All VSX
+    // ops use a 6-bit register encoding split between the normal RT/RS
+    // 5-bit slot and a 1-bit "extension" at the low end of the
+    // instruction. Callers pass a plain uint32_t VSR number 0-63.
+    //
+    // The single most useful thing VSX gives us over VMX: NATURAL
+    // UNALIGNED 16-byte access. lvx/stvx silently align addresses to
+    // 16B; lxvd2x/stxvd2x do not. Per PLAN.md SIMD lessons, every JSC
+    // unaligned vector path on PPC64LE goes through these.
+    //
+    // XX1-form load/store (opcode 31):
+    //   lxvd2x   VSRT, RA, RB — XO=844  (load 16B as 2×64; no align)
+    //   stxvd2x  VSRS, RA, RB — XO=972
+    //   lxvw4x   VSRT, RA, RB — XO=780  (load 16B as 4×32)
+    //   stxvw4x  VSRS, RA, RB — XO=908
+    //
+    // XX3-form bitwise (opcode 60):
+    //   xxland  VSRT, VSRA, VSRB — XO=130   AND
+    //   xxlandc VSRT, VSRA, VSRB — XO=138   AND-complement
+    //   xxlor   VSRT, VSRA, VSRB — XO=146   OR
+    //   xxlxor  VSRT, VSRA, VSRB — XO=154   XOR
+    //   xxlnor  VSRT, VSRA, VSRB — XO=162   NOR
+    //
+    // POWER9 future-stubs (very large list — VSX is where most PPC9
+    // SIMD work lives):
+    //   - lxv / stxv (opcode 61) — load/store 16B with byte offset (D-form);
+    //     supersedes lxvd2x for unaligned access on POWER9
+    //   - lxvb16x / lxvh8x — byte-swapped loads (LE byte-order helpers)
+    //   - lxvll / stxvll — length-bounded loads/stores
+    //   - xviXXX_v3 — many new VSX3 ops (signed compares, byte-reverse,
+    //     extract-from-vector etc.)
+    //   - xxsel (XX4-form, four-source select) — use vsel (VMX) on v2.07B
+    //   - All MMA / prefixed instructions (POWER10, v3.1) — out of scope.
+    //
+    // Verified on POWER9:
+    //   lxvd2x  vs3,r4,r5  → 0x7c642e98
+    //   lxvd2x  vs35,r4,r5 → 0x7c642e99 (TX=1 high-bit set)
+    //   stxvd2x vs3,r4,r5  → 0x7c642f98
+    //   lxvw4x  vs3,r4,r5  → 0x7c642e18
+    //   stxvw4x vs3,r4,r5  → 0x7c642f18
+    //   xxlor   vs3,vs4,vs5 → 0xf0642c90
+    //   xxlxor  vs3,vs4,vs5 → 0xf0642cd0
+    //   xxland  vs3,vs4,vs5 → 0xf0642c10
+    // ===================================================================
+    void lxvd2x(uint32_t vsrT, RegisterID ra, RegisterID rb)
+    {
+        insn(xx1Form(31, vsrT, ra, rb, /*XO*/ 844));
+    }
+
+    void stxvd2x(uint32_t vsrS, RegisterID ra, RegisterID rb)
+    {
+        insn(xx1Form(31, vsrS, ra, rb, /*XO*/ 972));
+    }
+
+    void lxvw4x(uint32_t vsrT, RegisterID ra, RegisterID rb)
+    {
+        insn(xx1Form(31, vsrT, ra, rb, /*XO*/ 780));
+    }
+
+    void stxvw4x(uint32_t vsrS, RegisterID ra, RegisterID rb)
+    {
+        insn(xx1Form(31, vsrS, ra, rb, /*XO*/ 908));
+    }
+
+    void xxland(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)  { insn(xx3Form(60, vsrT, vsrA, vsrB, 130)); }
+    void xxlandc(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 138)); }
+    void xxlor(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)   { insn(xx3Form(60, vsrT, vsrA, vsrB, 146)); }
+    void xxlxor(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)  { insn(xx3Form(60, vsrT, vsrA, vsrB, 154)); }
+    void xxlnor(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB)  { insn(xx3Form(60, vsrT, vsrA, vsrB, 162)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
@@ -2339,6 +2413,50 @@ protected:
              | (registerValue(ra) << 16)
              | (registerValue(rb) << 11)
              | (xo << 1);
+    }
+
+    // VSX register fields are SPLIT 6-bit values. The low 5 bits live in
+    // the normal RT/RS slot; the high bit (TX/AX/BX) lives at the bottom
+    // of the instruction. We accept a plain uint32_t VSR number (0-63)
+    // here rather than introducing a separate VSRRegisterID type — the
+    // FPRs alias VSR0-31 and VRs alias VSR32-63, so callers can derive
+    // VSR# from either via static_cast<uint32_t>(fpr) or
+    // static_cast<uint32_t>(vr) + 32.
+    static constexpr uint32_t xx1Form(uint32_t opcode, uint32_t vsrT,
+                                      RegisterID ra, RegisterID rb, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(vsrT < 64);
+        ASSERT(xo < 1024);
+        uint32_t tLow5 = vsrT & 0x1F;
+        uint32_t tx = (vsrT >> 5) & 1;
+        return (opcode << 26)
+             | (tLow5 << 21)
+             | (registerValue(ra) << 16)
+             | (registerValue(rb) << 11)
+             | (xo << 1)
+             | tx;
+    }
+
+    // XX3-form: [op=60 | T(5) | A(5) | B(5) | XO(8) | AX(1) | BX(1) | TX(1)]
+    // 8-bit XO at bits 21-28. The three VSR-extension bits are AX (bit 29),
+    // BX (bit 30), TX (bit 31).
+    static constexpr uint32_t xx3Form(uint32_t opcode, uint32_t vsrT,
+                                      uint32_t vsrA, uint32_t vsrB, uint32_t xo)
+    {
+        ASSERT(opcode < 64);
+        ASSERT(vsrT < 64);
+        ASSERT(vsrA < 64);
+        ASSERT(vsrB < 64);
+        ASSERT(xo < 256);
+        return (opcode << 26)
+             | ((vsrT & 0x1F) << 21)
+             | ((vsrA & 0x1F) << 16)
+             | ((vsrB & 0x1F) << 11)
+             | (xo << 3)
+             | (((vsrA >> 5) & 1) << 2)
+             | (((vsrB >> 5) & 1) << 1)
+             | ((vsrT >> 5) & 1);
     }
 
     // VA-form (VMX 4-operand): [op(6)=4 | VRT(5) | VRA(5) | VRB(5) | VRC(5) | XO(6)]
