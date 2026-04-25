@@ -385,6 +385,16 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX load/store (X-form, opcode 31, VR in RT/RS slot).
+        { "lvx    3,4,5",              xForm(31, 3, 4, 5, 103, 0),                           0x7c6428ce },
+        { "stvx   3,4,5",              xForm(31, 3, 4, 5, 231, 0),                           0x7c6429ce },
+        { "lvebx  3,4,5",              xForm(31, 3, 4, 5,   7, 0),                           0x7c64280e },
+        { "lvehx  3,4,5",              xForm(31, 3, 4, 5,  39, 0),                           0x7c64284e },
+        { "lvewx  3,4,5",              xForm(31, 3, 4, 5,  71, 0),                           0x7c64288e },
+        { "stvebx 3,4,5",              xForm(31, 3, 4, 5, 135, 0),                           0x7c64290e },
+        { "stvehx 3,4,5",              xForm(31, 3, 4, 5, 167, 0),                           0x7c64294e },
+        { "stvewx 3,4,5",              xForm(31, 3, 4, 5, 199, 0),                           0x7c64298e },
+
         // VMX integer add/sub modulo (VX-form, opcode 4).
         { "vaddubm 3,4,5",             vxForm(4, 3, 4, 5, 0),                                0x10642800 },
         { "vadduhm 3,4,5",             vxForm(4, 3, 4, 5, 64),                               0x10642840 },
