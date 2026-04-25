@@ -2097,6 +2097,36 @@ public:
     void vpkshus(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 270)); }
     void vpkswss(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 462)); }
     void vpkswus(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 334)); }
+
+    // ===================================================================
+    // VMX rounding average (unsigned). Power ISA v2.07B §6.10.
+    // Direct WASM SIMD mapping:
+    //   i8x16.avgr_u   →  vavgub (XO=1026)
+    //   i16x8.avgr_u   →  vavguh (XO=1090)
+    // Other Power v2.07B avg variants (vavgsb/sh/sw signed, vavguw
+    // word) skipped — WASM SIMD doesn't have unsigned-32 or signed avgr.
+    // Verified on POWER9 (2 cases).
+    // ===================================================================
+    void vavgub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1026)); }
+    void vavguh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1090)); }
+
+    // ===================================================================
+    // VMX Q15 fixed-point multiply-round-saturate. Power ISA v2.07B §6.10.
+    // Direct WASM SIMD mapping (when called with VRC = zero-vector):
+    //   i16x8.q15mulr_sat_s   →  vmhraddshs VRT, VRA, VRB, ZERO
+    //
+    // Semantics: VRT[i] = sat((VRA[i] * VRB[i] + 0x4000) >> 15) + VRC[i]
+    //   The +0x4000 provides the "round" in Q15 mul-round.
+    //
+    // POWER9 future-stub: v3.0 doesn't add a single-instruction
+    // q15mulr_sat_s (already perfect on v2.07B).
+    //
+    // Verified on POWER9.
+    // ===================================================================
+    void vmhraddshs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc)
+    {
+        insn(vaForm(4, vrt, vra, vrb, vrc, /*XO*/ 33));
+    }
     // Removed in audit-cleanup (no JSC use):
     //   - vrefp / vrsqrtefp / vexptefp / vlogefp (FP estimates)
     //   - vcmpbfp (Power-specific bounds compare)
