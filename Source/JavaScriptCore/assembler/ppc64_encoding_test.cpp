@@ -394,6 +394,24 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX lane-wise shifts and rotates (VX-form, opcode 4).
+        { "vslb  3,4,5",               vxForm(4, 3, 4, 5,  260),                             0x10642904 },
+        { "vslh  3,4,5",               vxForm(4, 3, 4, 5,  324),                             0x10642944 },
+        { "vslw  3,4,5",               vxForm(4, 3, 4, 5,  388),                             0x10642984 },
+        { "vsld  3,4,5",               vxForm(4, 3, 4, 5, 1476),                             0x10642dc4 },
+        { "vsrb  3,4,5",               vxForm(4, 3, 4, 5,  516),                             0x10642a04 },
+        { "vsrh  3,4,5",               vxForm(4, 3, 4, 5,  580),                             0x10642a44 },
+        { "vsrw  3,4,5",               vxForm(4, 3, 4, 5,  644),                             0x10642a84 },
+        { "vsrd  3,4,5",               vxForm(4, 3, 4, 5, 1732),                             0x10642ec4 },
+        { "vsrab 3,4,5",               vxForm(4, 3, 4, 5,  772),                             0x10642b04 },
+        { "vsrah 3,4,5",               vxForm(4, 3, 4, 5,  836),                             0x10642b44 },
+        { "vsraw 3,4,5",               vxForm(4, 3, 4, 5,  900),                             0x10642b84 },
+        { "vsrad 3,4,5",               vxForm(4, 3, 4, 5,  964),                             0x10642bc4 },
+        { "vrlb  3,4,5",               vxForm(4, 3, 4, 5,    4),                             0x10642804 },
+        { "vrlh  3,4,5",               vxForm(4, 3, 4, 5,   68),                             0x10642844 },
+        { "vrlw  3,4,5",               vxForm(4, 3, 4, 5,  132),                             0x10642884 },
+        { "vrld  3,4,5",               vxForm(4, 3, 4, 5,  196),                             0x106428c4 },
+
         // VMX merge — interleave high/low/even/odd lanes from two vectors.
         { "vmrghb 3,4,5",              vxForm(4, 3, 4, 5,   12),                             0x1064280c },
         { "vmrghh 3,4,5",              vxForm(4, 3, 4, 5,   76),                             0x1064284c },
