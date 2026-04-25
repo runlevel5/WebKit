@@ -425,6 +425,85 @@ public:
         m_assembler.ld(dest, 0, stackPointerRegister);
         m_assembler.addi(stackPointerRegister, stackPointerRegister, stackSlotSize);
     }
+
+    // ===================================================================
+    // Stub block — minimal one-overload-per-method UNREACHABLE_FOR_PLATFORM
+    // bodies. These exist solely to satisfy the `using MacroAssemblerBase::*`
+    // declarations in MacroAssembler.h. Every method here is unimplemented
+    // and will trap at runtime; real bodies will be added when a JIT/DFG/FTL
+    // call site surfaces a need for it during build iteration.
+    //
+    // Each stub provides the most common (RegisterID, RegisterID) /
+    // (TrustedImm32, RegisterID) overload — the C++ compiler will report
+    // additional missing overloads at actual call sites, which we add
+    // one-at-a-time as the build iteration drives them.
+    // ===================================================================
+
+    // 32-bit arithmetic (stub)
+    void add32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void add32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void sub32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void sub32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void mul32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void mul32(RegisterID, RegisterID, RegisterID)   { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 32-bit logical (stub)
+    void and32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void and32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
+    void xor32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void xor32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 64-bit logical (stub)
+    void and64(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void and64(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void or64(RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
+    void or64(TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Shifts (stub) — PPC's shift count comes from a register or 5/6-bit imm.
+    void lshift32(RegisterID, RegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
+    void lshift32(TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift32(RegisterID, RegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift32(TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift32(RegisterID, RegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift32(TrustedImm32, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Compare (stub) — sets `dest` to 0/1 based on the compare result.
+    void compare32(RelationalCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void compare32(RelationalCondition, RegisterID, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void compare64(RelationalCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void compare64(RelationalCondition, RegisterID, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Branch & jump (stub) — return Jump for patching by the caller.
+    Jump branch32(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch32(RelationalCondition, RegisterID, TrustedImm32) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, RegisterID, TrustedImm32) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchPtr(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchAdd32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchAdd32(ResultCondition, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub32(ResultCondition, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchMul32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchMul32(ResultCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest8(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest16(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump jump() { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    void farJump(RegisterID, PtrTag) { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Stores (stub) — store64 with Address is implemented above.
+    void store32(RegisterID, Address)                { UNREACHABLE_FOR_PLATFORM(); }
+    void store32(TrustedImm32, Address)              { UNREACHABLE_FOR_PLATFORM(); }
+
+    // FP / SIMD moves (stub)
+    void move32ToFloat(RegisterID, FPRegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
+    void moveDouble(FPRegisterID, FPRegisterID)      { UNREACHABLE_FOR_PLATFORM(); }
+    void move64ToDouble(RegisterID, FPRegisterID)    { UNREACHABLE_FOR_PLATFORM(); }
+    void moveVector(FPRegisterID, FPRegisterID)      { UNREACHABLE_FOR_PLATFORM(); }
+    void convertInt32ToDouble(RegisterID, FPRegisterID) { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
