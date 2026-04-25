@@ -1836,6 +1836,60 @@ public:
     }
 
     // ===================================================================
+    // VMX floating-point lane-wise arithmetic. Power ISA v2.07B §6.13.
+    // VMX FP is **single-precision only** — each 128-bit register holds
+    // 4 floats. Double-precision SIMD comes via VSX (Phase 5 territory).
+    //
+    // VX-form (opcode 4):
+    //   vaddfp  VRT, VRA, VRB — XO=10    (lane-wise FP add)
+    //   vsubfp  VRT, VRA, VRB — XO=74    (lane-wise FP sub)
+    //   vminfp  VRT, VRA, VRB — XO=1098  (FP min)
+    //   vmaxfp  VRT, VRA, VRB — XO=1034  (FP max)
+    //
+    // VX-form FP unary (VRA slot = 0):
+    //   vrefp     VRT, VRB — XO=266   reciprocal estimate (low precision)
+    //   vrsqrtefp VRT, VRB — XO=330   reciprocal sqrt estimate
+    //   vexptefp  VRT, VRB — XO=394   2^x estimate
+    //   vlogefp   VRT, VRB — XO=458   log2 estimate
+    //   vrfin     VRT, VRB — XO=522   round to nearest integer
+    //   vrfiz     VRT, VRB — XO=586   round toward zero (trunc)
+    //   vrfip     VRT, VRB — XO=650   round toward +inf (ceil)
+    //   vrfim     VRT, VRB — XO=714   round toward -inf (floor)
+    //
+    // VC-form FP compares (XO at bits 22-31, Rc at bit 21):
+    //   vcmpeqfp  VRT, VRA, VRB — XO=198  equal
+    //   vcmpgefp  VRT, VRA, VRB — XO=454  greater-or-equal
+    //   vcmpgtfp  VRT, VRA, VRB — XO=710  greater-than
+    //   vcmpbfp   VRT, VRA, VRB — XO=966  bounds check (clamping helper)
+    //
+    // POWER9 future-stubs:
+    //   - v3.0 adds vrlqmi/vrlq for 128-bit rotates and a few new
+    //     FP-vector ops; not in v2.07B
+    //   - VSX is the modern path for FP-vector double-precision
+    //     (xvadddp/xvsubdp/xvmuldp etc., opcode 60); add when FTL needs
+    //
+    // Verified on POWER9 (11 cases).
+    // ===================================================================
+    void vaddfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  10)); }
+    void vsubfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  74)); }
+    void vminfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1098)); }
+    void vmaxfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1034)); }
+
+    void vrefp(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 266)); }
+    void vrsqrtefp(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 330)); }
+    void vexptefp(VRegisterID vrt, VRegisterID vrb)  { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 394)); }
+    void vlogefp(VRegisterID vrt, VRegisterID vrb)   { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 458)); }
+    void vrfin(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 522)); }
+    void vrfiz(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 586)); }
+    void vrfip(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 650)); }
+    void vrfim(VRegisterID vrt, VRegisterID vrb)     { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 714)); }
+
+    void vcmpeqfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 198)); }
+    void vcmpgefp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 454)); }
+    void vcmpgtfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 710)); }
+    void vcmpbfp(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vcForm(4, vrt, vra, vrb, 0, 966)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,

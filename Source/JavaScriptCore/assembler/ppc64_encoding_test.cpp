@@ -401,6 +401,23 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX FP arithmetic (single-precision per lane).
+        { "vaddfp 3,4,5",              vxForm(4, 3, 4, 5,   10),                             0x1064280a },
+        { "vsubfp 3,4,5",              vxForm(4, 3, 4, 5,   74),                             0x1064284a },
+        { "vminfp 3,4,5",              vxForm(4, 3, 4, 5, 1098),                             0x10642c4a },
+        { "vmaxfp 3,4,5",              vxForm(4, 3, 4, 5, 1034),                             0x10642c0a },
+
+        // VMX FP unary (VRA slot = 0).
+        { "vrfin 3,4",                 vxForm(4, 3, 0, 4, 522),                              0x1060220a },
+        { "vrfip 3,4",                 vxForm(4, 3, 0, 4, 650),                              0x1060228a },
+        { "vrfim 3,4",                 vxForm(4, 3, 0, 4, 714),                              0x106022ca },
+        { "vrfiz 3,4",                 vxForm(4, 3, 0, 4, 586),                              0x1060224a },
+
+        // VMX FP compares (VC-form, Rc=0).
+        { "vcmpeqfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 198),                           0x106428c6 },
+        { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
+        { "vcmpgtfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 710),                           0x10642ac6 },
+
         // VA-form 4-operand. Note vmaddfp/vnmsubfp asm syntax reorders
         // (VRT,VRA,VRC,VRB) but the encoding is (VRT,VRA,VRB,VRC).
         { "vperm    3,4,5,6",          vaForm(4, 3, 4, 5, 6, 43),                            0x106429ab },
