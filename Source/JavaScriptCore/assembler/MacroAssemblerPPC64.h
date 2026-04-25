@@ -199,6 +199,49 @@ public:
         if (src != dest)
             m_assembler.mr(dest, src);
     }
+
+    // move — load a 32-bit signed immediate, sign-extended to 64 bits.
+    //
+    // Three encoding strategies depending on the value:
+    //   (a) v ∈ [-32768, 32767]    →  addi dest, r0, v       (1 insn, "li")
+    //   (b) v & 0xFFFF == 0        →  lis  dest, v >> 16     (1 insn)
+    //   (c) general                →  lis  dest, hi16
+    //                                 ori  dest, dest, lo16  (2 insns)
+    //
+    // Why lis+ori (not lis+addi): addi sign-extends its 16-bit immediate.
+    // For values where the LOW-16 bit pattern has bit 15 set (e.g.
+    // 0x7FFF8000), lis + addi would subtract from the lis-loaded value
+    // because addi would treat 0x8000 as -32768. ori does NOT sign-extend,
+    // so it cleanly OR-merges the low 16 bits regardless of the high bit.
+    //
+    // Sign-extension of the final 32-bit result up to 64 bits happens
+    // automatically because lis sign-extends its imm<<16 to 64 bits;
+    // ori only writes the low 16 bits and leaves the rest untouched.
+    void move(TrustedImm32 imm, RegisterID dest)
+    {
+        int32_t v = imm.m_value;
+        if (v >= INT16_MIN && v <= INT16_MAX) {
+            // case (a): 16-bit signed range — single addi suffices.
+            m_assembler.addi(dest, PPC64Registers::r0, static_cast<int16_t>(v));
+            return;
+        }
+
+        // Extract the high 16 bits of v as a 16-bit pattern (unsigned shift
+        // first to avoid implementation-defined behavior of right-shifting
+        // a signed negative value, then narrow to int16_t).
+        int16_t hi16 = static_cast<int16_t>(static_cast<uint32_t>(v) >> 16);
+        uint16_t lo16 = static_cast<uint16_t>(v);
+
+        if (lo16 == 0) {
+            // case (b): low 16 zero — single lis suffices.
+            m_assembler.lis(dest, hi16);
+            return;
+        }
+
+        // case (c): general 32-bit immediate.
+        m_assembler.lis(dest, hi16);
+        m_assembler.ori(dest, dest, lo16);
+    }
 };
 
 } // namespace JSC
