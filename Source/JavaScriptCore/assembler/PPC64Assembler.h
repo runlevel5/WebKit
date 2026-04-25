@@ -186,6 +186,17 @@ public:
         insn(dForm(24, rs, ra, ui));
     }
 
+    // oris — Or Immediate Shifted. Power ISA v2.07B §3.3.9, D-form, opcode 25.
+    //   Semantics: RA <- RS | (zero_extend(UI) << 16).
+    //   Used together with ori to set the high 16 of the low 32 bits
+    //   of a register without disturbing the upper 32 bits — the third
+    //   step in a 5-instruction 64-bit immediate load.
+    // Verified on POWER9: oris 3,4,0x1234 → 0x64831234.
+    void oris(RegisterID ra, RegisterID rs, uint16_t ui)
+    {
+        insn(dForm(25, rs, ra, ui));
+    }
+
     // ===================================================================
     // Multiply (XO-form for register×register, D-form for ×immediate).
     // Power ISA v2.07B §3.3.8. The "low" variants store the low N bits
