@@ -2283,6 +2283,40 @@ public:
     void xvrdpic(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 235)); }
 
     // ===================================================================
+    // VSX f32x4 unary (neg/abs) and cross-precision conversions.
+    // Power ISA v2.07B §7.6. All XX2-form.
+    //
+    // Direct WASM SIMD mapping:
+    //   f32x4.neg                       →  xvnegsp     (XO=441)
+    //   f32x4.abs                       →  xvabssp     (XO=409)
+    //   i32x4.trunc_sat_f64x2_s_zero    →  xvcvdpsxws  (XO=216)
+    //   i32x4.trunc_sat_f64x2_u_zero    →  xvcvdpuxws  (XO=200)
+    //   f64x2.convert_low_i32x4_s       →  xvcvsxwdp   (XO=248)
+    //   f64x2.convert_low_i32x4_u       →  xvcvuxwdp   (XO=232)
+    //   f32x4.demote_f64x2_zero         →  xvcvdpsp    (XO=393)
+    //   f64x2.promote_low_f32x4         →  xvcvspdp    (XO=457)
+    //
+    // (VMX has no plain vnegfp / vabsfp opcode in v2.07B; the VSX form
+    // is the only way without composing via vsubfp from zero / vand
+    // with sign-mask. We expose VSX directly to keep the code path
+    // simple even though the VR↔VSR namespace boundary requires an
+    // index translation at the MacroAssembler level.)
+    //
+    // POWER9 future-stub: v3.0 adds xvi*p variants and quad-precision
+    // converters (xscvqpdp etc.); not in v2.07B.
+    //
+    // Verified on POWER9 (8 cases).
+    // ===================================================================
+    void xvnegsp(uint32_t vsrT, uint32_t vsrB)    { insn(xx2Form(60, vsrT, vsrB, 441)); }
+    void xvabssp(uint32_t vsrT, uint32_t vsrB)    { insn(xx2Form(60, vsrT, vsrB, 409)); }
+    void xvcvdpsxws(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 216)); }
+    void xvcvdpuxws(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 200)); }
+    void xvcvsxwdp(uint32_t vsrT, uint32_t vsrB)  { insn(xx2Form(60, vsrT, vsrB, 248)); }
+    void xvcvuxwdp(uint32_t vsrT, uint32_t vsrB)  { insn(xx2Form(60, vsrT, vsrB, 232)); }
+    void xvcvdpsp(uint32_t vsrT, uint32_t vsrB)   { insn(xx2Form(60, vsrT, vsrB, 393)); }
+    void xvcvspdp(uint32_t vsrT, uint32_t vsrB)   { insn(xx2Form(60, vsrT, vsrB, 457)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
