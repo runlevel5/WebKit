@@ -539,6 +539,20 @@ int main()
         { "stvehx 3,4,5",              xForm(31, 3, 4, 5, 167, 0),                           0x7c64294e },
         { "stvewx 3,4,5",              xForm(31, 3, 4, 5, 199, 0),                           0x7c64298e },
 
+        // VMX integer add/sub SATURATING (12 cases).
+        { "vaddubs 3,4,5",             vxForm(4, 3, 4, 5,  512),                             0x10642a00 },
+        { "vadduhs 3,4,5",             vxForm(4, 3, 4, 5,  576),                             0x10642a40 },
+        { "vadduws 3,4,5",             vxForm(4, 3, 4, 5,  640),                             0x10642a80 },
+        { "vaddsbs 3,4,5",             vxForm(4, 3, 4, 5,  768),                             0x10642b00 },
+        { "vaddshs 3,4,5",             vxForm(4, 3, 4, 5,  832),                             0x10642b40 },
+        { "vaddsws 3,4,5",             vxForm(4, 3, 4, 5,  896),                             0x10642b80 },
+        { "vsububs 3,4,5",             vxForm(4, 3, 4, 5, 1536),                             0x10642e00 },
+        { "vsubuhs 3,4,5",             vxForm(4, 3, 4, 5, 1600),                             0x10642e40 },
+        { "vsubuws 3,4,5",             vxForm(4, 3, 4, 5, 1664),                             0x10642e80 },
+        { "vsubsbs 3,4,5",             vxForm(4, 3, 4, 5, 1792),                             0x10642f00 },
+        { "vsubshs 3,4,5",             vxForm(4, 3, 4, 5, 1856),                             0x10642f40 },
+        { "vsubsws 3,4,5",             vxForm(4, 3, 4, 5, 1920),                             0x10642f80 },
+
         // VMX integer add/sub modulo (VX-form, opcode 4).
         { "vaddubm 3,4,5",             vxForm(4, 3, 4, 5, 0),                                0x10642800 },
         { "vadduhm 3,4,5",             vxForm(4, 3, 4, 5, 64),                               0x10642840 },

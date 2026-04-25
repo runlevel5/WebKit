@@ -1545,6 +1545,48 @@ public:
     void vsubudm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1216)); }
 
     // ===================================================================
+    // VMX integer add/sub SATURATING (clamp on overflow). Power ISA
+    // v2.07B §6.10. Direct mapping from WASM SIMD128:
+    //   i8x16.add_sat_s / .add_sat_u   →  vaddsbs / vaddubs
+    //   i16x8.add_sat_s / .add_sat_u   →  vaddshs / vadduhs
+    //   i8x16.sub_sat_s / .sub_sat_u   →  vsubsbs / vsububs
+    //   i16x8.sub_sat_s / .sub_sat_u   →  vsubshs / vsubuhs
+    // The 32-bit saturating variants (vaddsws etc.) aren't in WASM SIMD
+    // but ARM64 NEON has equivalents that JSC's MacroAssembler emits
+    // for some non-WASM saturating intrinsic paths — we include them
+    // for parity, removable if no concrete user appears.
+    //
+    // Saturating semantics: result clamps at lane min/max instead of
+    // wrapping. v2.07B has no doubleword saturating arithmetic in
+    // VMX (would require VSX or POWER9).
+    //
+    // Unsigned (clamp at 0 / max):
+    //   vaddubs XO=512   vadduhs XO=576   vadduws XO=640
+    //   vsububs XO=1536  vsubuhs XO=1600  vsubuws XO=1664
+    // Signed (clamp at INT_MIN / INT_MAX):
+    //   vaddsbs XO=768   vaddshs XO=832   vaddsws XO=896
+    //   vsubsbs XO=1792  vsubshs XO=1856  vsubsws XO=1920
+    //
+    // POWER9 future-stub: v3.0 doesn't add new saturating-add ops in
+    // VMX; the doubleword saturating arithmetic only arrives via VSX
+    // xvaddsp/xvaddsp (FP-saturate) — different op family.
+    //
+    // Verified on POWER9 (12 cases).
+    // ===================================================================
+    void vaddubs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  512)); }
+    void vadduhs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  576)); }
+    void vadduws(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  640)); }
+    void vaddsbs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  768)); }
+    void vaddshs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  832)); }
+    void vaddsws(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  896)); }
+    void vsububs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1536)); }
+    void vsubuhs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1600)); }
+    void vsubuws(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1664)); }
+    void vsubsbs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1792)); }
+    void vsubshs(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1856)); }
+    void vsubsws(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1920)); }
+
+    // ===================================================================
     // VMX load/store (X-form, opcode 31). Power ISA v2.07B §6.6.
     //
     //   lvx   VRT, RA, RB — XO=103  (load 16 bytes; addr forced to 16B align)
