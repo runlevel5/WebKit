@@ -394,6 +394,24 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX lane-wise min/max (16 cases).
+        { "vminub 3,4,5",              vxForm(4, 3, 4, 5, 514),                              0x10642a02 },
+        { "vmaxub 3,4,5",              vxForm(4, 3, 4, 5,   2),                              0x10642802 },
+        { "vminuh 3,4,5",              vxForm(4, 3, 4, 5, 578),                              0x10642a42 },
+        { "vmaxuh 3,4,5",              vxForm(4, 3, 4, 5,  66),                              0x10642842 },
+        { "vminuw 3,4,5",              vxForm(4, 3, 4, 5, 642),                              0x10642a82 },
+        { "vmaxuw 3,4,5",              vxForm(4, 3, 4, 5, 130),                              0x10642882 },
+        { "vminud 3,4,5",              vxForm(4, 3, 4, 5, 706),                              0x10642ac2 },
+        { "vmaxud 3,4,5",              vxForm(4, 3, 4, 5, 194),                              0x106428c2 },
+        { "vminsb 3,4,5",              vxForm(4, 3, 4, 5, 770),                              0x10642b02 },
+        { "vmaxsb 3,4,5",              vxForm(4, 3, 4, 5, 258),                              0x10642902 },
+        { "vminsh 3,4,5",              vxForm(4, 3, 4, 5, 834),                              0x10642b42 },
+        { "vmaxsh 3,4,5",              vxForm(4, 3, 4, 5, 322),                              0x10642942 },
+        { "vminsw 3,4,5",              vxForm(4, 3, 4, 5, 898),                              0x10642b82 },
+        { "vmaxsw 3,4,5",              vxForm(4, 3, 4, 5, 386),                              0x10642982 },
+        { "vminsd 3,4,5",              vxForm(4, 3, 4, 5, 962),                              0x10642bc2 },
+        { "vmaxsd 3,4,5",              vxForm(4, 3, 4, 5, 450),                              0x106429c2 },
+
         // VMX lane-wise shifts and rotates (VX-form, opcode 4).
         { "vslb  3,4,5",               vxForm(4, 3, 4, 5,  260),                             0x10642904 },
         { "vslh  3,4,5",               vxForm(4, 3, 4, 5,  324),                             0x10642944 },

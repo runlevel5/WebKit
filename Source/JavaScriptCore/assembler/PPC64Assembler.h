@@ -1745,6 +1745,47 @@ public:
     void vrld(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  196)); }
 
     // ===================================================================
+    // VMX lane-wise min/max. Power ISA v2.07B §6.10. Sixteen ops
+    // (signed/unsigned × b/h/w/d × min/max). Doubleword variants are
+    // POWER8+ but we are baseline-POWER8 so they're all in.
+    //
+    // Unsigned (XO):
+    //   vminub XO=514   vmaxub XO=2
+    //   vminuh XO=578   vmaxuh XO=66
+    //   vminuw XO=642   vmaxuw XO=130
+    //   vminud XO=706   vmaxud XO=194
+    // Signed (XO):
+    //   vminsb XO=770   vmaxsb XO=258
+    //   vminsh XO=834   vmaxsh XO=322
+    //   vminsw XO=898   vmaxsw XO=386
+    //   vminsd XO=962   vmaxsd XO=450
+    //
+    // POWER9 future-stub: v3.0 adds vminfp/vmaxfp (FP min/max preserving
+    // NaN propagation rules); we have POWER8 vminfp/vmaxfp via XO=1098/
+    // 1034 (FP-vector ops in §6.13) — to be added if/when MacroAssembler
+    // emits SIMD float compares. Plus v3.0 vextract* opcodes useful for
+    // composing min/max-of-vector reductions.
+    //
+    // Verified on POWER9 (16 cases).
+    // ===================================================================
+    void vminub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 514)); }
+    void vmaxub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,   2)); }
+    void vminuh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 578)); }
+    void vmaxuh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  66)); }
+    void vminuw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 642)); }
+    void vmaxuw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 130)); }
+    void vminud(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 706)); }
+    void vmaxud(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 194)); }
+    void vminsb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 770)); }
+    void vmaxsb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 258)); }
+    void vminsh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 834)); }
+    void vmaxsh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 322)); }
+    void vminsw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 898)); }
+    void vmaxsw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 386)); }
+    void vminsd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 962)); }
+    void vmaxsd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 450)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
