@@ -99,6 +99,15 @@ static constexpr uint32_t vxForm(uint32_t opcode, RegID vrt, RegID vra, RegID vr
     return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | xo;
 }
 
+static constexpr uint32_t vcForm(uint32_t opcode, RegID vrt, RegID vra, RegID vrb,
+                                 uint32_t rc, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(rc < 2);
+    assert(xo < 1024);
+    return (opcode << 26) | (vrt << 21) | (vra << 16) | (vrb << 11) | (rc << 10) | xo;
+}
+
 static constexpr uint32_t xsForm(uint32_t opcode, RegID rs, RegID ra,
                                  uint32_t sh, uint32_t xo, uint32_t rc)
 {
@@ -384,6 +393,16 @@ int main()
         { "dcbf  0,3",                 xForm(31, 0, 0, 3, 86,   0),                          0x7c0018ac },
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
+
+        // VMX compares (VC-form, opcode 4). Rc=0 in our defaults.
+        { "vcmpequb 3,4,5",            vcForm(4, 3, 4, 5, 0,   6),                           0x10642806 },
+        { "vcmpequb. 3,4,5 (Rc=1)",    vcForm(4, 3, 4, 5, 1,   6),                           0x10642c06 },
+        { "vcmpequh 3,4,5",            vcForm(4, 3, 4, 5, 0,  70),                           0x10642846 },
+        { "vcmpequw 3,4,5",            vcForm(4, 3, 4, 5, 0, 134),                           0x10642886 },
+        { "vcmpequd 3,4,5",            vcForm(4, 3, 4, 5, 0, 199),                           0x106428c7 },
+        { "vcmpgtub 3,4,5",            vcForm(4, 3, 4, 5, 0, 518),                           0x10642a06 },
+        { "vcmpgtsb 3,4,5",            vcForm(4, 3, 4, 5, 0, 774),                           0x10642b06 },
+        { "vcmpgtsd 3,4,5",            vcForm(4, 3, 4, 5, 0, 967),                           0x10642bc7 },
 
         // VMX load/store (X-form, opcode 31, VR in RT/RS slot).
         { "lvx    3,4,5",              xForm(31, 3, 4, 5, 103, 0),                           0x7c6428ce },
