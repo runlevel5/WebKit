@@ -510,10 +510,13 @@ public:
 
     // 32-bit / float / double / vector loads and stores (stub)
     void load32(Address, RegisterID)                 { UNREACHABLE_FOR_PLATFORM(); }
+    void store32(RegisterID, BaseIndex)              { UNREACHABLE_FOR_PLATFORM(); }
     void loadDouble(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
     void storeDouble(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
+    void storeDouble(FPRegisterID, BaseIndex)        { UNREACHABLE_FOR_PLATFORM(); }
     void loadFloat(Address, FPRegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
     void storeFloat(FPRegisterID, Address)           { UNREACHABLE_FOR_PLATFORM(); }
+    void storeFloat(FPRegisterID, BaseIndex)         { UNREACHABLE_FOR_PLATFORM(); }
     void loadVector(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
     void storeVector(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
 
