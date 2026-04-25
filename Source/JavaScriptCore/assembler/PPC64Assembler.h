@@ -1614,6 +1614,73 @@ public:
     void vcmpgtsd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vcForm(4, vrt, vra, vrb, 0, 967)); }
 
     // ===================================================================
+    // VMX splats — broadcast a single value to all lanes. Power ISA
+    // v2.07B §6.7. Two flavors:
+    //
+    // (1) Splat from a vector lane (vspltb / vsplth / vspltw): the source
+    //     vector is in VRB; the lane index UIMM goes in the VRA slot
+    //     (bits 11-15) and selects which lane of VRB to broadcast.
+    //
+    // (2) Splat-immediate (vspltisb / vspltish / vspltisw): a 5-bit
+    //     signed immediate (range [-16, 15]) is sign-extended to the
+    //     lane width and stored in every lane. SIMM goes in the VRA
+    //     slot; VRB is unused (zero).
+    //
+    //   vspltb   VRT, VRB, UIMM  — XO=524, UIMM 0-15 selects byte lane
+    //   vsplth   VRT, VRB, UIMM  — XO=588, UIMM 0-7  selects halfword lane
+    //   vspltw   VRT, VRB, UIMM  — XO=652, UIMM 0-3  selects word lane
+    //   vspltisb VRT, SIMM       — XO=780
+    //   vspltish VRT, SIMM       — XO=844
+    //   vspltisw VRT, SIMM       — XO=908
+    //
+    // **PPC64LE lane numbering trap** (PLAN.md SIMD lessons): on PPC64LE
+    // the "high" / "low" of a vector is reversed relative to BE. UIMM
+    // values that look natural in big-endian asm need a "wasm-lane-
+    // direction" mental model. Document at every callsite.
+    //
+    // POWER9 future-stub: v3.0 adds vspltisw without the UIMM/SIMM
+    // limitation via prefixed instructions, but for v2.07B only 5-bit
+    // immediates are available.
+    //
+    // Verified on POWER9 (see encoding test for hex).
+    // ===================================================================
+    void vspltb(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 16);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 524u);
+    }
+
+    void vsplth(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 8);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 588u);
+    }
+
+    void vspltw(VRegisterID vrt, VRegisterID vrb, uint32_t uimm)
+    {
+        ASSERT(uimm < 4);
+        insn((4u << 26) | (vrValue(vrt) << 21) | (uimm << 16) | (vrValue(vrb) << 11) | 652u);
+    }
+
+    void vspltisb(VRegisterID vrt, int32_t simm)
+    {
+        ASSERT(simm >= -16 && simm < 16);
+        insn((4u << 26) | (vrValue(vrt) << 21) | ((static_cast<uint32_t>(simm) & 0x1F) << 16) | 780u);
+    }
+
+    void vspltish(VRegisterID vrt, int32_t simm)
+    {
+        ASSERT(simm >= -16 && simm < 16);
+        insn((4u << 26) | (vrValue(vrt) << 21) | ((static_cast<uint32_t>(simm) & 0x1F) << 16) | 844u);
+    }
+
+    void vspltisw(VRegisterID vrt, int32_t simm)
+    {
+        ASSERT(simm >= -16 && simm < 16);
+        insn((4u << 26) | (vrValue(vrt) << 21) | ((static_cast<uint32_t>(simm) & 0x1F) << 16) | 908u);
+    }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,

@@ -394,6 +394,15 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX splat (lane-from-vector). UIMM in VRA slot.
+        { "vspltb 3,4,7",              vxForm(4, 3, 7, 4, 524),                              0x1067220c },
+        { "vsplth 3,4,3",              vxForm(4, 3, 3, 4, 588),                              0x1063224c },
+        { "vspltw 3,4,1",              vxForm(4, 3, 1, 4, 652),                              0x1061228c },
+        // VMX splat immediate. SIMM in VRA slot, VRB=0.
+        { "vspltisb 3,5",              vxForm(4, 3, 5,  0, 780),                             0x1065030c },
+        { "vspltish 3,-1",             vxForm(4, 3, 31, 0, 844),                             0x107f034c },
+        { "vspltisw 3,15",             vxForm(4, 3, 15, 0, 908),                             0x106f038c },
+
         // VMX compares (VC-form, opcode 4). Rc=0 in our defaults.
         { "vcmpequb 3,4,5",            vcForm(4, 3, 4, 5, 0,   6),                           0x10642806 },
         { "vcmpequb. 3,4,5 (Rc=1)",    vcForm(4, 3, 4, 5, 1,   6),                           0x10642c06 },
