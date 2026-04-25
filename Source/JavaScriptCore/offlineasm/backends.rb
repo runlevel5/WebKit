@@ -41,6 +41,7 @@ BACKENDS =
      "ARM64",
      "ARM64E",
      "RISCV64",
+     "PPC64LE",
      "C_LOOP"
     ]
 
@@ -58,6 +59,11 @@ WORKING_BACKENDS =
      "RISCV64",
      "C_LOOP"
     ]
+# PPC64LE is intentionally NOT in WORKING_BACKENDS yet — it's listed in
+# BACKENDS so settings-extractor and offset-extractor accept the name when
+# CMake passes it as the target backend, but offlineasm/ppc64le.rb hasn't
+# implemented the lowerPPC64LE methods yet. Adding to WORKING_BACKENDS will
+# require that lowering implementation; flip the line when that lands.
 
 BACKEND_PATTERN = Regexp.new('\\A(' + BACKENDS.join(')|(') + ')\\Z')
 
