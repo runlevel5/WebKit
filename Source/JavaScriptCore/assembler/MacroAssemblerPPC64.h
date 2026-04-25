@@ -589,6 +589,37 @@ public:
     void store64(TrustedImm64, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
     void store64(TrustedImm32, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
     void store64(TrustedImm64, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // storePair64 (MacroAssembler::storePairPtr)
+    void storePair64(RegisterID, RegisterID, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+    void storePair64(RegisterID, RegisterID, RegisterID, TrustedImm32)      { UNREACHABLE_FOR_PLATFORM(); }
+    void storePair64(RegisterID, RegisterID, Address)                       { UNREACHABLE_FOR_PLATFORM(); }
+
+    // test64 (MacroAssembler::testPtr)
+    void test64(ResultCondition, RegisterID, TrustedImm32, RegisterID)      { UNREACHABLE_FOR_PLATFORM(); }
+    void test64(ResultCondition, RegisterID, RegisterID, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional branch64 overloads (MacroAssembler::branchPtr)
+    Jump branch64(RelationalCondition, RegisterID, TrustedImm64)            { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, RegisterID, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, Address, RegisterID)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, AbsoluteAddress, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branch64(RelationalCondition, Address, TrustedImm64)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // branchTest64 (MacroAssembler::branchTestPtr)
+    Jump branchTest64(ResultCondition, RegisterID, RegisterID)                                    { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest64(ResultCondition, RegisterID, TrustedImm32 = TrustedImm32(-1))               { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest64(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1))                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest64(ResultCondition, Address, RegisterID)                                       { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest64(ResultCondition, BaseIndex, TrustedImm32 = TrustedImm32(-1))                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchTest64(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1))          { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // branchAdd64 / branchSub64 (MacroAssembler::branchAddPtr/branchSubPtr)
+    Jump branchAdd64(ResultCondition, TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchAdd64(ResultCondition, RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub64(ResultCondition, TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub64(ResultCondition, RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchSub64(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 };
 
 } // namespace JSC
