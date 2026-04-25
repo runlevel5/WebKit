@@ -435,6 +435,13 @@ int main()
         { "vrfim 3,4",                 vxForm(4, 3, 0, 4, 714),                              0x106022ca },
         { "vrfiz 3,4",                 vxForm(4, 3, 0, 4, 586),                              0x1060224a },
 
+        // VMX rounding-average (i8x16.avgr_u, i16x8.avgr_u).
+        { "vavgub 3,4,5",              vxForm(4, 3, 4, 5, 1026),                             0x10642c02 },
+        { "vavguh 3,4,5",              vxForm(4, 3, 4, 5, 1090),                             0x10642c42 },
+
+        // Q15 fixed-point multiply-round-saturate (i16x8.q15mulr_sat_s).
+        { "vmhraddshs 3,4,5,6",        vaForm(4, 3, 4, 5, 6, 33),                            0x106429a1 },
+
         // VMX pack-and-saturate (WASM iN.narrow_iM_{s,u}).
         { "vpkshss 3,4,5",             vxForm(4, 3, 4, 5, 398),                              0x1064298e },
         { "vpkshus 3,4,5",             vxForm(4, 3, 4, 5, 270),                              0x1064290e },
