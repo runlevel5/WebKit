@@ -435,6 +435,12 @@ int main()
         { "vrfim 3,4",                 vxForm(4, 3, 0, 4, 714),                              0x106022ca },
         { "vrfiz 3,4",                 vxForm(4, 3, 0, 4, 586),                              0x1060224a },
 
+        // VMX pack-and-saturate (WASM iN.narrow_iM_{s,u}).
+        { "vpkshss 3,4,5",             vxForm(4, 3, 4, 5, 398),                              0x1064298e },
+        { "vpkshus 3,4,5",             vxForm(4, 3, 4, 5, 270),                              0x1064290e },
+        { "vpkswss 3,4,5",             vxForm(4, 3, 4, 5, 462),                              0x106429ce },
+        { "vpkswus 3,4,5",             vxForm(4, 3, 4, 5, 334),                              0x1064294e },
+
         // VMX popcount per lane (VRA = 0).
         { "vpopcntb 3,4",              vxForm(4, 3, 0, 4, 1795),                             0x10602703 },
         { "vpopcnth 3,4",              vxForm(4, 3, 0, 4, 1859),                             0x10602743 },
