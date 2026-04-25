@@ -1513,6 +1513,38 @@ public:
     }
 
     // ===================================================================
+    // VMX integer add/sub modulo (wrap on overflow). Power ISA v2.07B
+    // §6.10. The "modulo" suffix means wrap-on-overflow, in contrast to
+    // the saturating variants (vaddubs / vsububs / etc.) which clamp.
+    // Unsigned vs signed make no difference for modulo arithmetic at
+    // these widths — there's no separate vaddsbm / vaddsbs (that's
+    // why the Power ISA only documents the unsigned mnemonics).
+    //
+    //   vaddubm VRT, VRA, VRB — XO=0    (8-bit  lane add)
+    //   vadduhm VRT, VRA, VRB — XO=64   (16-bit lane add)
+    //   vadduwm VRT, VRA, VRB — XO=128  (32-bit lane add)
+    //   vaddudm VRT, VRA, VRB — XO=192  (64-bit lane add, POWER8+)
+    //   vsububm VRT, VRA, VRB — XO=1024 (8-bit  lane sub)
+    //   vsubuhm VRT, VRA, VRB — XO=1088 (16-bit lane sub)
+    //   vsubuwm VRT, VRA, VRB — XO=1152 (32-bit lane sub)
+    //   vsubudm VRT, VRA, VRB — XO=1216 (64-bit lane sub, POWER8+)
+    //
+    // POWER9 future-stubs: vmul10cuq (XO=1) and vmul10euq (XO=65) are
+    // BCD helpers we won't need for JSC. POWER9 also adds vmuluwm /
+    // vmulosw / vmulouw for SIMD multiply (none in v2.07B).
+    //
+    // Verified on POWER9 (all 8; see encoding test).
+    // ===================================================================
+    void vaddubm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 0));    }
+    void vadduhm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 64));   }
+    void vadduwm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 128));  }
+    void vaddudm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 192));  }
+    void vsububm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1024)); }
+    void vsubuhm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1088)); }
+    void vsubuwm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1152)); }
+    void vsubudm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1216)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
