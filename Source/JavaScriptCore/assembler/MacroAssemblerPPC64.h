@@ -389,6 +389,42 @@ public:
         move(TrustedImm32(offset), memoryTempRegister);
         m_assembler.stdx(src, address.base, memoryTempRegister);
     }
+
+    // ===================================================================
+    // Return / push / pop. JSC's MacroAssembler push/pop manipulate a
+    // GPR-sized stack slot (8 bytes on PPC64). They are NOT function
+    // prologue/epilogue — those have their own ELFv2-shaped sequences
+    // (LR save area at +16, parameter save area, TOC restore, etc.) and
+    // get emitted by higher-level frame-setup helpers.
+    // ===================================================================
+
+    static constexpr int stackSlotSize = 8;
+
+    // Return — branch to LR. Power ISA `blr` (= bclr with BO=20=always).
+    // Verified: blr → 0x4e800020.
+    void ret()
+    {
+        m_assembler.blr();
+    }
+
+    // Push: pre-decrement SP by 8 and atomically store RS at the new SP.
+    // The stdu update form does both in one instruction.
+    // Verified: stdu r3, -8(r1) → 0xf861fff9.
+    void push(RegisterID src)
+    {
+        m_assembler.stdu(src, -stackSlotSize, stackPointerRegister);
+    }
+
+    // Pop: load from SP, then post-increment SP by 8. Two instructions
+    // because PPC has no `ld with post-update` (ldu is pre-update,
+    // which gives the wrong address for pop). Order matters: load first,
+    // then bump SP — otherwise the load would read past the stack frame.
+    // Verified: ld r3, 0(r1) → 0xe8610000;  addi r1, r1, 8 → 0x38210008.
+    void pop(RegisterID dest)
+    {
+        m_assembler.ld(dest, 0, stackPointerRegister);
+        m_assembler.addi(stackPointerRegister, stackPointerRegister, stackSlotSize);
+    }
 };
 
 } // namespace JSC
