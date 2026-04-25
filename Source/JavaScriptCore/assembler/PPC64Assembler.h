@@ -1710,6 +1710,41 @@ public:
     void vmrgow(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1676)); }
 
     // ===================================================================
+    // VMX lane-wise shifts and rotates. Power ISA v2.07B §6.8/§6.10.
+    // Shift count comes from each lane of VRB modulo lane width.
+    //
+    // Left shift:
+    //   vslb XO=260   vslh XO=324   vslw XO=388   vsld XO=1476 (POWER8+)
+    // Right shift logical:
+    //   vsrb XO=516   vsrh XO=580   vsrw XO=644   vsrd XO=1732 (POWER8+)
+    // Right shift arithmetic:
+    //   vsrab XO=772  vsrah XO=836  vsraw XO=900  vsrad XO=964 (POWER8+)
+    // Rotate left:
+    //   vrlb XO=4     vrlh XO=68    vrlw XO=132   vrld XO=196  (POWER8+)
+    //
+    // POWER9 future-stubs: v3.0 adds vbpermd (bit-permute by doubleword)
+    // and vrlwnm/vrldnm (rotate-then-mask vector); not in v2.07B.
+    //
+    // Verified on POWER9 (16 cases).
+    // ===================================================================
+    void vslb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  260)); }
+    void vslh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  324)); }
+    void vslw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  388)); }
+    void vsld(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1476)); }
+    void vsrb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  516)); }
+    void vsrh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  580)); }
+    void vsrw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  644)); }
+    void vsrd(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb, 1732)); }
+    void vsrab(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  772)); }
+    void vsrah(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  836)); }
+    void vsraw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  900)); }
+    void vsrad(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb,  964)); }
+    void vrlb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,    4)); }
+    void vrlh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,   68)); }
+    void vrlw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  132)); }
+    void vrld(VRegisterID vrt, VRegisterID vra, VRegisterID vrb)  { insn(vxForm(4, vrt, vra, vrb,  196)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
