@@ -141,7 +141,7 @@ public:
     using MacroAssemblerBase::and32;
     using MacroAssemblerBase::branchAdd32;
     using MacroAssemblerBase::branchMul32;
-#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     using MacroAssemblerBase::branchPtr;
 #endif
 #if CPU(X86_64)
@@ -159,10 +159,10 @@ public:
     using MacroAssemblerBase::urshift32;
     using MacroAssemblerBase::xor32;
 
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
     using MacroAssemblerBase::convertInt32ToDouble;
 #endif
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     using MacroAssemblerBase::add64;
     using MacroAssemblerBase::sub64;
     using MacroAssemblerBase::and64;

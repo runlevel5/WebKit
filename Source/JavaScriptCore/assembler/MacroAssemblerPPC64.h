@@ -531,6 +531,27 @@ public:
 
     // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
     void abortWithReason(AbortReason)                { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Additional add64 overloads required by MacroAssembler.h addPtr wrappers.
+    void add64(Address, RegisterID)                              { UNREACHABLE_FOR_PLATFORM(); }
+    void add64(TrustedImm64, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void add64(TrustedImm64, RegisterID, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void add64(TrustedImm32, Address)                            { UNREACHABLE_FOR_PLATFORM(); }
+    void add64(AbsoluteAddress, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void add64(TrustedImm32, AbsoluteAddress)                    { UNREACHABLE_FOR_PLATFORM(); }
+
+    // and64 TrustedImmPtr overload (MacroAssembler::andPtr uses it).
+    void and64(TrustedImmPtr, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 64-bit shifts (MacroAssembler::lshiftPtr / rshiftPtr / urshiftPtr).
+    void lshift64(TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void lshift64(RegisterID, TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
+    void lshift64(TrustedImm32, RegisterID, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift64(TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift64(RegisterID, TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift64(TrustedImm32, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift64(RegisterID, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift64(RegisterID, TrustedImm32, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
