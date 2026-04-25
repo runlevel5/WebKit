@@ -250,9 +250,10 @@ int main()
     // If a formula below produces something else, the assertion fires and
     // we stop before emitting nonsense.
     Test tests[] = {
-        // D-form (opcode 24 = ori, opcode 14 = addi)
+        // D-form (opcode 24 = ori, opcode 25 = oris, opcode 14 = addi)
         { "nop (= ori 0,0,0)",         dForm(24, 0, 0, 0),                                   0x60000000 },
-        { "ori 3,4,0x1234",            dForm(24, 4, 3, 0x1234),                              0x60831234 },
+        { "ori  3,4,0x1234",           dForm(24, 4, 3, 0x1234),                              0x60831234 },
+        { "oris 3,4,0x1234",           dForm(25, 4, 3, 0x1234),                              0x64831234 },
         { "li 5,100 (= addi 5,0,100)", dForm(14, 5, 0, static_cast<uint16_t>(100)),          0x38a00064 },
         { "li 5,-100",                 dForm(14, 5, 0, static_cast<uint16_t>(-100)),         0x38a0ff9c },
         { "li 3,42",                   dForm(14, 3, 0, 42),                                  0x3860002a },
