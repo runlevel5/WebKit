@@ -2073,6 +2073,30 @@ public:
     void vupklsh(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb,  718)); }
     void vupkhsw(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1614)); }
     void vupklsw(VRegisterID vrt, VRegisterID vrb) { insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 1742)); }
+
+    // ===================================================================
+    // VMX pack-and-saturate (narrow). Power ISA v2.07B §6.10.
+    //
+    // Direct WASM SIMD mapping:
+    //   i8x16.narrow_i16x8_s   →  vpkshss (XO=398)  signed→signed sat
+    //   i8x16.narrow_i16x8_u   →  vpkshus (XO=270)  signed→unsigned sat
+    //   i16x8.narrow_i32x4_s   →  vpkswss (XO=462)  signed→signed sat
+    //   i16x8.narrow_i32x4_u   →  vpkswus (XO=334)  signed→unsigned sat
+    //
+    // The other v2.07B pack ops (vpkuhum / vpkuwum modulo, vpkuhus
+    // unsigned-from-unsigned-saturate, plus doubleword variants
+    // vpkudum / vpksdss / etc. on POWER8+) are NOT in WASM SIMD;
+    // re-add with citation if a non-WASM caller appears.
+    //
+    // POWER9 future-stub: v3.0 vpkudum is already POWER8+ (we skipped
+    // it). v3.0 also adds prefixed pack helpers for sub-byte widths.
+    //
+    // Verified on POWER9 (4 cases).
+    // ===================================================================
+    void vpkshss(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 398)); }
+    void vpkshus(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 270)); }
+    void vpkswss(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 462)); }
+    void vpkswus(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 334)); }
     // Removed in audit-cleanup (no JSC use):
     //   - vrefp / vrsqrtefp / vexptefp / vlogefp (FP estimates)
     //   - vcmpbfp (Power-specific bounds compare)
