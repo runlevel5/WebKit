@@ -385,6 +385,16 @@ int main()
         { "icbi  0,3",                 xForm(31, 0, 0, 3, 982,  0),                          0x7c001fac },
         { "dcbz  0,3",                 xForm(31, 0, 0, 3, 1014, 0),                          0x7c001fec },
 
+        // VMX integer add/sub modulo (VX-form, opcode 4).
+        { "vaddubm 3,4,5",             vxForm(4, 3, 4, 5, 0),                                0x10642800 },
+        { "vadduhm 3,4,5",             vxForm(4, 3, 4, 5, 64),                               0x10642840 },
+        { "vadduwm 3,4,5",             vxForm(4, 3, 4, 5, 128),                              0x10642880 },
+        { "vaddudm 3,4,5",             vxForm(4, 3, 4, 5, 192),                              0x106428c0 },
+        { "vsububm 3,4,5",             vxForm(4, 3, 4, 5, 1024),                             0x10642c00 },
+        { "vsubuhm 3,4,5",             vxForm(4, 3, 4, 5, 1088),                             0x10642c40 },
+        { "vsubuwm 3,4,5",             vxForm(4, 3, 4, 5, 1152),                             0x10642c80 },
+        { "vsubudm 3,4,5",             vxForm(4, 3, 4, 5, 1216),                             0x10642cc0 },
+
         // VMX (Altivec) logical, VX-form (opcode 4).
         { "vand  3,4,5",               vxForm(4, 3, 4, 5, 1028),                             0x10642c04 },
         { "vor   3,4,5",               vxForm(4, 3, 4, 5, 1156),                             0x10642c84 },
