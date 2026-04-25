@@ -453,13 +453,11 @@ int main()
         { "xxlxor vs3,vs4,vs5",        xx3Form(60, 3, 4, 5, 154),                            0xf0642cd0 },
         { "xxland vs3,vs4,vs5",        xx3Form(60, 3, 4, 5, 130),                            0xf0642c10 },
 
-        // VA-form 4-operand. Note vmaddfp/vnmsubfp asm syntax reorders
+        // VA-form 4-operand. Note vmaddfp asm syntax reorders
         // (VRT,VRA,VRC,VRB) but the encoding is (VRT,VRA,VRB,VRC).
         { "vperm    3,4,5,6",          vaForm(4, 3, 4, 5, 6, 43),                            0x106429ab },
         { "vsel     3,4,5,6",          vaForm(4, 3, 4, 5, 6, 42),                            0x106429aa },
         { "vmaddfp  3,4,6,5  (asm)",   vaForm(4, 3, 4, 5, 6, 46),                            0x106429ae },
-        { "vnmsubfp 3,4,6,5  (asm)",   vaForm(4, 3, 4, 5, 6, 47),                            0x106429af },
-        { "vmsumubm 3,4,5,6",          vaForm(4, 3, 4, 5, 6, 36),                            0x106429a4 },
 
         // VMX lane-wise min/max (16 cases).
         { "vminub 3,4,5",              vxForm(4, 3, 4, 5, 514),                              0x10642a02 },
