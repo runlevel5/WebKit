@@ -915,7 +915,10 @@ public:
     static constexpr GPRReg nonPreservedNonArgumentGPR0 = PPC64Registers::r11;
     static constexpr GPRReg nonPreservedNonArgumentGPR1 = PPC64Registers::r12;
 
-    static constexpr GPRReg handlerGPR = GPRInfo::nonPreservedNonArgumentGPR1;
+    // r12 is assembler scratch and not in the 8-reg allocatable pool {r3..r10}.
+    // StaticScratchRegisterAllocator requires handlerGPR to be in the pool.
+    // Use r10 (= regT7 = argumentGPR7) which is the last pool register.
+    static constexpr GPRReg handlerGPR = PPC64Registers::r10;
 
     static constexpr GPRReg wasmScratchGPR0 = PPC64Registers::r11;
     static constexpr GPRReg wasmScratchGPR1 = PPC64Registers::r12;
