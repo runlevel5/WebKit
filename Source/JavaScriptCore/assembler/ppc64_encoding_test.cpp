@@ -108,6 +108,16 @@ static constexpr uint32_t xx1Form(uint32_t opcode, uint32_t vsrT, RegID ra, RegI
          | (xo << 1) | ((vsrT >> 5) & 1);
 }
 
+static constexpr uint32_t xx2Form(uint32_t opcode, uint32_t vsrT, uint32_t vsrB, uint32_t xo)
+{
+    assert(opcode < 64);
+    assert(vsrT < 64);
+    assert(vsrB < 64);
+    assert(xo < 512);
+    return (opcode << 26) | ((vsrT & 0x1F) << 21) | ((vsrB & 0x1F) << 11)
+         | (xo << 2) | (((vsrB >> 5) & 1) << 1) | ((vsrT >> 5) & 1);
+}
+
 static constexpr uint32_t xx3Form(uint32_t opcode, uint32_t vsrT, uint32_t vsrA,
                                   uint32_t vsrB, uint32_t xo)
 {
@@ -476,6 +486,17 @@ int main()
         { "vcmpeqfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 198),                           0x106428c6 },
         { "vcmpgefp 3,4,5",            vcForm(4, 3, 4, 5, 0, 454),                           0x106429c6 },
         { "vcmpgtfp 3,4,5",            vcForm(4, 3, 4, 5, 0, 710),                           0x10642ac6 },
+
+        // VSX FP arithmetic (XX3 binary, XX2 sqrt). f32x4.mul/div/sqrt
+        // and full f64x2 arithmetic — none expressible in pure VMX.
+        { "xvmulsp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5,  80),                            0xf0642a80 },
+        { "xvdivsp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5,  88),                            0xf0642ac0 },
+        { "xvadddp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5,  96),                            0xf0642b00 },
+        { "xvsubdp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5, 104),                            0xf0642b40 },
+        { "xvmuldp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5, 112),                            0xf0642b80 },
+        { "xvdivdp  vs3,vs4,vs5",      xx3Form(60, 3, 4, 5, 120),                            0xf0642bc0 },
+        { "xvsqrtsp vs3,vs4",          xx2Form(60, 3, 4, 139),                               0xf060222c },
+        { "xvsqrtdp vs3,vs4",          xx2Form(60, 3, 4, 203),                               0xf060232c },
 
         // VSX XX1-form load/store (opcode 31). VSR# is split: low 5
         // bits in T-slot, high bit at bit 31. vs35 exercises TX=1.
