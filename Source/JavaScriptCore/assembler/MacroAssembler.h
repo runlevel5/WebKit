@@ -144,7 +144,7 @@ public:
 #if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     using MacroAssemblerBase::branchPtr;
 #endif
-#if CPU(X86_64)
+#if CPU(X86_64) || CPU(PPC64LE)
     using MacroAssemblerBase::branch64;
 #endif
 #if CPU(RISCV64)
