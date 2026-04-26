@@ -671,6 +671,29 @@ public:
     // nearCall / nearTailCall — required by MacroAssembler::nearCallThunk/nearTailCallThunk.
     Call nearCall()     { UNREACHABLE_FOR_PLATFORM(); return Call(); }
     Call nearTailCall() { UNREACHABLE_FOR_PLATFORM(); return Call(); }
+
+    // xor64(TrustedImm32, src, dst) — AssemblyHelpers::branchIfBoolean.
+    void xor64(TrustedImm32, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // branchTest64 with TrustedImm64 mask — AssemblyHelpers::isStrictInt52.
+    Jump branchTest64(ResultCondition, RegisterID, TrustedImm64)            { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // FP <-> GPR bit-cast moves.
+    void moveDoubleTo64(FPRegisterID, RegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+    void truncateDoubleToInt64(FPRegisterID, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+    void convertInt64ToDouble(RegisterID, FPRegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Sign/zero extension.
+    void signExtend32ToPtr(TrustedImm32, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+    void signExtend32ToPtr(RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void zeroExtend32ToWord(RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // byte loads — AssemblyHelpers::barrierBranch and load8SignedExtendTo32.
+    void load8(Address, RegisterID)                                        { UNREACHABLE_FOR_PLATFORM(); }
+    void load8(BaseIndex, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // branch8 with AbsoluteAddress — AssemblyHelpers::barrierBranchWithoutFence.
+    Jump branch8(RelationalCondition, AbsoluteAddress, TrustedImm32)       { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 };
 
 } // namespace JSC
