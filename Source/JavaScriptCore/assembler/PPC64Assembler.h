@@ -2913,13 +2913,8 @@ protected:
 
     // ===================================================================
     // AbstractMacroAssembler interface — required for LinkBuffer / relinking.
-    // getRelocatedAddress and getCallReturnOffset are trivially correct for
-    // any assembler (pure offset arithmetic); the link/relink/patch stubs
-    // are UNREACHABLE_FOR_PLATFORM until Phase 2 implements real patching.
     // ===================================================================
-
-    AssemblerBuffer& buffer() LIFETIME_BOUND { return m_buffer; }
-
+public:
     static void* getRelocatedAddress(void* code, AssemblerLabel label)
     {
         ASSERT(label.isSet());
@@ -2930,8 +2925,6 @@ protected:
     {
         return b.offset() - a.offset();
     }
-
-    size_t codeSize() const { return m_buffer.codeSize(); }
 
     static unsigned getCallReturnOffset(AssemblerLabel call)
     {
@@ -2947,8 +2940,8 @@ protected:
     void linkJump(AssemblerLabel, AssemblerLabel) { RELEASE_ASSERT_NOT_REACHED(); }
 
     // Static patch routines — Phase 1 stubs; none are reachable until JIT emits real code.
-    static void linkJump(void*, AssemblerLabel, void*)  { RELEASE_ASSERT_NOT_REACHED(); }
-    static void linkCall(void*, AssemblerLabel, void*)  { RELEASE_ASSERT_NOT_REACHED(); }
+    static void linkJump(void*, AssemblerLabel, void*)    { RELEASE_ASSERT_NOT_REACHED(); }
+    static void linkCall(void*, AssemblerLabel, void*)    { RELEASE_ASSERT_NOT_REACHED(); }
     static void linkPointer(void*, AssemblerLabel, void*) { RELEASE_ASSERT_NOT_REACHED(); }
 
     static void relinkJump(void*, void*)     { RELEASE_ASSERT_NOT_REACHED(); }
@@ -2957,7 +2950,7 @@ protected:
 
     static void repatchPointer(void*, void*) { RELEASE_ASSERT_NOT_REACHED(); }
 
-    static void cacheFlush(void*, size_t) { RELEASE_ASSERT_NOT_REACHED(); }
+    static void cacheFlush(void*, size_t)    { RELEASE_ASSERT_NOT_REACHED(); }
 
 private:
     AssemblerBuffer m_buffer;

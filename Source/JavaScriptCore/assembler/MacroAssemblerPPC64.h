@@ -723,6 +723,17 @@ public:
 
     // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
     void transferPtr(BaseIndex, BaseIndex)                                 { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Required by LinkBuffer — Phase 1 stub.
+    friend class LinkBuffer;
+    template<PtrTag tag>
+    static void linkCall(void* code, Call call, CodePtr<tag> function)
+    {
+        if (!call.isFlagSet(Call::Near))
+            PPC64Assembler::linkPointer(code, call.m_label.labelAtOffset(0), function.taggedPtr());
+        else
+            PPC64Assembler::linkCall(code, call.m_label, function.untaggedPtr());
+    }
 };
 
 } // namespace JSC
