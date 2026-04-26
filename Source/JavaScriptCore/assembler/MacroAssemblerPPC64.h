@@ -694,6 +694,35 @@ public:
 
     // branch8 with AbsoluteAddress — AssemblyHelpers::barrierBranchWithoutFence.
     Jump branch8(RelationalCondition, AbsoluteAddress, TrustedImm32)       { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // branchTest8 with AbsoluteAddress — AssemblyHelpers::jumpIfMutatorFenceNotNeeded.
+    Jump branchTest8(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // load8 with raw pointer — AssemblyHelpers::barrierBranch(VM&, JSCell*, GPRReg).
+    void load8(const void*, RegisterID)                                    { UNREACHABLE_FOR_PLATFORM(); }
+
+    // or32 with Address — AssemblyHelpers::nukeStructureAndStoreButterfly.
+    void or32(RegisterID, Address)                                         { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(TrustedImm32, Address)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(RegisterID, AbsoluteAddress)                                 { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(TrustedImm32, AbsoluteAddress)                               { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Memory barrier instructions — AssemblyHelpers::barrierStoreLoadFence/mutatorFence.
+    void memoryFence() { UNREACHABLE_FOR_PLATFORM(); }
+    void storeFence()  { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFence()   { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Count-leading-zeros — AssemblyHelpers::emitComputeButterflyIndexingMask.
+    void countLeadingZeros32(RegisterID, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Register swap — CCallHelpers::setupArgumentsWithExecState.
+    void swap(RegisterID, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // store64(TrustedImmPtr, Address) — CCallHelpers::storeWasmCalleeToCalleeCallFrame.
+    void store64(TrustedImmPtr, Address)                                   { UNREACHABLE_FOR_PLATFORM(); }
+
+    // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
+    void transferPtr(BaseIndex, BaseIndex)                                 { UNREACHABLE_FOR_PLATFORM(); }
 };
 
 } // namespace JSC
