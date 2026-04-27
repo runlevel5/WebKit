@@ -104,6 +104,20 @@ elsif RISCV64
     const sc1 = ws1
     const sc2 = csr9
     const sc3 = csr10
+elsif PPC64LE
+    const PC = csr7
+    const MC = csr6
+    const PL = csr10
+
+    # Wasm Pinned Registers
+    const WI = csr0
+    const MB = csr3
+    const BC = csr4
+
+    const sc0 = ws0
+    const sc1 = ws1
+    const sc2 = csr9
+    const sc3 = csr10
 elsif ARMv7
     const PC = csr1
     const MC = t6
@@ -148,7 +162,7 @@ const WasmEntryPtrTag = constexpr WasmEntryPtrTag
 
 # These must match the definition in GPRInfo.h
 const wasmInstance = csr0
-if X86_64 or ARM64 or ARM64E or RISCV64
+if X86_64 or ARM64 or ARM64E or RISCV64 or PPC64LE
     const memoryBase = csr3
     const boundsCheckingSize = csr4
 elsif ARMv7
@@ -174,7 +188,7 @@ const IPIntLocalsBaseOffset = IPIntCalleeSaveSpaceStackAligned + LocalSize
 if X86_64
     const NumberOfWasmArgumentGPRs = 6
     const NumberOfVolatileGPRs = NumberOfWasmArgumentGPRs + 2 // +2 for ws0 and ws1
-elsif ARM64 or ARM64E or RISCV64
+elsif ARM64 or ARM64E or RISCV64 or PPC64LE
     const NumberOfWasmArgumentGPRs = 8
     const NumberOfVolatileGPRs = NumberOfWasmArgumentGPRs
 elsif ARMv7
@@ -2088,6 +2102,13 @@ _pinballHandlerRejectFunction:
 if JSVALUE64 and (ARM64 or ARM64E or X86_64)
     include InPlaceInterpreter64
 else
+# nextIPIntInstruction is defined inside InPlaceInterpreter64. Provide a stub here
+# so that un-guarded call sites (e.g. wasm_ipint_check_debugger_hook_and_throw_trap)
+# don't raise MacroError during offlineasm demacroification on non-IPInt architectures.
+macro nextIPIntInstruction()
+    break
+end
+
 # For unimplemented architectures: make sure that the assertions can still find the labels
 # See https://webassembly.github.io/spec/core/appendix/index-instructions.html for the list of instructions.
 
