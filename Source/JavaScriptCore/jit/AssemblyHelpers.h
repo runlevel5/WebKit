@@ -645,6 +645,18 @@ public:
     }
 #endif
 
+#if CPU(PPC64LE)
+    // Phase 2 stub: real ELFv2 prologue/epilogue lives in MacroAssemblerPPC64
+    // (mflr/std/stdu/mtlr).  These wrappers exist only so this header compiles
+    // when ENABLE_JIT=ON; the JIT does not run yet on PPC64LE.
+    void emitFunctionPrologue()                                  { UNREACHABLE_FOR_PLATFORM(); }
+    void emitFunctionEpilogueWithEmptyFrame()                    { UNREACHABLE_FOR_PLATFORM(); }
+    void emitFunctionEpilogue()                                  { UNREACHABLE_FOR_PLATFORM(); }
+    ALWAYS_INLINE void preserveReturnAddressAfterCall(RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(Address)  { UNREACHABLE_FOR_PLATFORM(); }
+#endif
+
     void getArityPadding(VM&, unsigned numberOfParameters, GPRReg argumentCountIncludingThisGPR, GPRReg paddingOutputGPR, GPRReg scratchGPR0, GPRReg scratchGPR1, JumpList& stackOverflow);
 
     void emitGetFromCallFrameHeaderPtr(VirtualRegister entry, GPRReg to, GPRReg from = GPRInfo::callFrameRegister)

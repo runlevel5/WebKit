@@ -142,6 +142,8 @@ inline void*& CPUState::pc()
     return *reinterpret_cast<void**>(&gpr(ARMRegisters::pc));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&spr(RISCV64Registers::pc));
+#elif CPU(PPC64LE)
+    return *reinterpret_cast<void**>(&spr(PPC64Registers::pc));
 #else
 #error "Unsupported CPU"
 #endif
@@ -157,6 +159,8 @@ inline void*& CPUState::fp()
     return *reinterpret_cast<void**>(&gpr(ARMRegisters::fp));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&gpr(RISCV64Registers::fp));
+#elif CPU(PPC64LE)
+    return *reinterpret_cast<void**>(&gpr(PPC64Registers::fp));
 #else
 #error "Unsupported CPU"
 #endif
@@ -172,6 +176,8 @@ inline void*& CPUState::sp()
     return *reinterpret_cast<void**>(&gpr(ARMRegisters::sp));
 #elif CPU(RISCV64)
     return *reinterpret_cast<void**>(&gpr(RISCV64Registers::sp));
+#elif CPU(PPC64LE)
+    return *reinterpret_cast<void**>(&gpr(PPC64Registers::sp));
 #else
 #error "Unsupported CPU"
 #endif

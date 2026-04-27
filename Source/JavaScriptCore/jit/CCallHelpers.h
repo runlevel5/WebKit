@@ -97,6 +97,13 @@ public:
         Moved
     };
 
+    // GCC 16 cannot prove this recursion terminates (status updates break the
+    // recursion at runtime), so suppress the false-positive infinite-recursion
+    // warning.  Behaviour is unchanged.
+#if COMPILER(GCC) && !COMPILER(CLANG)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winfinite-recursion"
+#endif
     template<typename RegType, size_t N, typename RegPair = std::pair<RegType, RegType>>
     void emitShuffleMove(Vector<RegPair, N>& moves, Vector<ShuffleStatus, N>& status, unsigned index, RegType scratch)
     {
@@ -127,6 +134,9 @@ public:
             move(moves[index].first, moves[index].second);
         status[index] = ShuffleStatus::Moved;
     }
+#if COMPILER(GCC) && !COMPILER(CLANG)
+#pragma GCC diagnostic pop
+#endif
 
     template<typename RegType, unsigned NumberOfRegisters>
     ALWAYS_INLINE void shuffleRegisters(std::array<RegType, NumberOfRegisters> sources, std::array<RegType, NumberOfRegisters> destinations)

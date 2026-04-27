@@ -1399,6 +1399,9 @@ void InlineCacheCompiler::emitDataICPrepareForCall(CCallHelpers& jit)
 #elif CPU(RISCV64)
     static_assert(!maxFrameExtentForSlowPathCall);
     jit.pushPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
+#elif CPU(PPC64LE)
+    // Phase 2 stub: JIT does not run yet on PPC64LE.
+    UNUSED_PARAM(jit);
 #endif
 }
 

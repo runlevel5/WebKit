@@ -2936,6 +2936,18 @@ public:
     static constexpr ptrdiff_t maxJumpReplacementSize() { return 5 * sizeof(uint32_t); }
     static constexpr ptrdiff_t patchableJumpSize()      { return 5 * sizeof(uint32_t); }
 
+    // Fill with the preferred PPC NOP (ori 0,0,0 = 0x60000000 per Power ISA
+    // v2.07B Book II §3.2).  Required by AbstractMacroAssembler::fillNops.
+    static void fillNops(void* base, size_t size)
+    {
+        uint32_t* ptr = static_cast<uint32_t*>(base);
+        RELEASE_ASSERT(roundUpToMultipleOf<sizeof(uint32_t)>(ptr) == ptr);
+        RELEASE_ASSERT(!(size % sizeof(uint32_t)));
+        uint32_t nop = 0x60000000u;
+        for (size_t i = 0, n = size / sizeof(uint32_t); i < n; ++i)
+            machineCodeCopy<memcpyRepatch>(&ptr[i], &nop, sizeof(uint32_t));
+    }
+
     // Instance linkJump (label → label) — Phase 1 stub.
     void linkJump(AssemblerLabel, AssemblerLabel) { RELEASE_ASSERT_NOT_REACHED(); }
 
