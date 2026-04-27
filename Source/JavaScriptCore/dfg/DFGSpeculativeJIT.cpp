@@ -6667,6 +6667,8 @@ void SpeculativeJIT::compileArithMod(Node* node)
         doneCases.link(this);
         strictInt52Result(resultGPR, node);
 #else
+        UNUSED_PARAM(op1GPR);
+        UNUSED_PARAM(op2GPR);
         RELEASE_ASSERT_NOT_REACHED();
 #endif
         return;

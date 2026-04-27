@@ -492,7 +492,12 @@ public:
     Jump branchTest8(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchTest16(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump jump() { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    void farJump(RegisterID, PtrTag) { UNREACHABLE_FOR_PLATFORM(); }
+    void farJump(RegisterID, PtrTag)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void farJump(Address, PtrTag)                                          { UNREACHABLE_FOR_PLATFORM(); }
+    void farJump(BaseIndex, PtrTag)                                        { UNREACHABLE_FOR_PLATFORM(); }
+    void farJump(AbsoluteAddress, PtrTag)                                  { UNREACHABLE_FOR_PLATFORM(); }
+    void farJump(RegisterID target, RegisterID)                            { farJump(target, NoPtrTag); }
+    void farJump(Address address, RegisterID)                              { farJump(address, NoPtrTag); }
 
     // Stores (stub) — store64 with Address is implemented above.
     void store32(RegisterID, Address)                { UNREACHABLE_FOR_PLATFORM(); }
@@ -534,6 +539,7 @@ public:
 
     // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
     void abortWithReason(AbortReason)                { UNREACHABLE_FOR_PLATFORM(); }
+    void abortWithReason(AbortReason, intptr_t)      { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional add64 overloads required by MacroAssembler.h addPtr wrappers.
     void add64(Address, RegisterID)                              { UNREACHABLE_FOR_PLATFORM(); }
@@ -672,6 +678,18 @@ public:
     Call nearCall()     { UNREACHABLE_FOR_PLATFORM(); return Call(); }
     Call nearTailCall() { UNREACHABLE_FOR_PLATFORM(); return Call(); }
 
+    // call() overloads — required by JIT.h. PtrTag is used for jump-tag/PAC on
+    // ARM64E; on PPC64LE we do not authenticate, so the tag is ignored.
+    Call call(PtrTag)                                       { UNREACHABLE_FOR_PLATFORM(); return Call(); }
+    Call call(RegisterID, PtrTag)                           { UNREACHABLE_FOR_PLATFORM(); return Call(); }
+    Call call(Address, PtrTag)                              { UNREACHABLE_FOR_PLATFORM(); return Call(); }
+    Call call(RegisterID callTag)                           { UNUSED_PARAM(callTag); return call(NoPtrTag); }
+    Call call(RegisterID target, RegisterID callTag)        { UNUSED_PARAM(callTag); return call(target, NoPtrTag); }
+    Call call(Address address, RegisterID callTag)          { UNUSED_PARAM(callTag); return call(address, NoPtrTag); }
+
+    // patchableJumpSize — used by JITMathIC for size computation.
+    static ptrdiff_t patchableJumpSize() { return Assembler::patchableJumpSize(); }
+
     // xor64(TrustedImm32, src, dst) — AssemblyHelpers::branchIfBoolean.
     void xor64(TrustedImm32, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
 
@@ -723,6 +741,199 @@ public:
 
     // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
     void transferPtr(BaseIndex, BaseIndex)                                 { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Phase 2 stubs surfaced by InlineCacheCompiler / DFGSpeculativeJIT compilation.
+    // All UNREACHABLE_FOR_PLATFORM(); the JIT does not run yet on PPC64LE.
+
+    // 32-bit negate
+    void neg32(RegisterID)                                                 { UNREACHABLE_FOR_PLATFORM(); }
+    void neg32(RegisterID, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
+
+    // load8SignedExtendTo32 / load16 / load16SignedExtendTo32
+    void load8SignedExtendTo32(Address, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+    void load8SignedExtendTo32(BaseIndex, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void load8SignedExtendTo32(const void*, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+    void load16(Address, RegisterID)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void load16(BaseIndex, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void load16(const void*, RegisterID)                                   { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo32(Address, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo32(BaseIndex, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo32(const void*, RegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
+
+    // FP conversions
+    void convertUInt32ToDouble(RegisterID, FPRegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
+    void convertUInt32ToDouble(RegisterID, FPRegisterID, FPRegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
+    void convertFloatToDouble(FPRegisterID, FPRegisterID)                  { UNREACHABLE_FOR_PLATFORM(); }
+    void convertInt32ToDouble(BaseIndex, FPRegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFloat16(Address, FPRegisterID)                                { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFloat16(BaseIndex, FPRegisterID)                              { UNREACHABLE_FOR_PLATFORM(); }
+    void convertFloat16ToDouble(FPRegisterID, FPRegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
+
+    // FP branches
+    Jump branchDoubleNonZero(FPRegisterID, FPRegisterID)                   { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchDoubleZeroOrNaN(FPRegisterID, FPRegisterID)                 { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // 32-bit arithmetic — 3-arg forms (DFGSpeculativeJIT.h:641-679)
+    void and32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void or32(RegisterID, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void xor32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+    void rshift32(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void lshift32(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void urshift32(RegisterID, RegisterID, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+
+    // add32 with TrustedImm32 + Address — DFG/IC use.
+    void add32(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // store32 with absolute pointer — DFGSpeculativeJIT.cpp:511 abortWithReason.
+    void store32(RegisterID, void*)                                        { UNREACHABLE_FOR_PLATFORM(); }
+    void store32(TrustedImm32, void*)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // branchTest32 with Address operand
+    Jump branchTest32(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // branchPtr with two Address operands — DFGJITCompiler.h:369
+    Jump branchPtr(RelationalCondition, Address, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // getEffectiveAddress — InlineCacheCompiler.cpp:2840
+    void getEffectiveAddress(BaseIndex, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // BaseIndex / TrustedImmPtr variants of FP load/store not already declared.
+    void load32(BaseIndex, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFloat(BaseIndex, FPRegisterID)                                { UNREACHABLE_FOR_PLATFORM(); }
+    void loadDouble(BaseIndex, FPRegisterID)                               { UNREACHABLE_FOR_PLATFORM(); }
+    void loadDouble(TrustedImmPtr, FPRegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+    Jump branchIfNaN(FPRegisterID)                                         { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // Byte/half store, FP type conversion, FP16, and 32-bit transfers.
+    void store8(RegisterID, Address)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void store8(RegisterID, BaseIndex)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void store8(TrustedImm32, Address)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void store8(TrustedImm32, BaseIndex)                                   { UNREACHABLE_FOR_PLATFORM(); }
+    void store16(RegisterID, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
+    void store16(RegisterID, BaseIndex)                                    { UNREACHABLE_FOR_PLATFORM(); }
+    void convertDoubleToFloat(FPRegisterID, FPRegisterID)                  { UNREACHABLE_FOR_PLATFORM(); }
+    void convertDoubleToFloat16(FPRegisterID, FPRegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
+    void storeFloat16(FPRegisterID, Address)                               { UNREACHABLE_FOR_PLATFORM(); }
+    void storeFloat16(FPRegisterID, BaseIndex)                             { UNREACHABLE_FOR_PLATFORM(); }
+    void transfer32(Address, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
+    void transfer32(BaseIndex, BaseIndex)                                  { UNREACHABLE_FOR_PLATFORM(); }
+
+    // callOperation — InlineCacheCompiler invokes this for slow-path C calls.
+    template<PtrTag tag>
+    void callOperation(const CodePtr<tag>) { UNREACHABLE_FOR_PLATFORM(); }
+
+    // test32 — DFG/IC test-and-result. Mirrors RISCV64.
+    void test32(ResultCondition, RegisterID, TrustedImm32, RegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
+    void test32(ResultCondition, RegisterID, RegisterID, RegisterID)       { UNREACHABLE_FOR_PLATFORM(); }
+    void test32(ResultCondition, Address, TrustedImm32, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // or16 / add8 — small-width arithmetic with memory destination (typed array writes).
+    void or16(TrustedImm32, AbsoluteAddress)                               { UNREACHABLE_FOR_PLATFORM(); }
+    void or16(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
+    void or16(RegisterID, AbsoluteAddress)                                 { UNREACHABLE_FOR_PLATFORM(); }
+    void add8(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
+    void add8(TrustedImm32, BaseIndex)                                    { UNREACHABLE_FOR_PLATFORM(); }
+    void add8(RegisterID, BaseIndex)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Stores to absolute (raw void*) addresses — DFGOSRExit, DFGJITCompiler.
+    // (store64(RegisterID, void*) and store32(RegisterID, void*) already declared above.)
+    void store8(TrustedImm32, void*)                                       { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(TrustedImm64, void*)                                      { UNREACHABLE_FOR_PLATFORM(); }
+
+    // add32 with TrustedImm32 + AbsoluteAddress — DFGOSRExitCompilerCommon.cpp:52
+    void add32(TrustedImm32, AbsoluteAddress)                              { UNREACHABLE_FOR_PLATFORM(); }
+
+    // moveWithPatch — DFGLazyJSValue.cpp:252.  Returns DataLabelPtr / DataLabel32.
+    DataLabelPtr moveWithPatch(TrustedImmPtr, RegisterID)                  { UNREACHABLE_FOR_PLATFORM(); return DataLabelPtr(); }
+    DataLabel32 moveWithPatch(TrustedImm32, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); return DataLabel32(); }
+
+    // load32 with absolute pointer — DFGSpeculativeJIT.cpp:511.
+    void load32(const void*, RegisterID)                                   { UNREACHABLE_FOR_PLATFORM(); }
+
+    // branchTest32 with AbsoluteAddress — DFGSpeculativeJIT.cpp:2460
+    Jump branchTest32(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // 3-arg add32 — DFGSpeculativeJIT.cpp:2693.
+    void add32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
+
+    // FP truncate / convert / zero-to-double — DFGSpeculativeJIT.cpp.
+    enum BranchTruncateType { BranchIfTruncateFailed, BranchIfTruncateSuccessful };
+    Jump branchTruncateDoubleToInt32(FPRegisterID, RegisterID, BranchTruncateType = BranchIfTruncateFailed) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    void branchConvertDoubleToInt32(FPRegisterID, RegisterID, JumpList&, FPRegisterID, bool = true) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveZeroToDouble(FPRegisterID)                                    { UNREACHABLE_FOR_PLATFORM(); }
+
+    // FP rounding / arithmetic — DFGSpeculativeJIT.
+    void roundTowardNearestIntDouble(FPRegisterID, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
+    void roundTowardZeroDouble(FPRegisterID, FPRegisterID)                 { UNREACHABLE_FOR_PLATFORM(); }
+    void truncateDoubleToInt32(FPRegisterID, RegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
+    void addDouble(FPRegisterID, FPRegisterID, FPRegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void addDouble(FPRegisterID, FPRegisterID)                             { UNREACHABLE_FOR_PLATFORM(); }
+    void absDouble(FPRegisterID, FPRegisterID)                             { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Byte-width test/compare and bitwise NOT.
+    void test8(ResultCondition, Address, TrustedImm32, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); }
+    void compare8(RelationalCondition, Address, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); }
+    void compare8(RelationalCondition, Address, RegisterID, RegisterID)    { UNREACHABLE_FOR_PLATFORM(); }
+    void not32(RegisterID, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
+    void not32(RegisterID)                                                 { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 4-arg branchAdd32 (ResultCondition, src1, src2, dest).
+    Jump branchAdd32(ResultCondition, RegisterID, RegisterID, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // Imm64 overloads — Imm64 is privately derived from TrustedImm64, so callers
+    // pass it explicitly for "untrusted" 64-bit immediates (range-check checked).
+    Jump branch64(RelationalCondition cond, RegisterID left, Imm64 right)
+    {
+        return branch64(cond, left, right.asTrustedImm64());
+    }
+
+    // FP arithmetic — DFGSpeculativeJIT.
+    void subDouble(FPRegisterID, FPRegisterID, FPRegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void subDouble(FPRegisterID, FPRegisterID)                             { UNREACHABLE_FOR_PLATFORM(); }
+    void mulDouble(FPRegisterID, FPRegisterID, FPRegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void mulDouble(FPRegisterID, FPRegisterID)                             { UNREACHABLE_FOR_PLATFORM(); }
+    void divDouble(FPRegisterID, FPRegisterID, FPRegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
+    void divDouble(FPRegisterID, FPRegisterID)                             { UNREACHABLE_FOR_PLATFORM(); }
+    void negateDouble(FPRegisterID, FPRegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
+    void floorDouble(FPRegisterID, FPRegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
+    void ceilDouble(FPRegisterID, FPRegisterID)                            { UNREACHABLE_FOR_PLATFORM(); }
+    void sqrtDouble(FPRegisterID, FPRegisterID)                            { UNREACHABLE_FOR_PLATFORM(); }
+
+    // Negate-with-branch-on-overflow.
+    Jump branchNeg32(ResultCondition, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchNeg64(ResultCondition, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchMul64(ResultCondition, RegisterID, RegisterID, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    Jump branchMul64(ResultCondition, RegisterID, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+
+    // sub32 3-arg form (RegisterID,RegisterID,RegisterID) — DFG.
+    void sub32(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // moveConditionally64 — conditional move based on 64-bit compare.
+    void moveConditionally64(RelationalCondition, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionally64(RelationalCondition, RegisterID, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionally64(RelationalCondition, RegisterID, TrustedImm32, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionally64(RelationalCondition, RegisterID, TrustedImm32, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+
+    // transferPtr Address → Address (additional overload; BaseIndex form already above).
+    void transferPtr(Address, Address)                                    { UNREACHABLE_FOR_PLATFORM(); }
+
+    // 64-bit logical 3-arg form — JITInlines.h. (or64 RegisterID×3 already declared above.)
+    void and64(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+    void xor64(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+
+    // storePtrWithPatch / storePtr-with-patch + patch label — CallLinkInfo.cpp.
+    DataLabelPtr storePtrWithPatch(TrustedImmPtr, Address)                { UNREACHABLE_FOR_PLATFORM(); return DataLabelPtr(); }
+    DataLabelPtr storePtrWithPatch(Address)                               { UNREACHABLE_FOR_PLATFORM(); return DataLabelPtr(); }
+
+    // Static patch helpers — JIT compile-time stubs (Phase 1 placeholders).
+    template<PtrTag startTag, PtrTag destTag>
+    static void replaceWithJump(CodeLocationLabel<startTag>, CodeLocationLabel<destTag>) { UNREACHABLE_FOR_PLATFORM(); }
+    template<PtrTag startTag>
+    static void replaceWithNops(CodeLocationLabel<startTag>, size_t)      { UNREACHABLE_FOR_PLATFORM(); }
+    template<PtrTag callTag, PtrTag destTag>
+    static void repatchCall(CodeLocationCall<callTag>, CodeLocationLabel<destTag>) { UNREACHABLE_FOR_PLATFORM(); }
+    template<PtrTag callTag, PtrTag destTag>
+    static void repatchCall(CodeLocationCall<callTag>, CodePtr<destTag>)  { UNREACHABLE_FOR_PLATFORM(); }
 
     // Required by LinkBuffer — Phase 1 stub.
     friend class LinkBuffer;
