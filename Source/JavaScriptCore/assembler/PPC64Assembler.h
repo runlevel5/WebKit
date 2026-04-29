@@ -167,6 +167,17 @@ public:
         return m_buffer.label();
     }
 
+    // labelForWatchpoint — used by AbstractMacroAssembler to emit a label
+    // that watchpoint patching will be aligned to.  Phase 1 stub: same as
+    // label(); refine when we add watchpoint patching support.
+    AssemblerLabel labelForWatchpoint()
+    {
+        return label();
+    }
+
+    // debugOffset — diagnostic helper used by AssemblerBuffer dumps.
+    unsigned debugOffset() { return m_buffer.codeSize(); }
+
     size_t codeSize() const { return m_buffer.codeSize(); }
 
     // ===================================================================

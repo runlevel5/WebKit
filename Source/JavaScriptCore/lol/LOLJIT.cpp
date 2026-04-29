@@ -2952,6 +2952,14 @@ void LOLJIT::emit_op_mod(const JSInstruction* currentInstruction)
 
     m_fastAllocator.releaseScratches(allocations);
 }
+
+#elif CPU(PPC64LE)
+
+void LOLJIT::emit_op_mod(const JSInstruction*)
+{
+    UNREACHABLE_FOR_PLATFORM();
+}
+
 #else
 #error "Unsupported Architecture"
 #endif

@@ -2764,4 +2764,21 @@ unimplementedInstruction(_i32_atomic_rmw16_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw8_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw16_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw32_cmpxchg_u)
+
+# Stubs for the IPInt call/return-location trampolines that LowLevelInterpreter
+# references via pcrtoaddr to populate the wasm dispatch tables.  On platforms
+# that don't ship a real IPInt (i.e. anything not ARM64/ARM64E/X86_64), point
+# every entry at a `crash()` body so the symbols resolve at link time.
+_wasm_trampoline_wasm_ipint_call:
+_wasm_trampoline_wasm_ipint_call_wide16:
+_wasm_trampoline_wasm_ipint_call_wide32:
+_wasm_trampoline_wasm_ipint_tail_call:
+_wasm_trampoline_wasm_ipint_tail_call_wide16:
+_wasm_trampoline_wasm_ipint_tail_call_wide32:
+
+_wasm_ipint_call_return_location:
+_wasm_ipint_call_return_location_wide16:
+_wasm_ipint_call_return_location_wide32:
+    crash()
+
 end

@@ -1304,9 +1304,17 @@ class Instruction
                     raise "ppc64le: leap offset #{off} out of 16-bit range at #{codeOriginString}"
                 end
             elsif addr.is_a?(LabelReference)
+                # ELFv2 §3.5: load the symbol's address from its TOC entry.
+                # Using `addi @toc@l` instead would only work for symbols whose
+                # full address fits within ±32 KB of the TOC base (i.e. live in
+                # the .toc section themselves) — which is not true of hidden
+                # globals defined in other translation units (e.g. g_config).
+                # GCC's canonical pattern (verified with gcc -O2 -fPIC -S):
+                #     addis rD, 2, sym@toc@ha
+                #     ld    rD, sym@toc@l(rD)
                 lbl = addr.asmLabel
                 $asm.puts "addis #{dst}, 2, #{lbl}@toc@ha"
-                $asm.puts "addi #{dst}, #{dst}, #{lbl}@toc@l"
+                $asm.puts "ld #{dst}, #{lbl}@toc@l(#{dst})"
                 if addr.offset != 0
                     $asm.puts "addi #{dst}, #{dst}, #{addr.offset}"
                 end
