@@ -906,8 +906,12 @@ macro checkStackPointerAlignment(tempReg, location)
     end
 end
 
-if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64 or PPC64LE
+if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     const CalleeSaveRegisterCount = 0
+elsif PPC64LE
+    # ELFv2 callee-saved that the JIT uses as scratch (r25-r30); these are
+    # saved by pushCalleeSaves so VMEntryTotalFrameSize must account for them.
+    const CalleeSaveRegisterCount = 6
 elsif ARMv7
     const CalleeSaveRegisterCount = 5 + 2 * 2 // 5 32-bit GPRs + 2 64-bit FPRs
 end
@@ -923,7 +927,20 @@ macro pushCalleeSaves()
     # but are not in RegisterSet::vmCalleeSaveRegisters() need to be saved here,
     # i.e.: only those registers that are callee save in the C ABI, but are not
     # callee save in the JIT ABI.
-    if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64 or PPC64LE
+    if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
+    elsif PPC64LE
+        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  r14-r24 (csr0-csr10) are
+        # also JIT-callee-saved and handled elsewhere; r31 (cfr) is the frame
+        # pointer.  But r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp pool) are
+        # callee-saved by the C ABI yet treated as scratch by the JIT, so we
+        # must save them at every C entry point.
+        emit "stdu 1, -48(1)"
+        emit "std 25, 0(1)"
+        emit "std 26, 8(1)"
+        emit "std 27, 16(1)"
+        emit "std 28, 24(1)"
+        emit "std 29, 32(1)"
+        emit "std 30, 40(1)"
     elsif ARMv7
         emit "vpush.64 {d14, d15}"
         emit "push {r4-r6, r8-r9}"
@@ -931,7 +948,19 @@ macro pushCalleeSaves()
 end
 
 macro popCalleeSaves()
-    if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64 or PPC64LE
+    if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
+    elsif PPC64LE
+        # Caller has set sp = cfr - CalleeRegisterSaveSize (= cfr - 48) so the
+        # saved r25..r30 sit at sp+0..sp+40.  After loading, advance sp by 48
+        # so the subsequent functionEpilogue (pop lr,cfr) reads the saved cfr
+        # and lr at sp+0 / sp+8.
+        emit "ld 25, 0(1)"
+        emit "ld 26, 8(1)"
+        emit "ld 27, 16(1)"
+        emit "ld 28, 24(1)"
+        emit "ld 29, 32(1)"
+        emit "ld 30, 40(1)"
+        emit "addi 1, 1, 48"
     elsif ARMv7
         emit "pop {r4-r6, r8-r9}"
         emit "vpop.64 {d14, d15}"
