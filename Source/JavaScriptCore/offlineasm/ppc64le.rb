@@ -1436,10 +1436,23 @@ class Instruction
         when "call"
             op = operands[0]
             if op.is_a?(RegisterID) || op.is_a?(SpecialRegister)
+                # Indirect call to a JS function entry / JIT thunk.  The caller
+                # (e.g. makeJavaScriptCall) has already arranged the call frame
+                # using its own sp dance; do NOT wrap with extra stdu/addi or
+                # the cfr location seen by the callee shifts and the codeBlock
+                # / callee / argCount slots are read from wrong offsets.
                 $asm.puts "mtctr #{op.ppc64leOperand}"
                 $asm.puts "bctrl"
             elsif op.is_a?(LabelReference) || op.is_a?(LocalLabelReference)
+                # Direct call to a C function (slow path / runtime helper).
+                # ELFv2 sec 2.2.4: the callee writes its saved lr at 16(r1) of
+                # the CALLER's sp.  We must reserve at least 32 bytes of
+                # "linkage area" so that store does not clobber caller data.
+                # GCC's canonical caller emits `stdu 1,-32(1); bl ...; addi 1,1,32`,
+                # verified empirically with `g++ -O2 -fPIC -S` on extern "C" calls.
+                $asm.puts "stdu 1, -32(1)"
                 $asm.puts "bl #{op.asmLabel}"
+                $asm.puts "addi 1, 1, 32"
             else
                 raise "ppc64le: call operand type #{op.class} not supported at #{codeOriginString}"
             end
