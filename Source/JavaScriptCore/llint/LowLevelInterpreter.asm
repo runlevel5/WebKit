@@ -909,9 +909,11 @@ end
 if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     const CalleeSaveRegisterCount = 0
 elsif PPC64LE
-    # ELFv2 callee-saved that the JIT uses as scratch (r25-r30); these are
-    # saved by pushCalleeSaves so VMEntryTotalFrameSize must account for them.
-    const CalleeSaveRegisterCount = 6
+    # 80 bytes total: r25..r30 saves at cfr-80..cfr-40 (6 regs * 8 = 48 bytes
+    # of useful data) plus a 32-byte gap at cfr-40..cfr-8 reserved for the
+    # LLInt's preserveCalleeSavesUsedByLLInt (csr6..csr9, written at fixed
+    # cfr-32..cfr-8 offsets).  Counting in 8-byte slots: 10.
+    const CalleeSaveRegisterCount = 10
 elsif ARMv7
     const CalleeSaveRegisterCount = 5 + 2 * 2 // 5 32-bit GPRs + 2 64-bit FPRs
 end
@@ -929,12 +931,15 @@ macro pushCalleeSaves()
     # callee save in the JIT ABI.
     if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     elsif PPC64LE
-        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  r14-r24 (csr0-csr10) are
-        # also JIT-callee-saved and handled elsewhere; r31 (cfr) is the frame
-        # pointer.  But r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp pool) are
-        # callee-saved by the C ABI yet treated as scratch by the JIT, so we
-        # must save them at every C entry point.
-        emit "stdu 1, -48(1)"
+        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  r14-r24 (csr0-csr10)
+        # are JIT-callee-saved and handled by preserveCalleeSavesUsedByLLInt
+        # later; r31 is cfr.  r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp
+        # pool) are callee-saved by the C ABI yet treated as scratch by the
+        # JIT, so we save them here at every C entry point.
+        # Layout: allocate 80 bytes; place r25..r30 at cfr-80..cfr-40, leaving
+        # cfr-40..cfr-8 free for preserveCalleeSavesUsedByLLInt to write
+        # csr6..csr9 at its fixed cfr-32..cfr-8 offsets.
+        emit "stdu 1, -80(1)"
         emit "std 25, 0(1)"
         emit "std 26, 8(1)"
         emit "std 27, 16(1)"
@@ -950,17 +955,17 @@ end
 macro popCalleeSaves()
     if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     elsif PPC64LE
-        # Caller has set sp = cfr - CalleeRegisterSaveSize (= cfr - 48) so the
-        # saved r25..r30 sit at sp+0..sp+40.  After loading, advance sp by 48
-        # so the subsequent functionEpilogue (pop lr,cfr) reads the saved cfr
-        # and lr at sp+0 / sp+8.
+        # Caller has set sp = cfr - CalleeRegisterSaveSize (= cfr - 80) so the
+        # saved r25..r30 sit at sp+0..sp+40.  Reload them, then advance sp past
+        # the entire 80-byte sub-frame so functionEpilogue's pop reads the
+        # saved cfr/lr from sp+0/sp+8.
         emit "ld 25, 0(1)"
         emit "ld 26, 8(1)"
         emit "ld 27, 16(1)"
         emit "ld 28, 24(1)"
         emit "ld 29, 32(1)"
         emit "ld 30, 40(1)"
-        emit "addi 1, 1, 48"
+        emit "addi 1, 1, 80"
     elsif ARMv7
         emit "pop {r4-r6, r8-r9}"
         emit "vpop.64 {d14, d15}"
