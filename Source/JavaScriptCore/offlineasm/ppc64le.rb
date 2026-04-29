@@ -1304,17 +1304,20 @@ class Instruction
                     raise "ppc64le: leap offset #{off} out of 16-bit range at #{codeOriginString}"
                 end
             elsif addr.is_a?(LabelReference)
-                # ELFv2 §3.5: load the symbol's address from its TOC entry.
-                # Using `addi @toc@l` instead would only work for symbols whose
-                # full address fits within ±32 KB of the TOC base (i.e. live in
-                # the .toc section themselves) — which is not true of hidden
-                # globals defined in other translation units (e.g. g_config).
-                # GCC's canonical pattern (verified with gcc -O2 -fPIC -S):
-                #     addis rD, 2, sym@toc@ha
-                #     ld    rD, sym@toc@l(rD)
+                # ELFv2 §3.5: load the symbol's address from its GOT entry.
+                # Using @toc@ha+@toc@l(rD) with `ld` would compute an offset to
+                # the SYMBOL itself (DS-form load FROM the symbol), which only
+                # works if the symbol is within ±2 GB of TOC AND we want its
+                # first 8 bytes — not what `leap _g_config, dst` means.
+                # @got@ha+@got@l(rD) with `ld` makes the linker create a GOT
+                # entry containing the symbol's address; the load reads that
+                # entry, giving us &symbol regardless of where the symbol lives.
+                # Empirical test: gcc -fPIC -shared on inline asm using this
+                # exact form against a hidden extern resolves to a single
+                # `ld rD, NN(r2)` after linker relaxation.
                 lbl = addr.asmLabel
-                $asm.puts "addis #{dst}, 2, #{lbl}@toc@ha"
-                $asm.puts "ld #{dst}, #{lbl}@toc@l(#{dst})"
+                $asm.puts "addis #{dst}, 2, #{lbl}@got@ha"
+                $asm.puts "ld #{dst}, #{lbl}@got@l(#{dst})"
                 if addr.offset != 0
                     $asm.puts "addi #{dst}, #{dst}, #{addr.offset}"
                 end
