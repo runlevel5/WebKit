@@ -157,6 +157,28 @@ public:
 
     static constexpr GPRReg returnRegister = RISCV64Registers::x10;
     static constexpr GPRReg returnRegister2 = RISCV64Registers::x11;
+#elif CPU(PPC64LE)
+    // ELFv2 argument GPRs r3-r10 carry incoming Yarr arguments.
+    static constexpr GPRReg input = PPC64Registers::r3;
+    static constexpr GPRReg index = PPC64Registers::r4;
+    static constexpr GPRReg length = PPC64Registers::r5;
+    static constexpr GPRReg output = PPC64Registers::r6;
+    static constexpr GPRReg matchingContext = PPC64Registers::r7;
+    static constexpr GPRReg freelistRegister = InvalidGPRReg;
+
+    // Scratch registers — pick callee-saved r14-r24 to survive across JIT calls.
+    static constexpr GPRReg regT0 = PPC64Registers::r8;
+    static constexpr GPRReg regT1 = PPC64Registers::r9;
+    static constexpr GPRReg regT2 = PPC64Registers::r10;
+    static constexpr GPRReg remainingMatchCount = PPC64Registers::r28;
+    static constexpr GPRReg regUnicodeInputAndTrail = PPC64Registers::r29;
+    static constexpr GPRReg unicodeAndSubpatternIdTemp = PPC64Registers::r30;
+    static constexpr GPRReg initialStart = PPC64Registers::r27;
+    static constexpr GPRReg endOfStringAddress = PPC64Registers::r17;
+
+    // ELFv2 return GPRs are r3 (low) / r4 (high).
+    static constexpr GPRReg returnRegister = PPC64Registers::r3;
+    static constexpr GPRReg returnRegister2 = PPC64Registers::r4;
 #endif
 };
 
