@@ -598,6 +598,7 @@ public:
     void store64(TrustedImm64, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
     void store64(TrustedImm32, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
     void store64(TrustedImm64, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
+    void store64(TrustedImm32, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // storePair64 (MacroAssembler::storePairPtr)
     void storePair64(RegisterID, RegisterID, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
@@ -921,9 +922,11 @@ public:
     // branchAdd32 with Address operand — DFG.
     Jump branchAdd32(ResultCondition, Address, RegisterID)                 { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
-    // transfer64 / storePair32 — memory shuffles.
+    // transfer64 / transferVector / storePair32 — memory shuffles.
     void transfer64(Address, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
     void transfer64(BaseIndex, BaseIndex)                                  { UNREACHABLE_FOR_PLATFORM(); }
+    void transferVector(Address, Address)                                  { UNREACHABLE_FOR_PLATFORM(); }
+    void transferVector(BaseIndex, BaseIndex)                              { UNREACHABLE_FOR_PLATFORM(); }
     void storePair32(RegisterID, RegisterID, Address)                      { UNREACHABLE_FOR_PLATFORM(); }
     void storePair32(RegisterID, RegisterID, BaseIndex)                    { UNREACHABLE_FOR_PLATFORM(); }
     void storePair32(RegisterID, TrustedImm32, Address)                    { UNREACHABLE_FOR_PLATFORM(); }
@@ -990,6 +993,9 @@ public:
     void moveConditionally32(RelationalCondition, RegisterID, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
     void moveConditionally32(RelationalCondition, RegisterID, TrustedImm32, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
     void moveConditionally32(RelationalCondition, RegisterID, TrustedImm32, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionally32(RelationalCondition, RegisterID, TrustedImm32, TrustedImm32, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionallyDouble(DoubleCondition, FPRegisterID, FPRegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    void moveConditionallyDouble(DoubleCondition, FPRegisterID, FPRegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
     void moveConditionallyTest64(ResultCondition, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
     void moveConditionallyTest64(ResultCondition, RegisterID, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
     void moveConditionallyTest64(ResultCondition, RegisterID, TrustedImm32, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
