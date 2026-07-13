@@ -1384,6 +1384,7 @@ void AssemblyHelpers::rapidHashMix64(GPRReg inputAndResult, GPRReg scratch1, GPR
 
     move(scratchRegister(), inputAndResult);
 #else
+    UNUSED_VARIABLE(input);
     UNUSED_PARAM(scratch1);
     UNUSED_PARAM(scratch2);
     RELEASE_ASSERT_NOT_REACHED();

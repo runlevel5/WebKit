@@ -52,7 +52,7 @@ AddressType::AddressType(TypeKind typeKind)
     }
 }
 
-#if !PLATFORM(PLAYSTATION)
+#if ENABLE(B3_JIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 AddressType::AddressType(B3::Type type)
 {
     switch (type.kind()) {
@@ -80,7 +80,7 @@ TypeKind AddressType::asWasmTypeKind() const
     RELEASE_ASSERT_NOT_REACHED(invalidAddressTypeConversion);
 }
 
-#if !PLATFORM(PLAYSTATION)
+#if ENABLE(B3_JIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 B3::TypeKind AddressType::asB3TypeKind() const
 {
     switch (m_type) {
