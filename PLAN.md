@@ -349,6 +349,32 @@ Gate: LLInt runs native on PPC64LE; `--useJIT=0` runs the full stress suite at s
 
 **Verification**: `run-jsc-stress-tests` parity against C_LOOP run from Phase 0. Any new failure is a bug in the PPC64 offlineasm backend. Cross-check specific failing tests against ARM64 `--dumpBytecode=1` to confirm bytecode is identical (if not, the bug is in bytecode generation, not LLInt).
 
+### Phase 2 status — IN PROGRESS (updated 2026-07-13)
+
+**Where we are.** The offlineasm ppc64le backend assembles all of `LowLevelInterpreter*.asm` through GAS; jsc builds and links with `ENABLE_JIT=ON, ENABLE_C_LOOP=OFF, ENABLE_WEBASSEMBLY=ON` (BBQ/OMG off), `USE_SYSTEM_MALLOC=ON`, `CXXFLAGS=-Wno-error=sfinae-incomplete` on the power9 box (`ssh power9`, repo at `/home/tle/Work/WebKit`, build dir `WebKitBuild/JSCOnly/Release`).
+
+**What works**: `jsc --useJIT=0 --useWasm=0 -e 'print(40+2)'` prints `42`. Native LLInt executes JavaScript correctly for simple evaluations.
+
+**Current crash (the active debugging front)**: after printing the correct result, the process segfaults at `op_call_return_location`, i.e. on the return path of an `llint_op_call` (gdb: frame #0 `op_call_return_location`, frame #1 `llint_op_call`, "frame did not save the PC"). With JIT or Wasm left enabled the crash happens before any output (expected — MacroAssemblerPPC64 is still largely stubs; always test with `--useJIT=0 --useWasm=0` in Phase 2). **Confirmed unchanged after the 2026-07-13 rebase** (clean rebuild on power9: `print(40+2)` → 42 then SIGSEGV).
+
+**Second known bug — silent integer overflow wraparound (found 2026-07-14)**: `var s=0; for (var i=0;i<100000;i++) s+=i; print(s)` prints `704982704` instead of `4999950000`. That is exactly `4999950000 mod 2^32`: LLInt's int32 add overflow check (the `baddio`/branch-add-overflow lowering in ppc64le.rb) is not detecting overflow, so the slow path that promotes to double never runs. On PPC64 the overflow check needs `addo.` + XER[OV] (or `mcrxrx` on POWER9 — gate it) rather than CR0 alone; audit all b{add,sub,mul}{i,q}o lowerings against the SM port's `computeConditionCode` overflow handling (and remember the SM lesson: that path clobbering r0 was a production bug). This is a correctness miscompile — silent wrong answers — so fix it alongside (or before) the call-return crash.
+
+**Hypothesis space being worked**: PPC64's call/return discipline vs LLInt's calling convention. `bctrl`/`bl` put the return address in LR (not on the stack like x86, and unlike ARM64 there is no guarantee the LLInt frame layout absorbs it the same way). Three commits circle this area:
+- `pushCalleeSaves` uses an 80-byte sub-frame to avoid LLInt frame overlap;
+- LABEL-form `call` (direct C slow-path calls) wrapped with an ELFv2 linkage area (`stdu/std r2/.../ld r2/addi`);
+- WIP (committed, does NOT yet fix the crash): indirect `call` discriminates C callees from JS callees via the PtrTag operand — C callees need full ELFv2 (r12=entry for GEP, linkage area, r2 save/restore), JS callees must get a bare `mtctr/bctrl` because makeJavaScriptCall has already arranged the frame and an extra `stdu` shifts the callee's cfr.
+
+**Debug aid in place**: the `call` lowering emits an asm comment (`ppc64le call dbg: nops=... tag_val=... c=...`) at every call site. Inspect the generated `LLIntAssembly.h` on the box to enumerate call sites and their resolved tags. Remove before Phase 2 is declared done.
+
+**Next debugging steps**:
+1. Enumerate every `call` site in generated LLIntAssembly.h by tag class; verify the C/JS classification is right at each (the PtrTag-hash matching in ppc64le.rb is fragile — consider having offlineasm resolve tag names symbolically instead of replicating WTF's `makePtrTagHash`).
+2. Trace the JS→JS call/return convention end to end: where does the return address live when LLInt JS code calls LLInt JS code (`makeJavaScriptCall` → callee prologue → `ret`)? On ARM64 `call` sets lr and the callee's `functionPrologue` pushes it; our backend must put the return PC where `op_call_return_location`'s frame teardown expects it. The "frame did not save the PC" gdb note says the frame chain is already broken at entry to the return location.
+3. Compare against ARM64: same test, `-d` disassembly of llint_op_call surroundings on the ARM64 box, and map each instruction to the PPC64 emission.
+
+### Rebase log
+
+- **2026-07-13**: rebased all 96 port commits onto `origin/main` @ `08160f69fe42` (previous base 2026-04-13, ~5850 upstream commits). Single conflict: `jit/GdbJIT.cpp` (upstream added RISCV64 to the same CPU guards where we added PPC64LE — resolved as union). Upstream changes reviewed for impact: new offlineasm instructions `adcq/sbcq/umulhq/smulhq/addqs/subqs` (wasm wide arithmetic) are per-arch **opt-in** lists in `instructions.rb` — no backend action required until we want the fast paths; `op_try_get_by_id` removed; wasm tail calls use a lazy restore frame; relaxed wasm SIMD landed (Phase 5+ concern). Pre-rebase branch preserved as `ppc64-pre-rebase-20260713`.
+
 ## Phase 3 — Baseline JIT
 
 Gate: `jsc --useDFGJIT=0 --useFTLJIT=0 --useWasmJIT=0` (Baseline only) passes the stress suite.
@@ -421,13 +447,15 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 - **POWER8 validation gap.** Runtime-gated POWER8-forced testing is not equivalent to real POWER8 silicon. Unguarded POWER9 instructions pass the forced test and crash on real P8. Acquire POWER8 hardware or qemu-power8 access before claiming POWER8 support.
 - **mimalloc + 64K pages.** Default on for RISCV64 and ARM64. 64K pages are standard on Linux PPC64LE (not 4K). Confirm upstream mimalloc supports PPC64LE page sizes; if not, default `USE_MIMALLOC=OFF` for PPC64LE initially.
 
-## Immediate next actions
+## Immediate next actions (updated 2026-07-13)
 
-Phase 0 is complete with zero PPC64-specific blockers. Proceeding to Phase 1.
+Phase 0 done; Phase 1 (assembler skeleton) built and linked; Phase 2 (LLInt) is the active front — LLInt executes JS but crashes on the `op_call` return path. See "Phase 2 status" above for the full picture.
 
-1. **Evaluate mimalloc on 64K pages.** Try `-DUSE_MIMALLOC=ON` rebuild on PPC64 box. If it works cleanly, update the Phase 0 recipe and drop `USE_SYSTEM_MALLOC=ON`; the PPC64LE `WebKitFeatures.cmake` branch should then default to mimalloc (matching RISCV64/MIPS).
-2. **Start Phase 1** — assembler skeleton (`PPC64Registers.h`, `PPC64Assembler.h`, `MacroAssemblerPPC64.h`) and wire into `MacroAssembler.h` / `TargetAssemblerDefinitions.h`. Read `Source/JavaScriptCore/assembler/RISCV64Assembler.h` and `Source/JavaScriptCore/assembler/ARM64Assembler.h` for structure reference before writing any PPC64 code.
-3. **Upstream bytecode-cache race** — out-of-band, not a port-work item. Report to WebKit upstream with the reproducer documented in the "Upstream cross-platform bug" section above.
+1. **Fix the `op_call_return_location` crash** — the JS→JS call/return convention in the ppc64le offlineasm backend. Follow the "Next debugging steps" in the Phase 2 status section. Everything else in Phase 2 is blocked on this.
+2. **Post-rebase re-validation** — after the 2026-07-13 rebase, rebuild on power9 and confirm the crash signature is unchanged (print-42-then-segfault with `--useJIT=0 --useWasm=0`) before resuming the call-convention debugging; any new failure mode is rebase fallout, not progress.
+3. **Remove the `ppc64le call dbg` asm comment** from ppc64le.rb once the call classification is validated.
+4. **Evaluate mimalloc on 64K pages** (carried over) — try `-DUSE_MIMALLOC=ON` on the box once Phase 2 is green; drop `USE_SYSTEM_MALLOC=ON` if clean.
+5. **Upstream bytecode-cache race** (carried over, out-of-band) — report to WebKit upstream with the reproducer in the Phase 0 section.
 
 ## Appendix — commands cheat sheet
 
