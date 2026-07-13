@@ -298,12 +298,14 @@ def ppc64leLowerMalformedAddresses(list)
 
         ops = node.operands
 
-        # jmp/call with an Address target — load the pointer into a Tmp first
+        # jmp/call with an Address target — load the pointer into a Tmp first.
+        # Preserve any extra operands (e.g. PtrTag) so the lowering can still
+        # distinguish C calls from JS calls based on HostFunctionPtrTag.
         if (node.opcode == "jmp" || node.opcode == "call") && ops[0].is_a?(Address)
             co  = node.codeOrigin
             tmp = Tmp.new(co, :gpr)
             newList << Instruction.new(co, "loadp", [ops[0], tmp])
-            newList << Instruction.new(co, node.opcode, [tmp], node.annotation)
+            newList << Instruction.new(co, node.opcode, [tmp] + ops[1..], node.annotation)
             next
         end
 
@@ -577,6 +579,21 @@ def ppc64leLowerLargeImmediates(list)
         end
     }
     newList
+end
+
+# Per-backend hook called by riscLowerMisplacedAddresses BEFORE its generic
+# rewrite.  We claim jmp/call so the generic path doesn't strip extra operands
+# (notably PtrTag, which we use to distinguish C from JS calls in lowering).
+# At this point our own ppc64leLowerMalformedAddresses has already replaced
+# any Address target with a Tmp, so the call/jmp is safe to leave as-is.
+class Instruction
+    def self.lowerMisplacedAddressesPPC64LE(node, newList)
+        if node.opcode == "jmp" || node.opcode == "call"
+            newList << node
+            return [true, newList]
+        end
+        [false, newList]
+    end
 end
 
 class Sequence
@@ -1474,14 +1491,58 @@ class Instruction
 
         when "call"
             op = operands[0]
+            # Detect native (C) call by checking the PtrTag.  HostFunctionPtrTag
+            # / CFunctionPtrTag indicates the callee follows full ELFv2 ABI
+            # (runs its GEP, may overwrite r2, writes lr at caller_sp+16).  JS
+            # / JIT-tag calls go to LLInt-emitted code that does none of those.
+            # PtrTag identifiers (HostFunctionPtrTag, ...) are resolved to a
+            # numeric constexpr hash by the time they reach this lowering.
+            # Replicate the same hash (WTF/wtf/PtrTag.h makePtrTagHash, which
+            # iterates the null-terminated C string and reduces mod 0x10000)
+            # so we can map back to the source name.  C-call tags require the
+            # full ELFv2 ABI (linkage area + r2 save/restore around bctrl).
+            tag_val = (operands.length > 1 && operands[1].respond_to?(:value)) ? operands[1].value : nil
+            tag_klass = (operands.length > 1) ? operands[1].class.to_s : "(none)"
+            is_c_call = false
+            if tag_val
+                if tag_val == 1
+                    is_c_call = true
+                else
+                    %w[HostFunctionPtrTag CustomAccessorPtrTag GetValueFuncPtrTag
+                       GetValueFuncWithPtrPtrTag PutValueFuncPtrTag PutValueFuncWithPtrPtrTag
+                       OperationPtrTag].each do |name|
+                        h = 134775813
+                        (name + "\0").each_byte { |c| h = (h + ((h * c) ^ (h >> 16))) & 0xFFFFFFFFFFFFFFFF }
+                        if (h & 0xffff) == tag_val
+                            is_c_call = true
+                            break
+                        end
+                    end
+                end
+            end
+            $asm.comment "ppc64le call dbg: nops=#{operands.length} klass=#{tag_klass} tag_val=#{tag_val.inspect} c=#{is_c_call}"
             if op.is_a?(RegisterID) || op.is_a?(SpecialRegister)
-                # Indirect call to a JS function entry / JIT thunk.  The caller
-                # (e.g. makeJavaScriptCall) has already arranged the call frame
-                # using its own sp dance; do NOT wrap with extra stdu/addi or
-                # the cfr location seen by the callee shifts and the codeBlock
-                # / callee / argCount slots are read from wrong offsets.
-                $asm.puts "mtctr #{op.ppc64leOperand}"
-                $asm.puts "bctrl"
+                # Indirect call.  ELFv2 sec 2.4.2: caller must set r12 = callee
+                # entry so the callee's GEP can compute its TOC.
+                if is_c_call
+                    # C callee follows full ABI: it'll write lr at caller_sp+16
+                    # (need linkage area) and clobber r2 (need save/restore).
+                    $asm.puts "stdu 1, -32(1)"
+                    $asm.puts "std 2, 24(1)"
+                    $asm.puts "mr 12, #{op.ppc64leOperand}"
+                    $asm.puts "mtctr 12"
+                    $asm.puts "bctrl"
+                    $asm.puts "ld 2, 24(1)"
+                    $asm.puts "addi 1, 1, 32"
+                else
+                    # JS callee: makeJavaScriptCall-style sp dance is already
+                    # arranged by the caller; an extra stdu would shift the
+                    # callee's cfr off and the codeBlock/callee/argCount slots
+                    # would be read from wrong offsets.  Skip frame allocation.
+                    $asm.puts "mr 12, #{op.ppc64leOperand}"
+                    $asm.puts "mtctr 12"
+                    $asm.puts "bctrl"
+                end
             elsif op.is_a?(LabelReference) || op.is_a?(LocalLabelReference)
                 # Direct call to a C function (slow path / runtime helper).
                 # ELFv2 sec 2.2.4: the callee writes its saved lr at 16(r1) of
