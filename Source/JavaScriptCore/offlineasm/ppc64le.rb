@@ -994,38 +994,77 @@ class Instruction
         # ------------------------------------------------------------------
         # Bitwise: and / or / xor / not
         # ------------------------------------------------------------------
+        # Critical correctness note: with bare-numeral register encoding, GAS
+        # parses an integer in a register slot as a register number.  So
+        # emitting `and dst, src, 1` is silently assembled as `and dst, src, r1`
+        # (= AND with sp).  Every 3-operand form below MUST detect Immediate
+        # operands and route to andi./ori/xori (which take a real immediate
+        # field) — never let a bare integer end up as the third arg of `and`.
+
         when "andp", "andq", "andi"
             ops = operands
             dst = ops.last.ppc64leOperand
-            src = ops.first
-            if src.is_a?(Immediate)
-                # PPC andi. uses unsigned 16-bit immediate and sets CR0
-                $asm.puts "andi. #{dst}, #{dst}, #{src.value}"
+            if ops.length == 3
+                if ops[0].is_a?(Immediate) && ops[1].is_a?(Immediate)
+                    raise "ppc64le: andp with two immediates at #{codeOriginString}"
+                elsif ops[0].is_a?(Immediate)
+                    $asm.puts "andi. #{dst}, #{ops[1].ppc64leOperand}, #{ops[0].value}"
+                elsif ops[1].is_a?(Immediate)
+                    $asm.puts "andi. #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].value}"
+                else
+                    $asm.puts "and #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].ppc64leOperand}"
+                end
             else
-                src2 = (ops.length == 3) ? ops[1].ppc64leOperand : dst
-                $asm.puts "and #{dst}, #{src.ppc64leOperand}, #{src2}"
+                src = ops[0]
+                if src.is_a?(Immediate)
+                    $asm.puts "andi. #{dst}, #{dst}, #{src.value}"
+                else
+                    $asm.puts "and #{dst}, #{src.ppc64leOperand}, #{dst}"
+                end
             end
 
         when "orp", "orq", "ori"
             ops = operands
             dst = ops.last.ppc64leOperand
-            src = ops.first
-            if src.is_a?(Immediate)
-                $asm.puts "ori #{dst}, #{dst}, #{src.value}"
+            if ops.length == 3
+                if ops[0].is_a?(Immediate) && ops[1].is_a?(Immediate)
+                    raise "ppc64le: orp with two immediates at #{codeOriginString}"
+                elsif ops[0].is_a?(Immediate)
+                    $asm.puts "ori #{dst}, #{ops[1].ppc64leOperand}, #{ops[0].value}"
+                elsif ops[1].is_a?(Immediate)
+                    $asm.puts "ori #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].value}"
+                else
+                    $asm.puts "or #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].ppc64leOperand}"
+                end
             else
-                src2 = (ops.length == 3) ? ops[1].ppc64leOperand : dst
-                $asm.puts "or #{dst}, #{src.ppc64leOperand}, #{src2}"
+                src = ops[0]
+                if src.is_a?(Immediate)
+                    $asm.puts "ori #{dst}, #{dst}, #{src.value}"
+                else
+                    $asm.puts "or #{dst}, #{src.ppc64leOperand}, #{dst}"
+                end
             end
 
         when "xorp", "xorq", "xori"
             ops = operands
             dst = ops.last.ppc64leOperand
-            src = ops.first
-            if src.is_a?(Immediate)
-                $asm.puts "xori #{dst}, #{dst}, #{src.value}"
+            if ops.length == 3
+                if ops[0].is_a?(Immediate) && ops[1].is_a?(Immediate)
+                    raise "ppc64le: xorp with two immediates at #{codeOriginString}"
+                elsif ops[0].is_a?(Immediate)
+                    $asm.puts "xori #{dst}, #{ops[1].ppc64leOperand}, #{ops[0].value}"
+                elsif ops[1].is_a?(Immediate)
+                    $asm.puts "xori #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].value}"
+                else
+                    $asm.puts "xor #{dst}, #{ops[0].ppc64leOperand}, #{ops[1].ppc64leOperand}"
+                end
             else
-                src2 = (ops.length == 3) ? ops[1].ppc64leOperand : dst
-                $asm.puts "xor #{dst}, #{src.ppc64leOperand}, #{src2}"
+                src = ops[0]
+                if src.is_a?(Immediate)
+                    $asm.puts "xori #{dst}, #{dst}, #{src.value}"
+                else
+                    $asm.puts "xor #{dst}, #{src.ppc64leOperand}, #{dst}"
+                end
             end
 
         when "notp", "notq", "noti"
