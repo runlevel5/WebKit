@@ -2038,17 +2038,60 @@ class Instruction
             src = operands[0].ppc64leOperand
             $asm.puts "fmr #{dst}, #{src}"
 
-        # Integer-to-float conversions
-        when "ci2d", "ci2ds"
-            # Convert integer (in GPR) to double (in FPR): requires store/load roundtrip
-            # via stack scratch area.  Use a simple 16-byte stack allocation.
-            src  = operands[0].ppc64leOperand
-            dst  = operands[1].ppc64leOperand
-            $asm.puts "stdu 1, -16(1)"
-            $asm.puts "std #{src}, 0(1)"
-            $asm.puts "lfd #{dst}, 0(1)"
-            $asm.puts "addi 1, 1, 16"
+        # Integer-to-float conversions.
+        # Semantics per the ARM64 reference backend: the "s" suffix means
+        # SIGNED source (scvtf), no suffix means UNSIGNED (ucvtf); "ci2*"
+        # converts the low 32 bits ONLY (x86 cvtsi2sd Ed / arm64 scvtf Wn),
+        # "cq2*" converts all 64.  The width part is critical: LLInt feeds
+        # ci2ds boxed int32 JSValues whose upper bits hold the numberTag —
+        # converting all 64 bits turns boxed 1 into -(2^49-1).
+        #
+        # mtvsrwa (sign-extend word), mtvsrwz (zero-extend word) and mtvsrd
+        # move GPR→VSR directly (Power ISA v2.07B Book I §7.6, POWER8);
+        # FPR f_n aliases VSR n, so fcfid* can consume the result in place.
+        # fcfid/fcfids/fcfidu/fcfidus: v2.07B Book I §4.6.7.
+        # Empirically verified on POWER9 (scratchpad ovf/cvt tests,
+        # 2026-07-14): mtvsrwa+fcfid on boxed 0xFFFE000000000001 yields 1.0.
+        when "ci2ds"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrwa #{dst}, #{src}"
             $asm.puts "fcfid #{dst}, #{dst}"
+        when "ci2d"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrwz #{dst}, #{src}"
+            $asm.puts "fcfid #{dst}, #{dst}"
+        when "ci2fs"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrwa #{dst}, #{src}"
+            $asm.puts "fcfids #{dst}, #{dst}"
+        when "ci2f"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrwz #{dst}, #{src}"
+            $asm.puts "fcfids #{dst}, #{dst}"
+        when "cq2ds"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrd #{dst}, #{src}"
+            $asm.puts "fcfid #{dst}, #{dst}"
+        when "cq2d"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrd #{dst}, #{src}"
+            $asm.puts "fcfidu #{dst}, #{dst}"
+        when "cq2fs"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrd #{dst}, #{src}"
+            $asm.puts "fcfids #{dst}, #{dst}"
+        when "cq2f"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "mtvsrd #{dst}, #{src}"
+            $asm.puts "fcfidus #{dst}, #{dst}"
 
         when "cd2i", "truncated2is"
             src = operands[0].ppc64leOperand
