@@ -93,6 +93,70 @@ PPC64LE_EXTRA_FPRS = [
 ]
 
 # -------------------------------------------------------------------------
+# PtrTag-based call classification.
+#
+# Offlineasm resolves `constexpr FooPtrTag` to a bare Immediate before the
+# backend lowering runs, so the lowering cannot see tag NAMES.  Capture the
+# name -> value mapping as ConstExpr nodes are resolved (transform.rb
+# Node#resolve -> ConstExpr#resolveOffsets) and classify call sites
+# symbolically.  Never replicate WTF's makePtrTagHash here: a first attempt
+# did exactly that, produced values matching no real tag, silently
+# classified every call as JS, and the missing r2 (TOC) restore after host
+# C calls crashed the first opcode dispatch after every host-call return
+# (dispatch loads the opcode table TOC-relative: `ld rX, off(r2)`).
+#
+# JS-entry tags: the callee is LLInt/JIT code following the JSC calling
+# convention -- the caller has already arranged sp for the callee's frame,
+# the callee never runs an ELFv2 GEP, never touches r2, and stores the
+# return PC itself.  Emit a bare mtctr/bctrl; any extra stack adjustment
+# here would shift the callee's cfr and corrupt the frame header slots.
+#
+# Everything else (HostFunctionPtrTag, CustomAccessorPtrTag, and the
+# untagged `call reg` sites from the cCall*/slow-path macros) is a C call
+# under the full ELFv2 ABI: the callee may run its GEP off r12 and
+# overwrite r2 (host functions live in the jsc BINARY -- a different
+# module with a different TOC), and writes its saved lr at 16(caller_sp).
+# Emit a 32-byte linkage frame, set r12, and restore r2 after return
+# (ELFv2 rev 1.5 secs 2.2.2-2.2.3, 2.4.2).
+# -------------------------------------------------------------------------
+$ppc64leConstExprValues = {}
+module PPC64LEConstExprCapture
+    def resolveOffsets(constantsMap)
+        result = super
+        $ppc64leConstExprValues[@value] = result.value if result.is_a?(Immediate)
+        result
+    end
+end
+class ConstExpr
+    prepend PPC64LEConstExprCapture
+end
+
+PPC64LE_JS_ENTRY_TAG_NAMES = %w[
+    JSEntryPtrTag JSEntrySlowPathPtrTag WasmEntryPtrTag LLIntToWasmEntryPtrTag
+    wasmIPIntTailCallWasmEntryPtrTag
+].freeze
+
+PPC64LE_C_CALL_TAG_NAMES = %w[
+    HostFunctionPtrTag CustomAccessorPtrTag OperationPtrTag NoPtrTag
+].freeze
+
+# Returns [:js, tagName] or [:c, tagName-or-nil]; raises on a tag value that
+# matches neither list so a new tag fails at offlineasm time instead of
+# miscompiling to the wrong calling convention.
+def ppc64leClassifyCallTag(tagValue, whereString)
+    return [:c, nil] unless tagValue
+    jsName = PPC64LE_JS_ENTRY_TAG_NAMES.find { |n| $ppc64leConstExprValues[n] == tagValue }
+    cName  = PPC64LE_C_CALL_TAG_NAMES.find { |n| $ppc64leConstExprValues[n] == tagValue }
+    if jsName and cName
+        raise "ppc64le: PtrTag hash collision between #{jsName} and #{cName} (#{tagValue}) at #{whereString}"
+    end
+    return [:js, jsName] if jsName
+    return [:c, cName] if cName
+    known = $ppc64leConstExprValues.select { |_, v| v == tagValue }.keys
+    raise "ppc64le: call with unclassified PtrTag value #{tagValue} (#{known.empty? ? 'no name captured' : known.join('/')}) at #{whereString}"
+end
+
+# -------------------------------------------------------------------------
 # RegisterID operand → PPC64LE register number (bare numeral).
 # PPC GAS does not accept "rN" register names by default (without -mregnames),
 # so we emit bare numerals like "1" for r1, matching GCC's convention.
@@ -1599,42 +1663,20 @@ class Instruction
 
         when "call"
             op = operands[0]
-            # Detect native (C) call by checking the PtrTag.  HostFunctionPtrTag
-            # / CFunctionPtrTag indicates the callee follows full ELFv2 ABI
-            # (runs its GEP, may overwrite r2, writes lr at caller_sp+16).  JS
-            # / JIT-tag calls go to LLInt-emitted code that does none of those.
-            # PtrTag identifiers (HostFunctionPtrTag, ...) are resolved to a
-            # numeric constexpr hash by the time they reach this lowering.
-            # Replicate the same hash (WTF/wtf/PtrTag.h makePtrTagHash, which
-            # iterates the null-terminated C string and reduces mod 0x10000)
-            # so we can map back to the source name.  C-call tags require the
-            # full ELFv2 ABI (linkage area + r2 save/restore around bctrl).
-            tag_val = (operands.length > 1 && operands[1].respond_to?(:value)) ? operands[1].value : nil
-            tag_klass = (operands.length > 1) ? operands[1].class.to_s : "(none)"
-            is_c_call = false
-            if tag_val
-                if tag_val == 1
-                    is_c_call = true
-                else
-                    %w[HostFunctionPtrTag CustomAccessorPtrTag GetValueFuncPtrTag
-                       GetValueFuncWithPtrPtrTag PutValueFuncPtrTag PutValueFuncWithPtrPtrTag
-                       OperationPtrTag].each do |name|
-                        h = 134775813
-                        (name + "\0").each_byte { |c| h = (h + ((h * c) ^ (h >> 16))) & 0xFFFFFFFFFFFFFFFF }
-                        if (h & 0xffff) == tag_val
-                            is_c_call = true
-                            break
-                        end
-                    end
-                end
-            end
-            $asm.comment "ppc64le call dbg: nops=#{operands.length} klass=#{tag_klass} tag_val=#{tag_val.inspect} c=#{is_c_call}"
+            # Classify by PtrTag (symbolically, via the captured constexpr
+            # map — see ppc64leClassifyCallTag above).  JS-entry tags → bare
+            # bctrl; C tags and untagged register calls → full ELFv2 stanza.
+            tagValue = (operands.length > 1 && operands[1].is_a?(Immediate)) ? operands[1].value : nil
+            kind, tagName = ppc64leClassifyCallTag(tagValue, codeOriginString)
             if op.is_a?(RegisterID) || op.is_a?(SpecialRegister)
-                # Indirect call.  ELFv2 sec 2.4.2: caller must set r12 = callee
-                # entry so the callee's GEP can compute its TOC.
-                if is_c_call
+                $asm.comment "call #{kind}#{tagName ? " (#{tagName})" : ""}"
+                # ELFv2 sec 2.4.2: caller sets r12 = callee entry so the
+                # callee's GEP can compute its TOC (harmless for JS callees).
+                if kind == :c
                     # C callee follows full ABI: it'll write lr at caller_sp+16
-                    # (need linkage area) and clobber r2 (need save/restore).
+                    # (need linkage area) and may clobber r2 (need save/restore
+                    # — host functions live in the jsc binary, a different
+                    # module with a different TOC).
                     $asm.puts "stdu 1, -32(1)"
                     $asm.puts "std 2, 24(1)"
                     $asm.puts "mr 12, #{op.ppc64leOperand}"
