@@ -581,6 +581,109 @@ def ppc64leLowerLargeImmediates(list)
     newList
 end
 
+# -------------------------------------------------------------------------
+# Overflow / sign branch lowering (badd*o, bsub*o, badd*s, bsub*s).
+#
+# PPC64 has no equivalent of x86 "add; jo/js", and the XER route is a trap:
+# the dot form (addo.) copies XER[SO] — the STICKY summary-overflow bit —
+# into CR0, not this instruction's OV, so one earlier overflow anywhere
+# makes every later bso fire; addic. never touches OV at all; and addo/
+# subfo detect 64-bit overflow, which two int32 operands can never produce,
+# so int32 overflow goes silently undetected (observed: s+=i loops wrapping
+# mod 2^32 instead of promoting to double).  We avoid XER entirely:
+#
+#   int32 overflow (baddio/bsubio): do the arithmetic exactly in 64 bits on
+#   sign-extended copies; overflow iff the 64-bit result differs from its
+#   own low-word sign extension (extsw + cmpd).
+#
+#   int64 overflow (badd{p,q}o/bsub{p,q}o): sign algebra — for r = a+b,
+#   overflow iff (a^r) & (b^r) < 0; for r = a-b, iff (a^b) & (a^r) < 0.
+#
+#   sign branches (b*s): plain add/sub, then branch if result negative
+#   (32-bit: bilt → cmpwi tests the low word; 64-bit: bqlt → cmpdi).
+#
+# Everything is emitted as generic offlineasm ops on fresh Tmps so the
+# register assigner picks provably-dead registers (same pattern as the
+# jmp/call Address expansion — never hardcode a scratch in lowering).
+# Address-destination forms (baddis imm, addr, lbl) are left untouched for
+# the rmw expansion in ppc64leLowerMalformedAddresses.  The residual direct
+# lowerings raise, so an unhandled operand shape fails loudly at offlineasm
+# time instead of miscompiling.
+# -------------------------------------------------------------------------
+def ppc64leLowerOverflowBranches(list)
+    newList = []
+    list.each {
+        | node |
+        unless node.is_a?(Instruction)
+            newList << node
+            next
+        end
+        ops = node.operands
+        co  = node.codeOrigin
+        case node.opcode
+        when "baddio", "bsubio"
+            unless ops[1].is_a?(RegisterID)
+                newList << node
+                next
+            end
+            arith = (node.opcode == "baddio") ? "addq" : "subq"
+            wide = Tmp.new(co, :gpr)   # exact 64-bit result
+            sext = Tmp.new(co, :gpr)   # sign-extended src / re-extension of result
+            newList << Instruction.new(co, "sxi2q", [ops[1], wide], node.annotation)
+            if ops[0].is_a?(Immediate)
+                newList << Instruction.new(co, arith, [ops[0], wide])
+            else
+                newList << Instruction.new(co, "sxi2q", [ops[0], sext])
+                newList << Instruction.new(co, arith, [sext, wide])
+            end
+            # x86 addl / arm64 "adds Wn" zero-extend the 32-bit result, and
+            # LLInt relies on that (binaryOp re-boxes with a plain
+            # "orq numberTag"): a sign-extended negative result would leave
+            # 0xFFFFFFFF in the upper word and malform the JSValue box.
+            newList << Instruction.new(co, "zxi2q", [wide, ops[1]])
+            newList << Instruction.new(co, "sxi2q", [wide, sext])
+            newList << Instruction.new(co, "bqneq", [wide, sext, ops[2]])
+        when "baddpo", "baddqo", "bsubpo", "bsubqo"
+            unless ops[1].is_a?(RegisterID)
+                newList << node
+                next
+            end
+            isAdd = node.opcode.start_with?("badd")
+            a = Tmp.new(co, :gpr)
+            b = Tmp.new(co, :gpr)
+            newList << Instruction.new(co, "move", [ops[1], a], node.annotation)  # a = old dst
+            newList << Instruction.new(co, "move", [ops[0], b])                   # b = src (reg or imm)
+            newList << Instruction.new(co, isAdd ? "addq" : "subq", [b, ops[1]])  # dst = r
+            if isAdd
+                newList << Instruction.new(co, "xorq", [ops[1], a])               # a = a^r
+                newList << Instruction.new(co, "xorq", [ops[1], b])               # b = b^r
+            else
+                newList << Instruction.new(co, "xorq", [a, b])                    # b = a^b (before a is clobbered)
+                newList << Instruction.new(co, "xorq", [ops[1], a])               # a = a^r
+            end
+            newList << Instruction.new(co, "andq", [b, a])                        # a &= b
+            newList << Instruction.new(co, "bqlt", [a, Immediate.new(co, 0), ops[2]])
+        when "baddis", "bsubis"
+            unless ops[1].is_a?(RegisterID)
+                newList << node   # baddis imm, Address, lbl → rmw expansion later
+                next
+            end
+            newList << Instruction.new(co, (node.opcode == "baddis") ? "addi" : "subi", [ops[0], ops[1]], node.annotation)
+            newList << Instruction.new(co, "bilt", [ops[1], Immediate.new(co, 0), ops[2]])
+        when "baddps", "baddqs", "bsubps", "bsubqs"
+            unless ops[1].is_a?(RegisterID)
+                newList << node
+                next
+            end
+            newList << Instruction.new(co, node.opcode.start_with?("badd") ? "addq" : "subq", [ops[0], ops[1]], node.annotation)
+            newList << Instruction.new(co, "bqlt", [ops[1], Immediate.new(co, 0), ops[2]])
+        else
+            newList << node
+        end
+    }
+    newList
+end
+
 # Per-backend hook called by riscLowerMisplacedAddresses BEFORE its generic
 # rewrite.  We claim jmp/call so the generic path doesn't strip extra operands
 # (notably PtrTag, which we use to distinguish C from JS calls in lowering).
@@ -602,6 +705,11 @@ class Sequence
         result = riscLowerTest(result)
         # Expand bmulio → smulli + rshifti + bineq
         result = riscLowerHardBranchOps(result)
+        # Expand overflow/sign branches (badd*o/bsub*o/badd*s/bsub*s) into
+        # XER-free sequences on fresh Tmps.  Must run before the large-immediate
+        # pass (it emits move/addq with the original immediates) and before the
+        # malformed-address passes (it leaves Address forms for the rmw path).
+        result = ppc64leLowerOverflowBranches(result)
         # Lower large immediates AFTER riscLowerTest, since riscLowerTest synthesises
         # and{i,p,q} with the original immediate (e.g. btqnz t, ~1, lbl → andq t, ~1, tmp).
         result = ppc64leLowerLargeImmediates(result)
@@ -1701,20 +1809,34 @@ class Instruction
         # ------------------------------------------------------------------
         # Add-with-branch-on-overflow
         # ------------------------------------------------------------------
-        when "baddis", "baddio"
-            ops  = operands
-            # baddis src, dst, label  — branch if src + dst overflows (signed)
-            src = ops[0].is_a?(Immediate) ? ops[0].value.to_s : ops[0].ppc64leOperand
-            dst = ops[1].ppc64leOperand
-            lbl = ops[2].asmLabel
-            if ops[0].is_a?(Immediate)
-                $asm.puts "addic. #{dst}, #{dst}, #{src}"
-            else
-                $asm.puts "addo. #{dst}, #{dst}, #{src}"
-            end
-            $asm.puts (opcode == "baddis") ? "bns #{lbl}" : "bso #{lbl}"
+        when "baddis", "baddio", "baddps", "baddqs", "baddpo", "baddqo",
+             "bsubis", "bsubio", "bsubps", "bsubqs", "bsubpo", "bsubqo"
+            # All register/immediate forms are expanded by
+            # ppc64leLowerOverflowBranches; baddis-with-Address by the rmw
+            # expansion in ppc64leLowerMalformedAddresses.  Reaching here means
+            # an operand shape neither pass claims — fail loudly rather than
+            # emit a wrong XER-based sequence.
+            raise "ppc64le: unlowered overflow/sign branch #{opcode} at #{codeOriginString}"
 
-        when "baddinz", "baddpnz", "baddqnz"
+        when "baddinz", "baddiz"
+            # 32-bit: CR0 must reflect the low word only.  The dot form (add.)
+            # compares the full 64-bit register, which is wrong once bit 32
+            # carries (e.g. lwz-loaded 0xFFFFFFFF + 1: low word is zero but
+            # the 64-bit result is 0x100000000).  Use plain add + cmpwi.
+            src = operands[0]
+            dst = operands[1].ppc64leOperand
+            lbl = operands[2].asmLabel
+            if src.is_a?(Immediate)
+                $asm.puts "addi #{dst}, #{dst}, #{src.value}"
+            else
+                $asm.puts "add #{dst}, #{dst}, #{src.ppc64leOperand}"
+            end
+            # Match x86 addl / arm64 adds Wn: 32-bit result is zero-extended.
+            $asm.puts "rldicl #{dst}, #{dst}, 0, 32"
+            $asm.puts "cmpwi #{dst}, 0"
+            ppc64leEmitLongBranch(opcode == "baddiz" ? "beq" : "bne", lbl)
+
+        when "baddpnz", "baddqnz"
             src = operands[0]
             dst = operands[1].ppc64leOperand
             lbl = operands[2].asmLabel
@@ -1725,7 +1847,7 @@ class Instruction
             end
             ppc64leEmitLongBranch("bne", lbl)
 
-        when "baddiz", "baddpz", "baddqz"
+        when "baddpz", "baddqz"
             src = operands[0]
             dst = operands[1].ppc64leOperand
             lbl = operands[2].asmLabel
@@ -1735,30 +1857,6 @@ class Instruction
                 $asm.puts "add. #{dst}, #{dst}, #{src.ppc64leOperand}"
             end
             ppc64leEmitLongBranch("beq", lbl)
-
-        when "baddps", "baddqs"
-            ops  = operands
-            src = ops[0].is_a?(Immediate) ? ops[0].value.to_s : ops[0].ppc64leOperand
-            dst = ops[1].ppc64leOperand
-            lbl = ops[2].asmLabel
-            if ops[0].is_a?(Immediate)
-                $asm.puts "addic. #{dst}, #{dst}, #{src}"
-            else
-                $asm.puts "addo. #{dst}, #{dst}, #{src}"
-            end
-            ppc64leEmitLongBranch("bns", lbl)
-
-        when "baddpo", "baddqo"
-            ops  = operands
-            src = ops[0].is_a?(Immediate) ? ops[0].value.to_s : ops[0].ppc64leOperand
-            dst = ops[1].ppc64leOperand
-            lbl = ops[2].asmLabel
-            if ops[0].is_a?(Immediate)
-                $asm.puts "addic. #{dst}, #{dst}, #{src}"
-            else
-                $asm.puts "addo. #{dst}, #{dst}, #{src}"
-            end
-            ppc64leEmitLongBranch("bso", lbl)
 
         # ------------------------------------------------------------------
         # Subtract-with-branch
@@ -1766,7 +1864,22 @@ class Instruction
         # bsubiz  src, dst, label  →  dst -= src; branch if dst == 0
         # (pointer/quad variants are same as int on 64-bit)
         # ------------------------------------------------------------------
-        when "bsubinz", "bsubpnz", "bsubqnz"
+        when "bsubinz", "bsubiz"
+            # 32-bit: plain sub + cmpwi (see baddinz note on dot-form vs low word).
+            src = operands[0]
+            dst = operands[1].ppc64leOperand
+            lbl = operands[2].asmLabel
+            if src.is_a?(Immediate)
+                $asm.puts "addi #{dst}, #{dst}, #{-src.value}"
+            else
+                $asm.puts "subf #{dst}, #{src.ppc64leOperand}, #{dst}"
+            end
+            # Match x86 subl: 32-bit result is zero-extended.
+            $asm.puts "rldicl #{dst}, #{dst}, 0, 32"
+            $asm.puts "cmpwi #{dst}, 0"
+            ppc64leEmitLongBranch(opcode == "bsubiz" ? "beq" : "bne", lbl)
+
+        when "bsubpnz", "bsubqnz"
             src = operands[0]
             dst = operands[1].ppc64leOperand
             lbl = operands[2].asmLabel
@@ -1777,7 +1890,7 @@ class Instruction
             end
             ppc64leEmitLongBranch("bne", lbl)
 
-        when "bsubiz", "bsubpz", "bsubqz"
+        when "bsubpz", "bsubqz"
             src = operands[0]
             dst = operands[1].ppc64leOperand
             lbl = operands[2].asmLabel
@@ -1787,30 +1900,6 @@ class Instruction
                 $asm.puts "subf. #{dst}, #{src.ppc64leOperand}, #{dst}"
             end
             ppc64leEmitLongBranch("beq", lbl)
-
-        when "bsubis", "bsubps", "bsubqs"
-            ops  = operands
-            src = ops[0]
-            dst = ops[1].ppc64leOperand
-            lbl = ops[2].asmLabel
-            if src.is_a?(Immediate)
-                $asm.puts "addic. #{dst}, #{dst}, #{-src.value}"
-            else
-                $asm.puts "subfo. #{dst}, #{src.ppc64leOperand}, #{dst}"
-            end
-            ppc64leEmitLongBranch("bns", lbl)
-
-        when "bsubio", "bsubpo", "bsubqo"
-            ops  = operands
-            src = ops[0]
-            dst = ops[1].ppc64leOperand
-            lbl = ops[2].asmLabel
-            if src.is_a?(Immediate)
-                $asm.puts "addic. #{dst}, #{dst}, #{-src.value}"
-            else
-                $asm.puts "subfo. #{dst}, #{src.ppc64leOperand}, #{dst}"
-            end
-            ppc64leEmitLongBranch("bso", lbl)
 
         # ------------------------------------------------------------------
         # Conditional set: c{i,p,q,b}{eq,neq,lt,gt,lteq,gteq,a,b,aeq,beq}
