@@ -137,6 +137,15 @@ constexpr bool isRISCV64()
 #endif
 }
 
+constexpr bool isPPC64LE()
+{
+#if CPU(PPC64LE)
+    return true;
+#else
+    return false;
+#endif
+}
+
 constexpr bool is64Bit()
 {
 #if USE(JSVALUE64)
