@@ -1072,16 +1072,230 @@ public:
         return branchTest64Impl(cond, dataTempRegister);
     }
 
-    void farJump(RegisterID, PtrTag)                                       { UNREACHABLE_FOR_PLATFORM(); }
-    void farJump(Address, PtrTag)                                          { UNREACHABLE_FOR_PLATFORM(); }
-    void farJump(BaseIndex, PtrTag)                                        { UNREACHABLE_FOR_PLATFORM(); }
-    void farJump(AbsoluteAddress, PtrTag)                                  { UNREACHABLE_FOR_PLATFORM(); }
+    // --- Loads and stores -------------------------------------------------
+    // load32/16/8 zero-extend (lwz/lhz/lbz); ld/std are DS-form and need
+    // 4-aligned displacements — resolveAddressDS falls back to adding the
+    // displacement into the scratch when it is misaligned.
+
+    template<typename AddressType>
+    ResolvedAddress resolveAddressDS(AddressType address, RegisterID scratch)
+    {
+        ResolvedAddress r = resolveAddress(address, scratch);
+        if (!(r.offset & 3))
+            return r;
+        m_assembler.addi(scratch, r.base, r.offset);
+        return { scratch, 0 };
+    }
+
+    void moveToAbsolute(const void* address)
+    {
+        moveImmToScratch(int64_t(intptr_t(address)), memoryTempRegister);
+    }
+
+    void load64(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddressDS(address, memoryTempRegister);
+        m_assembler.ld(dest, r.offset, r.base);
+    }
+    void load64(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.ld(dest, 0, memoryTempRegister);
+    }
+
+    void load32(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dest, r.offset, r.base);
+    }
+    void load32(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dest, r.offset, r.base);
+    }
+    void load32(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lwz(dest, 0, memoryTempRegister);
+    }
+
+    void load16(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dest, r.offset, r.base);
+    }
+    void load16(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dest, r.offset, r.base);
+    }
+    void load16(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lhz(dest, 0, memoryTempRegister);
+    }
+
+    void load8(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dest, r.offset, r.base);
+    }
+    void load8(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dest, r.offset, r.base);
+    }
+    void load8(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lbz(dest, 0, memoryTempRegister);
+    }
+
+    void store64(RegisterID src, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddressDS(address, memoryTempRegister);
+        m_assembler.std(src, r.offset, r.base);
+    }
+    void store64(RegisterID src, void* address)
+    {
+        moveToAbsolute(address);
+        m_assembler.std(src, 0, memoryTempRegister);
+    }
+    void store64(TrustedImm64 imm, Address address)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+    void store64(TrustedImm32 imm, Address address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+    void store64(TrustedImmPtr imm, Address address)
+    {
+        moveImmToScratch(int64_t(imm.asIntptr()), dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+    void store64(TrustedImm64 imm, BaseIndex address)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+    void store64(TrustedImm32 imm, BaseIndex address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+
+    void store32(RegisterID src, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.stw(src, r.offset, r.base);
+    }
+    void store32(RegisterID src, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.stw(src, r.offset, r.base);
+    }
+    void store32(RegisterID src, void* address)
+    {
+        moveToAbsolute(address);
+        m_assembler.stw(src, 0, memoryTempRegister);
+    }
+    void store32(TrustedImm32 imm, Address address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store32(dataTempRegister, address);
+    }
+    void store32(TrustedImm32 imm, void* address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store32(dataTempRegister, address);
+    }
+
+    void store16(RegisterID src, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.sth(src, r.offset, r.base);
+    }
+    void store16(RegisterID src, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.sth(src, r.offset, r.base);
+    }
+
+    void store8(RegisterID src, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.stb(src, r.offset, r.base);
+    }
+    void store8(RegisterID src, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.stb(src, r.offset, r.base);
+    }
+    void store8(TrustedImm32 imm, Address address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store8(dataTempRegister, address);
+    }
+
+    void getEffectiveAddress(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale) {
+            // Shift into the scratch: sldi straight into dest would clobber
+            // the base when dest == address.base.
+            m_assembler.sldi(dataTempRegister, address.index, address.scale);
+            m_assembler.add(dest, dataTempRegister, address.base);
+        } else
+            m_assembler.add(dest, address.index, address.base);
+        if (address.offset) {
+            if (isInt16(address.offset))
+                m_assembler.addi(dest, dest, int16_t(address.offset));
+            else {
+                moveImmToScratch(int64_t(address.offset), dataTempRegister);
+                m_assembler.add(dest, dest, dataTempRegister);
+            }
+        }
+    }
+
+    void move(TrustedImm64 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dest);
+    }
+
+    // LR access for prologue/epilogue code (LR is an SPR, not a GPR).
+    void moveFromLR(RegisterID dest) { m_assembler.mflr(dest); }
+    void moveToLR(RegisterID src)    { m_assembler.mtlr(src); }
+
+    // Indirect jumps: mtctr + bctr (PtrTag is ignored — no pointer auth).
+    void farJump(RegisterID target, PtrTag)
+    {
+        m_assembler.mtctr(target);
+        m_assembler.bctr();
+    }
+    void farJump(Address address, PtrTag tag)
+    {
+        ResolvedAddress r = resolveAddressDS(address, memoryTempRegister);
+        m_assembler.ld(dataTempRegister, r.offset, r.base);
+        farJump(dataTempRegister, tag);
+    }
+    void farJump(BaseIndex address, PtrTag tag)
+    {
+        ResolvedAddress r = resolveAddressDS(address, memoryTempRegister);
+        m_assembler.ld(dataTempRegister, r.offset, r.base);
+        farJump(dataTempRegister, tag);
+    }
+    void farJump(AbsoluteAddress address, PtrTag tag)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.ld(dataTempRegister, 0, memoryTempRegister);
+        farJump(dataTempRegister, tag);
+    }
     void farJump(RegisterID target, RegisterID)                            { farJump(target, NoPtrTag); }
     void farJump(Address address, RegisterID)                              { farJump(address, NoPtrTag); }
 
     // Stores (stub) — store64 with Address is implemented above.
-    void store32(RegisterID, Address)                { UNREACHABLE_FOR_PLATFORM(); }
-    void store32(TrustedImm32, Address)              { UNREACHABLE_FOR_PLATFORM(); }
 
     // FP / SIMD moves (stub)
     void move32ToFloat(RegisterID, FPRegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
@@ -1094,8 +1308,6 @@ public:
     void push(TrustedImm32)                          { UNREACHABLE_FOR_PLATFORM(); }
 
     // 32-bit / float / double / vector loads and stores (stub)
-    void load32(Address, RegisterID)                 { UNREACHABLE_FOR_PLATFORM(); }
-    void store32(RegisterID, BaseIndex)              { UNREACHABLE_FOR_PLATFORM(); }
     void loadDouble(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
     void storeDouble(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
     void storeDouble(FPRegisterID, BaseIndex)        { UNREACHABLE_FOR_PLATFORM(); }
@@ -1163,8 +1375,6 @@ public:
     void xor64(TrustedImm64, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional load64 overloads (MacroAssembler::loadPtr)
-    void load64(BaseIndex, RegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
-    void load64(const void*, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 
     // loadPair64 (MacroAssembler::loadPairPtr)
     void loadPair64(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
@@ -1172,12 +1382,6 @@ public:
     void loadPair64(Address, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional store64 overloads (MacroAssembler::storePtr)
-    void store64(RegisterID, BaseIndex)                          { UNREACHABLE_FOR_PLATFORM(); }
-    void store64(RegisterID, void*)                              { UNREACHABLE_FOR_PLATFORM(); }
-    void store64(TrustedImm64, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
-    void store64(TrustedImm32, Address)                          { UNREACHABLE_FOR_PLATFORM(); }
-    void store64(TrustedImm64, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
-    void store64(TrustedImm32, BaseIndex)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // storePair64 (MacroAssembler::storePairPtr)
     void storePair64(RegisterID, RegisterID, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
@@ -1208,7 +1412,6 @@ public:
     Jump branchSub64(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // move(TrustedImm64) — used by blinding helpers in MacroAssembler.
-    void move(TrustedImm64, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
 
     // convertInt32ToDouble(TrustedImm32) — blinding path in MacroAssembler.
     void convertInt32ToDouble(TrustedImm32, FPRegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
@@ -1274,8 +1477,6 @@ public:
     void zeroExtend32ToWord(RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // byte loads — AssemblyHelpers::barrierBranch and load8SignedExtendTo32.
-    void load8(Address, RegisterID)                                        { UNREACHABLE_FOR_PLATFORM(); }
-    void load8(BaseIndex, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
 
     // branch8 with AbsoluteAddress — AssemblyHelpers::barrierBranchWithoutFence.
     Jump branch8(RelationalCondition, AbsoluteAddress, TrustedImm32)       { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
@@ -1284,7 +1485,6 @@ public:
     Jump branchTest8(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // load8 with raw pointer — AssemblyHelpers::barrierBranch(VM&, JSCell*, GPRReg).
-    void load8(const void*, RegisterID)                                    { UNREACHABLE_FOR_PLATFORM(); }
 
     // or32 with Address — AssemblyHelpers::nukeStructureAndStoreButterfly.
     void or32(RegisterID, Address)                                         { UNREACHABLE_FOR_PLATFORM(); }
@@ -1304,7 +1504,6 @@ public:
     void swap(RegisterID, RegisterID)                                      { UNREACHABLE_FOR_PLATFORM(); }
 
     // store64(TrustedImmPtr, Address) — CCallHelpers::storeWasmCalleeToCalleeCallFrame.
-    void store64(TrustedImmPtr, Address)                                   { UNREACHABLE_FOR_PLATFORM(); }
 
     // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
     void transferPtr(BaseIndex, BaseIndex)                                 { UNREACHABLE_FOR_PLATFORM(); }
@@ -1319,9 +1518,6 @@ public:
     void load8SignedExtendTo32(Address, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
     void load8SignedExtendTo32(BaseIndex, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
     void load8SignedExtendTo32(const void*, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
-    void load16(Address, RegisterID)                                       { UNREACHABLE_FOR_PLATFORM(); }
-    void load16(BaseIndex, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
-    void load16(const void*, RegisterID)                                   { UNREACHABLE_FOR_PLATFORM(); }
     void load16SignedExtendTo32(Address, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
     void load16SignedExtendTo32(BaseIndex, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
     void load16SignedExtendTo32(const void*, RegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
@@ -1345,8 +1541,6 @@ public:
     void add32(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
 
     // store32 with absolute pointer — DFGSpeculativeJIT.cpp:511 abortWithReason.
-    void store32(RegisterID, void*)                                        { UNREACHABLE_FOR_PLATFORM(); }
-    void store32(TrustedImm32, void*)                                      { UNREACHABLE_FOR_PLATFORM(); }
 
     // branchTest32 with Address operand
     Jump branchTest32(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
@@ -1355,22 +1549,15 @@ public:
     Jump branchPtr(RelationalCondition, Address, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // getEffectiveAddress — InlineCacheCompiler.cpp:2840
-    void getEffectiveAddress(BaseIndex, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // BaseIndex / TrustedImmPtr variants of FP load/store not already declared.
-    void load32(BaseIndex, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
     void loadFloat(BaseIndex, FPRegisterID)                                { UNREACHABLE_FOR_PLATFORM(); }
     void loadDouble(BaseIndex, FPRegisterID)                               { UNREACHABLE_FOR_PLATFORM(); }
     void loadDouble(TrustedImmPtr, FPRegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
     Jump branchIfNaN(FPRegisterID)                                         { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // Byte/half store, FP type conversion, FP16, and 32-bit transfers.
-    void store8(RegisterID, Address)                                       { UNREACHABLE_FOR_PLATFORM(); }
-    void store8(RegisterID, BaseIndex)                                     { UNREACHABLE_FOR_PLATFORM(); }
-    void store8(TrustedImm32, Address)                                     { UNREACHABLE_FOR_PLATFORM(); }
     void store8(TrustedImm32, BaseIndex)                                   { UNREACHABLE_FOR_PLATFORM(); }
-    void store16(RegisterID, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
-    void store16(RegisterID, BaseIndex)                                    { UNREACHABLE_FOR_PLATFORM(); }
     void convertDoubleToFloat(FPRegisterID, FPRegisterID)                  { UNREACHABLE_FOR_PLATFORM(); }
     void convertDoubleToFloat16(FPRegisterID, FPRegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
     void storeFloat16(FPRegisterID, Address)                               { UNREACHABLE_FOR_PLATFORM(); }
@@ -1409,7 +1596,6 @@ public:
     DataLabel32 moveWithPatch(TrustedImm32, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); return DataLabel32(); }
 
     // load32 with absolute pointer — DFGSpeculativeJIT.cpp:511.
-    void load32(const void*, RegisterID)                                   { UNREACHABLE_FOR_PLATFORM(); }
 
     // branchTest32 with AbsoluteAddress — DFGSpeculativeJIT.cpp:2460
     Jump branchTest32(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
