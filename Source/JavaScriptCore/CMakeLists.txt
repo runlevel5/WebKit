@@ -252,6 +252,7 @@ set(OFFLINE_ASM
     offlineasm/offsets.rb
     offlineasm/opt.rb
     offlineasm/parser.rb
+    offlineasm/ppc64le.rb
     offlineasm/registers.rb
     offlineasm/risc.rb
     offlineasm/riscv64.rb
