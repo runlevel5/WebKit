@@ -405,6 +405,21 @@ Remaining Phase 2 polish before calling it fully closed: remove the `call C/JS` 
 
 Gate: `jsc --useDFGJIT=0 --useFTLJIT=0 --useWasmJIT=0` (Baseline only) passes the stress suite.
 
+### Phase 3 status — IN PROGRESS (2026-07-15)
+
+**Done** (commits `c62d2e2f5f86`, `9714382cca82`):
+- **Linking architecture**: RISCV64-style fixed 8-instruction slots for jump/branch/call, rewritten in place at link time (near `b`/`bc` or far `li64(r12)+mtctr+bctr(l)`); call slots keep the branch LAST so the return address is fixed; full link/relink/repatch/readPointer surface; `cacheFlush` via `__builtin___clear_cache`; patchable sizes = 32 bytes.
+- **MacroAssembler core**: CR0 condition mapping, branch/compare families, 32/64-bit arith+logical with the zero-extension contract, masked shifts, overflow branches (Phase 2 technique), full load/store matrix with DS-form alignment fallback, farJump, `getEffectiveAddress`, JSC frame prologue/epilogue ([fp]=caller-fp, [fp+8]=return-pc; LR spilled via scratch). Scratches r11/r12 (SM convention).
+- **testmasm harness operational** — with caveats below.
+
+**Hard-won harness lessons**:
+- **testmasm MUST run with `JSC_useJIT=1`** — our PPC64LE runtime default disables the executable pool; without it EVERY LinkBuffer silently finalizes to a NULL code pointer in Release and the harness calls address 0. Symptom: SIGSEGV at PC=0 with ctr=0, lr in the test-runner dispatch.
+- **testmasm prints test names from worker threads** — a printed name does NOT mean the test passed; an "earlier test passed" reading cost a debugging detour. Judge only by the exit status of a single-filter run.
+- The 32MB+guard-pages RWX pool reservation works on 64K-page Linux ppc64le.
+
+**Next frontier**: with the pool live, `JSC::initialize` itself JITs LLInt glue thunks (`LLInt::defaultCallThunk` in LLIntThunks.cpp) and aborts on missing MacroAssembler surface — implement what it needs (thunk-level calls/moves/patching, task 4 territory), then resume the testmasm grind (getEffectiveAddress result validation, branches, arith tests), then FP, then jsc baseline bring-up.
+- Open design item: JIT→C call TOC discipline (r2 save/restore + ELFv2 linkage headroom in JIT frames) — decide when CCallHelpers-level C calls first appear in the grind.
+
 1. Expand MacroAssemblerPPC64 to cover the full Baseline surface: all integer arith, logical, shift, comparison, branches, loads/stores across sizes, float arith, truncation, conversion. Use ISA XO-form for arith, X-form for loads/stores, B-form for conditional branches via CR fields.
 2. Implement `nearCall`/`farCall` — PPC64LE needs a local-call fast path (direct `bl`) and an external-call path that restores TOC via r2 reload (`ld r2, 24(r1)` per ELFv2 §2.3.2).
 3. Implement probe trampolines for the Probe API (`Probe.cpp` hooks).
