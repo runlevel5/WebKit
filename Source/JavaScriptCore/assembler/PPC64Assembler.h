@@ -98,7 +98,7 @@ public:
     static constexpr unsigned numberOfRegisters() { return lastRegister() - firstRegister() + 1; }
 
     static constexpr SPRegisterID firstSPRegister() { return PPC64Registers::pc; }
-    static constexpr SPRegisterID lastSPRegister() { return PPC64Registers::pc; }
+    static constexpr SPRegisterID lastSPRegister() { return PPC64Registers::ctr; }
     static constexpr unsigned numberOfSPRegisters() { return lastSPRegister() - firstSPRegister() + 1; }
 
     static constexpr FPRegisterID firstFPRegister() { return PPC64Registers::f0; }
@@ -195,6 +195,33 @@ public:
     void ori(RegisterID ra, RegisterID rs, uint16_t ui)
     {
         insn(dForm(24, rs, ra, ui));
+    }
+
+    // andi. — AND Immediate (Rc=1 implicit; sets CR0). Power ISA v2.07B
+    // §3.3.9, D-form, opcode 28.
+    void andi_(RegisterID ra, RegisterID rs, uint16_t ui)
+    {
+        insn(dForm(28, rs, ra, ui));
+    }
+
+    // xori — XOR Immediate. Power ISA v2.07B §3.3.9, D-form, opcode 26.
+    void xori(RegisterID ra, RegisterID rs, uint16_t ui)
+    {
+        insn(dForm(26, rs, ra, ui));
+    }
+
+    // nor — NOR (used for not: nor ra, rs, rs). Power ISA v2.07B §3.3.9,
+    // X-form, opcode 31, XO=124.
+    void nor(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 124, /*Rc*/ 0));
+    }
+
+    // mfcr — Move From Condition Register. Power ISA v2.07B §3.3.17,
+    // XFX-form, opcode 31, XO=19 (bit 11 = 0 selects the full-CR form).
+    void mfcr(RegisterID rt)
+    {
+        insn((31u << 26) | (uint32_t(registerValue(rt)) << 21) | (19u << 1));
     }
 
     // oris — Or Immediate Shifted. Power ISA v2.07B §3.3.9, D-form, opcode 25.
@@ -2943,9 +2970,221 @@ public:
         return call.offset();
     }
 
-    // Patchable-jump size: a PPC64 5-instruction sequence covers all cases.
-    static constexpr ptrdiff_t maxJumpReplacementSize() { return 5 * sizeof(uint32_t); }
-    static constexpr ptrdiff_t patchableJumpSize()      { return 5 * sizeof(uint32_t); }
+    // ==================================================================
+    // Linking / patching architecture (RISCV64-style fixed footprints).
+    //
+    // Every MacroAssembler jump, conditional branch, and call reserves a
+    // FIXED 8-instruction (32-byte) slot.  At link/relink time the slot is
+    // rewritten in place to the shortest form that reaches the target and
+    // padded with nops.  No branch compaction; correctness first.
+    //
+    //   Unconditional jump slot        Conditional branch slot
+    //   [0] marker or b/li64...        [0] bc BO,BI (offset 0 when unlinked)
+    //   [1..7] nops / stanza           [1] marker or b/li64...
+    //                                  [2..7] nops / stanza
+    //
+    //   Call slot (branch is LAST so the return address is fixed at +32):
+    //   [0..4] nops or li64(r12,target)
+    //   [5]    nop  or mtctr r12
+    //   [6]    nop
+    //   [7]    bl target  or  bctrl
+    //
+    // Long-form register: r12 — the MacroAssembler scratch (SM convention)
+    // and, conveniently, the ELFv2 function-entry register.
+    //
+    // Rewrite forms for jumps/branches (anchor = the slot's branch insn):
+    //   near:   b target                      (±32MB)
+    //   far:    li64 r12, target (5 insns); mtctr r12; bctr
+    // Conditional slots put an inverted bc over the stanza when the target
+    // does not fit the bc's own ±32KB reach.
+    // ==================================================================
+
+    static constexpr unsigned JUMP_SLOT_INSNS = 8;
+    static constexpr uint32_t PPC_NOP = 0x60000000u;             // ori 0,0,0
+    // Distinctive never-executed markers (ori 0,0,imm forms).
+    static constexpr uint32_t MARKER_JUMP = 0x6000FB01u;
+    static constexpr uint32_t MARKER_CALL = 0x6000FB02u;
+    static constexpr uint32_t MARKER_BRANCH_TAIL = 0x6000FB03u;
+
+    static constexpr RegisterID scratchRegister() { return PPC64Registers::r12; }
+
+    // Static instruction constructors for patching.
+    static constexpr uint32_t insnLis(RegisterID rt, uint16_t imm)  { return dForm(15, rt, PPC64Registers::r0, imm); }
+    static constexpr uint32_t insnOri(RegisterID ra, RegisterID rs, uint16_t imm)  { return dForm(24, rs, ra, imm); }
+    static constexpr uint32_t insnOris(RegisterID ra, RegisterID rs, uint16_t imm) { return dForm(25, rs, ra, imm); }
+    static constexpr uint32_t insnRldicr32_31(RegisterID ra, RegisterID rs) { return mdForm(30, rs, ra, 32, 31, /*XO*/ 1, /*Rc*/ 0); }
+    static constexpr uint32_t insnB(int32_t byteOffset, uint32_t lk) { return iForm(18, byteOffset, 0, lk); }
+    static constexpr uint32_t insnBc(uint32_t bo, uint32_t bi, int32_t byteOffset) { return bForm(16, bo, bi, byteOffset, 0, 0); }
+    static constexpr uint32_t insnMtctr(RegisterID rs) { return xfxForm(31, rs, SPR_CTR, /*XO*/ 467); }
+    static constexpr uint32_t insnBctr()  { return xlForm(19, BO_ALWAYS, 0, 0, 528, 0); }
+    static constexpr uint32_t insnBctrl() { return xlForm(19, BO_ALWAYS, 0, 0, 528, 1); }
+
+    static bool isBInsn(uint32_t insn)  { return (insn >> 26) == 18; }
+    static bool isBcInsn(uint32_t insn) { return (insn >> 26) == 16; }
+    static bool isLisTo(uint32_t insn, RegisterID rt) { return (insn >> 16) == ((15u << 10) | (uint32_t(registerValue(rt)) << 5)); }
+
+    static bool fitsBranch26(intptr_t offset) { return offset >= -(1 << 25) && offset < (1 << 25) && !(offset & 3); }
+    static bool fitsBranch16(intptr_t offset) { return offset >= -(1 << 15) && offset < (1 << 15) && !(offset & 3); }
+
+    // Write the 5-instruction li64(rt, value) into location[0..4].
+    static void writeLi64(uint32_t* location, RegisterID rt, uint64_t value)
+    {
+        uint32_t words[5] = {
+            insnLis(rt, uint16_t(value >> 48)),
+            insnOri(rt, rt, uint16_t(value >> 32)),
+            insnRldicr32_31(rt, rt),
+            insnOris(rt, rt, uint16_t(value >> 16)),
+            insnOri(rt, rt, uint16_t(value)),
+        };
+        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+    }
+
+    // Read the value from a 5-instruction li64 sequence.
+    static uint64_t readLi64(const uint32_t* location)
+    {
+        return (uint64_t(location[0] & 0xFFFF) << 48)
+             | (uint64_t(location[1] & 0xFFFF) << 32)
+             | (uint64_t(location[3] & 0xFFFF) << 16)
+             |  uint64_t(location[4] & 0xFFFF);
+    }
+
+    // --- Emission of unlinked slots -----------------------------------
+
+    // Returns the label of the slot start; Jump carries it.
+    AssemblerLabel emitUnlinkedJump()
+    {
+        AssemblerLabel result = m_buffer.label();
+        insn(MARKER_JUMP);
+        for (unsigned i = 1; i < JUMP_SLOT_INSNS; ++i)
+            insn(PPC_NOP);
+        return result;
+    }
+
+    // bo/bi describe the CR0 condition to branch on when TAKEN.
+    AssemblerLabel emitUnlinkedBranch(uint32_t bo, uint32_t bi)
+    {
+        AssemblerLabel result = m_buffer.label();
+        insn(insnBc(bo, bi, 0));            // offset 0 = unlinked
+        insn(MARKER_BRANCH_TAIL);
+        for (unsigned i = 2; i < JUMP_SLOT_INSNS; ++i)
+            insn(PPC_NOP);
+        return result;
+    }
+
+    // Returns the label AFTER the slot (= the return address), which is
+    // JSC's convention for Call labels; getCallReturnOffset uses it.
+    AssemblerLabel emitUnlinkedCall()
+    {
+        insn(MARKER_CALL);
+        for (unsigned i = 1; i < JUMP_SLOT_INSNS - 1; ++i)
+            insn(PPC_NOP);
+        insn(insnBctrl());                  // placeholder; rewritten at link
+        return m_buffer.label();
+    }
+
+    // --- In-place slot rewriters ---------------------------------------
+
+    static void applyJumpSlot(uint32_t* location, void* to)
+    {
+        intptr_t offset = intptr_t(to) - intptr_t(location);
+        uint32_t words[JUMP_SLOT_INSNS];
+        for (auto& w : words) w = PPC_NOP;
+        if (fitsBranch26(offset))
+            words[0] = insnB(int32_t(offset), 0);
+        else {
+            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
+            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+            words[5] = insnMtctr(scratchRegister());
+            words[6] = insnBctr();
+        }
+        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+    }
+
+    // Extract (bo, bi) from a conditional slot in ANY of its states.
+    // Unlinked/short state: [0] is the bc carrying the real condition.
+    // Inverted states: [0] is bc with BO bit 3 (branch-true/false sense)
+    // flipped, skipping the stanza.
+    static bool extractBranchCondition(const uint32_t* location, uint32_t& bo, uint32_t& bi)
+    {
+        if (!isBcInsn(location[0]))
+            return false;
+        bo = (location[0] >> 21) & 0x1F;
+        bi = (location[0] >> 16) & 0x1F;
+        int32_t bd = int32_t(int16_t(location[0] & 0xFFFC));
+        // Inverted iff the bc jumps just past this slot's stanza (offset
+        // is small positive and the following insn is not a nop-marker
+        // tail): normalize by re-inverting.
+        if (bd == int32_t(JUMP_SLOT_INSNS * sizeof(uint32_t)) && (isBInsn(location[1]) || isLisTo(location[1], scratchRegister())))
+            bo ^= 0x8;
+        return true;
+    }
+
+    static void applyBranchSlot(uint32_t* location, void* to)
+    {
+        uint32_t bo, bi;
+        bool ok = extractBranchCondition(location, bo, bi);
+        RELEASE_ASSERT(ok);
+        intptr_t offset = intptr_t(to) - intptr_t(location);
+        uint32_t words[JUMP_SLOT_INSNS];
+        for (auto& w : words) w = PPC_NOP;
+        if (fitsBranch16(offset))
+            words[0] = insnBc(bo, bi, int32_t(offset));
+        else {
+            // Inverted bc skips the whole slot; stanza does the far jump.
+            words[0] = insnBc(bo ^ 0x8, bi, JUMP_SLOT_INSNS * sizeof(uint32_t));
+            intptr_t offset1 = intptr_t(to) - intptr_t(location + 1);
+            if (fitsBranch26(offset1))
+                words[1] = insnB(int32_t(offset1), 0);
+            else {
+                words[1] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+                words[2] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+                words[3] = insnRldicr32_31(scratchRegister(), scratchRegister());
+                words[4] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+                words[5] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+                words[6] = insnMtctr(scratchRegister());
+                words[7] = insnBctr();
+            }
+        }
+        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+    }
+
+    // location = slot START (callLabel - 8 insns).  The branch stays in
+    // slot [7] so the return address is always location + 32.
+    static void applyCallSlot(uint32_t* location, void* to)
+    {
+        intptr_t offset = intptr_t(to) - intptr_t(location + 7);
+        uint32_t words[JUMP_SLOT_INSNS];
+        for (auto& w : words) w = PPC_NOP;
+        if (fitsBranch26(offset))
+            words[7] = insnB(int32_t(offset), 1);   // bl
+        else {
+            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
+            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+            words[5] = insnMtctr(scratchRegister());
+            words[7] = insnBctrl();
+        }
+        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+    }
+
+    // Dispatch: a jump-flavored location can be an unconditional slot (its
+    // [0] is a marker, b, lis-r12, or nop) or a conditional slot ([0] is bc).
+    static void applyJumpOrBranchSlot(uint32_t* location, void* to)
+    {
+        if (isBcInsn(location[0]))
+            applyBranchSlot(location, to);
+        else
+            applyJumpSlot(location, to);
+    }
+
+    // Patchable-jump sizes: the full 8-instruction slot.
+    static constexpr ptrdiff_t maxJumpReplacementSize() { return JUMP_SLOT_INSNS * sizeof(uint32_t); }
+    static constexpr ptrdiff_t patchableJumpSize()      { return JUMP_SLOT_INSNS * sizeof(uint32_t); }
 
     // Fill with the preferred PPC NOP (ori 0,0,0 = 0x60000000 per Power ISA
     // v2.07B Book II §3.2).  Required by AbstractMacroAssembler::fillNops.
@@ -2959,21 +3198,121 @@ public:
             machineCodeCopy<memcpyRepatch>(&ptr[i], &nop, sizeof(uint32_t));
     }
 
-    // Instance linkJump (label → label) — Phase 1 stub.
-    void linkJump(AssemblerLabel, AssemblerLabel) { RELEASE_ASSERT_NOT_REACHED(); }
+    // In-buffer link (both labels inside m_buffer; used by Jump::link).
+    void linkJump(AssemblerLabel from, AssemblerLabel to)
+    {
+        RELEASE_ASSERT(from.isSet() && to.isSet());
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(m_buffer.data()) + from.offset());
+        void* target = reinterpret_cast<uint8_t*>(m_buffer.data()) + to.offset();
+        applyJumpOrBranchSlot(location, target);
+    }
 
-    // Static patch routines — Phase 1 stubs; none are reachable until JIT emits real code.
-    static void linkJump(void*, AssemblerLabel, void*)    { RELEASE_ASSERT_NOT_REACHED(); }
-    static void linkCall(void*, AssemblerLabel, void*)    { RELEASE_ASSERT_NOT_REACHED(); }
-    static void linkPointer(void*, AssemblerLabel, void*) { RELEASE_ASSERT_NOT_REACHED(); }
+    static void linkJump(void* code, AssemblerLabel from, void* to)
+    {
+        RELEASE_ASSERT(from.isSet());
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + from.offset());
+        applyJumpOrBranchSlot(location, to);
+    }
 
-    static void relinkJump(void*, void*)     { RELEASE_ASSERT_NOT_REACHED(); }
-    static void relinkCall(void*, void*)     { RELEASE_ASSERT_NOT_REACHED(); }
-    static void relinkTailCall(void*, void*) { RELEASE_ASSERT_NOT_REACHED(); }
+    // `from` is the label AFTER the call slot (the return address).
+    static void linkCall(void* code, AssemblerLabel from, void* to)
+    {
+        RELEASE_ASSERT(from.isSet());
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + from.offset()) - JUMP_SLOT_INSNS;
+        applyCallSlot(location, to);
+    }
 
-    static void repatchPointer(void*, void*) { RELEASE_ASSERT_NOT_REACHED(); }
+    // `where` is the label AFTER a 5-instruction li64 (moveWithPatch).
+    static void linkPointer(void* code, AssemblerLabel where, void* valuePtr)
+    {
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + where.offset()) - 5;
+        RegisterID rt = RegisterID((location[0] >> 21) & 0x1F);
+        writeLi64(location, rt, uint64_t(valuePtr));
+    }
 
-    static void cacheFlush(void*, size_t)    { RELEASE_ASSERT_NOT_REACHED(); }
+    static void relinkJump(void* from, void* to)
+    {
+        uint32_t* location = static_cast<uint32_t*>(from);
+        applyJumpOrBranchSlot(location, to);
+        cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
+    }
+
+    // `from` is the return address of a call slot.
+    static void relinkCall(void* from, void* to)
+    {
+        uint32_t* location = static_cast<uint32_t*>(from) - JUMP_SLOT_INSNS;
+        applyCallSlot(location, to);
+        cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
+    }
+
+    static void relinkTailCall(void* from, void* to)
+    {
+        relinkJump(from, to);
+    }
+
+    // `where` points AT a 5-instruction li64 sequence.
+    static void repatchPointer(void* where, void* valuePtr)
+    {
+        uint32_t* location = static_cast<uint32_t*>(where);
+        RegisterID rt = RegisterID((location[0] >> 21) & 0x1F);
+        writeLi64(location, rt, uint64_t(valuePtr));
+        cacheFlush(location, 5 * sizeof(uint32_t));
+    }
+
+    static void* readPointer(void* where)
+    {
+        return reinterpret_cast<void*>(readLi64(static_cast<uint32_t*>(where)));
+    }
+
+    // `from` is the return address of a call slot; target only readable
+    // from the far (li64) form — near bl calls are decoded from the offset.
+    static void* readCallTarget(void* from)
+    {
+        uint32_t* location = static_cast<uint32_t*>(from) - JUMP_SLOT_INSNS;
+        if (isLisTo(location[0], scratchRegister()))
+            return reinterpret_cast<void*>(readLi64(location));
+        RELEASE_ASSERT(isBInsn(location[7]));
+        int32_t liField = int32_t(location[7] << 6) >> 6;           // sign-extend 26-bit
+        intptr_t offset = intptr_t(liField & ~3);
+        return reinterpret_cast<uint8_t*>(location + 7) + offset;
+    }
+
+    static void replaceWithVMHalt(void* where)
+    {
+        uint32_t* location = static_cast<uint32_t*>(where);
+        uint32_t trap = 0x7FE00008u;        // trap (tw 31,0,0) — Power ISA v2.07B §3.3.10.1
+        machineCodeCopy<memcpyRepatch>(location, &trap, sizeof(uint32_t));
+        cacheFlush(location, sizeof(uint32_t));
+    }
+
+    static void replaceWithJump(void* from, void* to)
+    {
+        // Watchpoint sites reserve maxJumpReplacementSize bytes (label()
+        // padding), so a full jump slot always fits.
+        uint32_t* location = static_cast<uint32_t*>(from);
+        applyJumpSlot(location, to);
+        cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
+    }
+
+    static void revertJumpReplacementToPatch(void* from, void* valuePtr)
+    {
+        // Restore the li64 that replaceWithJump overwrote (branchPtrWithPatch sites).
+        uint32_t* location = static_cast<uint32_t*>(from);
+        RegisterID rt = isLisTo(location[0], scratchRegister()) ? scratchRegister() : RegisterID((location[0] >> 21) & 0x1F);
+        uint32_t nops[JUMP_SLOT_INSNS];
+        for (auto& w : nops) w = PPC_NOP;
+        machineCodeCopy<memcpyRepatch>(location, nops, sizeof(nops));
+        writeLi64(location, rt, uint64_t(valuePtr));
+        cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
+    }
+
+    static void cacheFlush(void* code, size_t size)
+    {
+        // GCC's __builtin___clear_cache emits the dcbst/sync/icbi/isync
+        // sequence (or a syscall) appropriate for the host kernel.
+        char* begin = static_cast<char*>(code);
+        __builtin___clear_cache(begin, begin + size);
+    }
 
 private:
     AssemblerBuffer m_buffer;
