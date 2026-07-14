@@ -646,15 +646,46 @@ public:
 #endif
 
 #if CPU(PPC64LE)
-    // Phase 2 stub: real ELFv2 prologue/epilogue lives in MacroAssemblerPPC64
-    // (mflr/std/stdu/mtlr).  These wrappers exist only so this header compiles
-    // when ENABLE_JIT=ON; the JIT does not run yet on PPC64LE.
-    void emitFunctionPrologue()                                  { UNREACHABLE_FOR_PLATFORM(); }
-    void emitFunctionEpilogueWithEmptyFrame()                    { UNREACHABLE_FOR_PLATFORM(); }
-    void emitFunctionEpilogue()                                  { UNREACHABLE_FOR_PLATFORM(); }
-    ALWAYS_INLINE void preserveReturnAddressAfterCall(RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
-    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
-    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(Address)  { UNREACHABLE_FOR_PLATFORM(); }
+    // JSC frame convention, matching ARM64/RISCV64: the header is two
+    // machine words — [fp] = caller fp, [fp+8] = return pc.  The return
+    // address arrives in LR (bctrl/bl), so the prologue spills it via the
+    // assembler scratch.
+    void emitFunctionPrologue()
+    {
+        sub64(TrustedImm32(16), stackPointerRegister);
+        store64(framePointerRegister, Address(stackPointerRegister));
+        moveFromLR(dataTempRegister);
+        store64(dataTempRegister, Address(stackPointerRegister, 8));
+        move(stackPointerRegister, framePointerRegister);
+    }
+
+    void emitFunctionEpilogueWithEmptyFrame()
+    {
+        load64(Address(stackPointerRegister, 8), dataTempRegister);
+        moveToLR(dataTempRegister);
+        load64(Address(stackPointerRegister), framePointerRegister);
+        add64(TrustedImm32(16), stackPointerRegister);
+    }
+
+    void emitFunctionEpilogue()
+    {
+        move(framePointerRegister, stackPointerRegister);
+        emitFunctionEpilogueWithEmptyFrame();
+    }
+
+    ALWAYS_INLINE void preserveReturnAddressAfterCall(RegisterID reg)
+    {
+        moveFromLR(reg);
+    }
+    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(RegisterID reg)
+    {
+        moveToLR(reg);
+    }
+    ALWAYS_INLINE void restoreReturnAddressBeforeReturn(Address address)
+    {
+        load64(address, dataTempRegister);
+        moveToLR(dataTempRegister);
+    }
 #endif
 
     void getArityPadding(VM&, unsigned numberOfParameters, GPRReg argumentCountIncludingThisGPR, GPRReg paddingOutputGPR, GPRReg scratchGPR0, GPRReg scratchGPR1, JumpList& stackOverflow);
