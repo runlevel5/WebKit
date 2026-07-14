@@ -1310,22 +1310,32 @@ class Instruction
         # rshiftp/q/i src, dest  →  srdi/srwi (logical) or srawi (arithmetic)
         # urshiftp/q/i src, dest →  srdi/srwi (logical unsigned)
         # ------------------------------------------------------------------
+        # Shift-count masking: x86/arm64 hardware mask the count (&31 for
+        # 32-bit shifts, &63 for 64-bit) and JS semantics depend on it
+        # (5 << 32 === 5).  PPC sl/sr/sra use a wider count field where
+        # 32..63 (resp. 64..127) shifts out everything.  Mask register
+        # counts through r0 — architecturally safe as a pure data scratch
+        # in a self-contained two-instruction sequence (r0 is only special
+        # as a load/store base / addi operand), and r0 has no offlineasm
+        # register mapping.  Immediate counts are masked at generation time.
         when "lshiftp", "lshiftq"
             dst = operands[1].ppc64leOperand
             src = operands[0]
             if src.is_a?(Immediate)
-                $asm.puts "sldi #{dst}, #{dst}, #{src.value}"
+                $asm.puts "sldi #{dst}, #{dst}, #{src.value & 63}"
             else
-                $asm.puts "sld #{dst}, #{dst}, #{src.ppc64leOperand}"
+                $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 58"
+                $asm.puts "sld #{dst}, #{dst}, 0"
             end
 
         when "lshifti"
             dst = operands[1].ppc64leOperand
             src = operands[0]
             if src.is_a?(Immediate)
-                $asm.puts "slwi #{dst}, #{dst}, #{src.value}"
+                $asm.puts "slwi #{dst}, #{dst}, #{src.value & 31}"
             else
-                $asm.puts "slw #{dst}, #{dst}, #{src.ppc64leOperand}"
+                $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 59"
+                $asm.puts "slw #{dst}, #{dst}, 0"
             end
 
         when "rshiftp", "rshiftq"
@@ -1333,9 +1343,10 @@ class Instruction
             dst = operands[1].ppc64leOperand
             src = operands[0]
             if src.is_a?(Immediate)
-                $asm.puts "sradi #{dst}, #{dst}, #{src.value}"
+                $asm.puts "sradi #{dst}, #{dst}, #{src.value & 63}"
             else
-                $asm.puts "srad #{dst}, #{dst}, #{src.ppc64leOperand}"
+                $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 58"
+                $asm.puts "srad #{dst}, #{dst}, 0"
             end
 
         when "rshifti"
@@ -1346,17 +1357,19 @@ class Instruction
                 shamt = operands[1]
                 dst = operands[2].ppc64leOperand
                 if shamt.is_a?(Immediate)
-                    $asm.puts "srawi #{dst}, #{src}, #{shamt.value}"
+                    $asm.puts "srawi #{dst}, #{src}, #{shamt.value & 31}"
                 else
-                    $asm.puts "sraw #{dst}, #{src}, #{shamt.ppc64leOperand}"
+                    $asm.puts "rldicl 0, #{shamt.ppc64leOperand}, 0, 59"
+                    $asm.puts "sraw #{dst}, #{src}, 0"
                 end
             else
                 dst = operands[1].ppc64leOperand
                 src = operands[0]
                 if src.is_a?(Immediate)
-                    $asm.puts "srawi #{dst}, #{dst}, #{src.value}"
+                    $asm.puts "srawi #{dst}, #{dst}, #{src.value & 31}"
                 else
-                    $asm.puts "sraw #{dst}, #{dst}, #{src.ppc64leOperand}"
+                    $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 59"
+                    $asm.puts "sraw #{dst}, #{dst}, 0"
                 end
             end
             # sraw/srawi sign-extend the 32-bit result to 64; x86 sarl and
@@ -1381,18 +1394,20 @@ class Instruction
             dst = operands[1].ppc64leOperand
             src = operands[0]
             if src.is_a?(Immediate)
-                $asm.puts "srdi #{dst}, #{dst}, #{src.value}"
+                $asm.puts "srdi #{dst}, #{dst}, #{src.value & 63}"
             else
-                $asm.puts "srd #{dst}, #{dst}, #{src.ppc64leOperand}"
+                $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 58"
+                $asm.puts "srd #{dst}, #{dst}, 0"
             end
 
         when "urshifti"
             dst = operands[1].ppc64leOperand
             src = operands[0]
             if src.is_a?(Immediate)
-                $asm.puts "srwi #{dst}, #{dst}, #{src.value}"
+                $asm.puts "srwi #{dst}, #{dst}, #{src.value & 31}"
             else
-                $asm.puts "srw #{dst}, #{dst}, #{src.ppc64leOperand}"
+                $asm.puts "rldicl 0, #{src.ppc64leOperand}, 0, 59"
+                $asm.puts "srw #{dst}, #{dst}, 0"
             end
 
         # ------------------------------------------------------------------
