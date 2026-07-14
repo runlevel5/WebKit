@@ -422,6 +422,18 @@ def ppc64leLowerMalformedAddresses(list)
             next
         end
 
+        # truncated2is / cd2i need an FPR scratch: fctiwz must not clobber
+        # the source FPR (callers keep using the double), and the int32
+        # result must move via mfvsrwz, not a stack word whose offset the
+        # old lowering got wrong on LE.  Expand to a pseudo carrying a
+        # fresh FPR Tmp.
+        if node.opcode == "truncated2is" || node.opcode == "cd2i"
+            co   = node.codeOrigin
+            ftmp = Tmp.new(co, :fpr)
+            newList << Instruction.new(co, "ppc64le_truncd2i", [ops[0], ops[1], ftmp], node.annotation)
+            next
+        end
+
         # transferp/transferq src_addr, dst_addr — memory-to-memory pointer copy via Tmp.
         if node.opcode == "transferp" || node.opcode == "transferq"
             co  = node.codeOrigin
@@ -967,6 +979,9 @@ def ppc64leEmitFPBranch(cond, ops)
     when :gteq                                  # ordered ≥: NaN→no branch
         ppc64leEmitLongBranch("bgt", lbl)
         ppc64leEmitLongBranch("beq", lbl)
+    when :neq                                   # ordered ≠: LT or GT; NaN→no branch
+        ppc64leEmitLongBranch("blt", lbl)
+        ppc64leEmitLongBranch("bgt", lbl)
     when :neq_un                                # not-equal or NaN: bne = NOT EQ ✓
         ppc64leEmitLongBranch("bne", lbl)
     when :ltun                                  # < or NaN
@@ -1423,15 +1438,32 @@ class Instruction
             src = operands[0].ppc64leOperand
             $asm.puts "cntlzw #{dst}, #{src}"
 
+        # cnttzd/cnttzw are POWER9 (ISA 3.0) — outside the v2.07/POWER8
+        # baseline.  Use the classic isolate-lowest-bit identity instead:
+        # cnttz(x) = popcnt((x & -x) - 1); for x == 0 the mask becomes all
+        # ones and popcnt correctly yields the type width.  popcntd/popcntw
+        # are v2.06 (Power ISA v2.07B Book I §3.3.13) — POWER8-safe.
+        # r0 is a pure data scratch here (never a load/store base).
+        # NOTE: the decrement must be addic, NOT addi — addi's RA field
+        # reads r0 as literal zero (the (RA|0) ISA rule); addic reads the
+        # register.  Caught by the empirical harness: the addi version
+        # returned width for every input.
         when "countTrailingZerosp", "countTrailingZerosq"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "cnttzd #{dst}, #{src}"
+            $asm.puts "neg 0, #{src}"
+            $asm.puts "and 0, 0, #{src}"
+            $asm.puts "addic 0, 0, -1"
+            $asm.puts "popcntd #{dst}, 0"
 
         when "countTrailingZerosi"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "cnttzw #{dst}, #{src}"
+            $asm.puts "neg 0, #{src}"
+            $asm.puts "and 0, 0, #{src}"
+            $asm.puts "addic 0, 0, -1"
+            $asm.puts "rldicl 0, 0, 0, 32"
+            $asm.puts "popcntw #{dst}, 0"
 
         # ------------------------------------------------------------------
         # Zero/Sign extension
@@ -2236,13 +2268,24 @@ class Instruction
             $asm.puts "fcfidus #{dst}, #{dst}"
 
         when "cd2i", "truncated2is"
-            src = operands[0].ppc64leOperand
-            dst = operands[1].ppc64leOperand
-            $asm.puts "stdu 1, -16(1)"
-            $asm.puts "fctiwz #{src}, #{src}"
-            $asm.puts "stfd #{src}, 0(1)"
-            $asm.puts "lwz #{dst}, 4(1)"   # lower 32 bits of FP word (big-endian)
-            $asm.puts "addi 1, 1, 16"
+            # Rewritten to ppc64le_truncd2i (with an FPR Tmp) by
+            # ppc64leLowerMalformedAddresses; reaching here means the
+            # rewrite pass was bypassed.
+            raise "ppc64le: unlowered #{opcode} at #{codeOriginString}"
+
+        when "ppc64le_truncd2i"
+            # fctiwz (Power ISA v2.07B §4.6.7): truncate toward zero to
+            # int32; result lands in bits 32:63 of the target FPR with bits
+            # 0:31 undefined.  mfvsrwz (§7.6, POWER8 VSX) moves exactly that
+            # word zero-extended — matching x86 cvttsd2si Ed / arm64 fcvtzs
+            # Wn register semantics.  The previous lowering clobbered the
+            # source (fctiwz src, src) and read the UNDEFINED word on LE
+            # (lwz dst, 4(sp) reads FPR bits 0:31).
+            src  = operands[0].ppc64leOperand
+            dst  = operands[1].ppc64leOperand
+            ftmp = operands[2].ppc64leOperand
+            $asm.puts "fctiwz #{ftmp}, #{src}"
+            $asm.puts "mfvsrwz #{dst}, #{ftmp}"
 
         # Double-to-float truncation and double-to-double
         when "fd2q"
@@ -2271,9 +2314,9 @@ class Instruction
         when "bdeq", "bfeq"
             ppc64leEmitFPBranch(:eq, operands)
 
-        # ordered not-equal — not used yet; NaN → false
+        # ordered not-equal: branch on LT or GT; NaN sets FU only → no branch
         when "bdneq", "bfneq"
-            ppc64leEmitFPBranch(:lteq, operands)   # placeholder — should be blt+bgt
+            ppc64leEmitFPBranch(:neq, operands)
 
         # not-equal or NaN: bne = NOT EQ covers both cases ✓
         when "bdnequn", "bfnequn"
