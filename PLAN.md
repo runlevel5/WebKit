@@ -359,13 +359,31 @@ Gate: LLInt runs native on PPC64LE; `--useJIT=0` runs the full stress suite at s
 
 **~~Second known bug — silent integer overflow wraparound~~ FIXED 2026-07-14** (commits `0fee2379768d` + `17425477775f` + `9a44b9d5285e`). Two stacked miscompiles: (1) the `badd*o/bsub*o` lowerings used `addo./bso`, but the dot form copies the STICKY XER[SO] into CR0 (not this op's OV), `addic.` never sets OV at all, and `addo` detects 64-bit overflow which two int32s can never produce — so `baddio` never branched and int32 adds wrapped mod 2^32; (2) `ci2ds` converted the full 64-bit boxed register (`fcfid` of `0xFFFE…0001` = −(2⁴⁹−1)) instead of the signed low word, corrupting every int+double add once a value became a double. Fixed XER-free (extsw+cmpd exact-64-bit check for int32; sign algebra for int64; `mtvsrwa/wz/d + fcfid*` for the whole int→float family), all v2.07B/POWER8-safe, all formulas hardware-verified against `__builtin_*_overflow` oracles. The `s+=i` 100k loop prints 4999950000 exactly; mixed int/double accumulation exact. Also fixed en route: `offlineasm/ppc64le.rb` was missing from CMake's `OFFLINE_ASM` dependency list, so backend edits didn't regenerate LLIntAssembly.h (`ninja: no work to do`) — that masked one fix iteration entirely.
 
-**Diagnostic insight for the call-return crash**: the `op_call_return_location` segfault fires on the return path of the FIRST host call — `print(a); print(b)` prints `a` then dies before `b` every time. Single-`print` scripts appear to work only because the crash lands after their output. This makes a two-call script (`print(1); print(2)`) the minimal repro for the remaining Phase 2 bug.
+**~~Call-return crash~~ FIXED 2026-07-14** (commit `5ac37ef259e0`): the Ruby-replicated makePtrTagHash matched no real tag value, so every indirect call was classified JS and emitted a bare `bctrl`. Host functions live in the jsc binary (different module → different TOC); with no `ld r2, 24(r1)` after `bctrl`, the first TOC-relative dispatch (`ld rX, off(r2)` loads the opcode table) after any host-call return faulted. Both the two-print crash and the exit-path crash were this one bug. Fix: capture offlineasm's constexpr name→value resolution via a `Module#prepend` hook on `ConstExpr#resolveOffsets`, classify symbolically (JS-entry tags → bare call; C tags + all untagged register calls → full ELFv2 stanza with 32-byte linkage frame, r2 save/restore, r12=entry), raise on unknown tags. **Never replicate a WTF hash in Ruby.**
 
-**Latent bugs found during the overflow work (not yet exercised by any passing path — fix before their opcodes go live)**:
+**~~i-op width convention~~ FIXED 2026-07-14** (commit from this session): offlineasm `i` ops must zero-extend their 32-bit result into the 64-bit register (x86/arm64 hardware semantics). Our 64-bit lowerings let JSValue tag bits survive in the upper word; `op_switch_imm`'s `subi min, scrutinee` then indexed the jump table with `(numberTag<<2)+base` — every generator/async/iterator test crashed (generators dispatch resume points through a switch). All i-form ops now clear their result (`rldicl dst,dst,0,32`); hardware probe matrix documented in the arith section of ppc64le.rb. Inputs may stay dirty — 32-bit PPC ops read only low words and 64-bit op low-words equal the 32-bit result, so output-cleaning is a complete contract.
+
+**Also fixed 2026-07-14**: runtime defaults `useJIT=false`/`useWasm=false` for PPC64LE (`jitEnabledByDefault()`/`canUseWasm()` — stubs abort on tier-up; no validated wasm engine; both overridable with `--useJIT=1`/`--useWasm=1`); C-tagged tail calls (`jmp reg, CustomAccessorPtrTag`) set r12 for the callee's GEP; offlineasm `addis` (add-and-set-flags, misimplemented as PPC add-immediate-shifted) now raises pending a real consumer.
+
+### Phase 2 GATE MET — 2026-07-14
+
+Full `JSTests/stress` on power9, LLInt-only (`--no-jit`, useJIT/useWasm defaulted off): **19546 PASS / 18 FAIL (99.91%)**. Round 1 (before the i-op width fix) was 18619/945 — the width fix swept all 261 generator/async/iterator failures including the entire `waitasync` cluster. All 18 residual failures classified, **zero PPC64 codegen bugs**:
+
+| Failure | Count | Cause |
+|---|---|---|
+| `typed-array-oom-in-buffer-accessor` (all modes) | 4 | memoryHog + OOM-killer, known since Phase 0 |
+| `map-forEach`, `resizable-array-constant-folding` | 5 | need the WebAssembly global; useWasm defaults off on PPC64LE |
+| `many-substrings-of-rope…` | 1 | 64K-page memory threshold, known since Phase 0 |
+| `proxy-set-failure-inline-cache`, `call-var-args-phantom-*` (bytecode-cache mode) | 4 | upstream cross-platform bytecode-cache race under concurrent runners (Phase 0 investigation); all pass in isolation |
+| `*-on-non-promise`/`-on-non-regexp`, `string-replace-…` ("too many recompiles") | 4 | JIT-assumption tests running in default mode with useJIT defaulted off — test-harness artifact, not codegen |
+
+Remaining Phase 2 polish before calling it fully closed: remove the `call C/JS` classification comments if noise bothers, and IPInt validation (wasm) can begin any time — the offlineasm backend now assembles it. Otherwise: **proceed to Phase 3 (Baseline JIT)**.
+
+**Latent bugs (not yet exercised by any passing path — fix before their opcodes go live)**:
 - `cd2i`/`truncated2is` clobbers its source FPR (`fctiwz src, src`) AND reads the wrong half of the stored double on LE (`lwz dst, 4(1)` reads the ISA-undefined high word; fctiwz's int32 lands at offset 0 on LE). Correct shape: FPR-Tmp expansion + `fctiwz ftmp, src; mfvsrwz dst, ftmp` (both v2.07B).
 - `bdneq`/`bfneq` lowering is an explicit placeholder (`:lteq`) — ordered not-equal needs blt+bgt (NaN must not branch).
 - `countTrailingZerosi` emits `cnttzw`, a POWER9 (ISA 3.0) instruction, unguarded — violates the POWER8 baseline; needs a v2.07 fallback or a gate.
-- Broader `i`-op width-convention audit: x86/arm64 32-bit ops zero-extend results into the 64-bit register; several of our `i`-form lowerings (addi/subi/andi/…) leave upper bits from full 64-bit ops. LLInt mostly re-boxes explicitly, but every consumer that assumes x86-style zero-extension is a latent miscompile. Audit once the call crash is fixed.
+- Shift-by-register count masking: JS `<<`/`>>` need count&31 (x86/arm64 hardware behavior); PPC `slw`/`srw` yield 0 for counts 32–63. Unverified whether LLInt feeds unmasked counts — test `x << 32` semantics and add explicit masking if needed.
 
 **Hypothesis space being worked**: PPC64's call/return discipline vs LLInt's calling convention. `bctrl`/`bl` put the return address in LR (not on the stack like x86, and unlike ARM64 there is no guarantee the LLInt frame layout absorbs it the same way). Three commits circle this area:
 - `pushCalleeSaves` uses an 80-byte sub-frame to avoid LLInt frame overlap;
