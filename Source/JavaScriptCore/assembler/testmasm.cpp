@@ -5509,6 +5509,11 @@ void testProbeModifiesStackPointer(WTF::Function<void*(Probe::Context&)> compute
 #elif CPU(ARM64)
     auto flagsSPR = ARM64Registers::nzcv;
     uintptr_t flagsMask = 0xf0000000;
+#elif CPU(PPC64LE)
+    // CR2 field: nonvolatile, and nothing between the probes emits dot-form
+    // (CR-writing) instructions.
+    auto flagsSPR = PPC64Registers::cr;
+    uintptr_t flagsMask = 0x00f00000;
 #endif
 
     compileAndRun<void>([&] (CCallHelpers& jit) {
@@ -5685,6 +5690,10 @@ void testProbeModifiesStackValues()
 #elif CPU(ARM64)
     MacroAssembler::SPRegisterID flagsSPR = ARM64Registers::nzcv;
     uintptr_t flagsMask = 0xf0000000;
+#elif CPU(PPC64LE)
+    // See the PPC64LE note at the other flagsSPR definition above.
+    MacroAssembler::SPRegisterID flagsSPR = PPC64Registers::cr;
+    uintptr_t flagsMask = 0x00f00000;
 #endif
 
     compileAndRun<void>([&] (CCallHelpers& jit) {

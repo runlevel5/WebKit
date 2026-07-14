@@ -439,59 +439,639 @@ public:
     // one-at-a-time as the build iteration drives them.
     // ===================================================================
 
-    // 32-bit arithmetic (stub)
-    void add32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void add32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
-    void sub32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void sub32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
-    void mul32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void mul32(RegisterID, RegisterID, RegisterID)   { UNREACHABLE_FOR_PLATFORM(); }
+    // ===================================================================
+    // Phase 3 core — real implementations.
+    //
+    // Register contract: r11 (dataTemp) and r12 (memoryTemp) are the two
+    // assembler scratches (SM convention; neither is JIT-allocatable).
+    // Width contract: every 32-bit op zero-extends its result into the
+    // 64-bit register, matching x86 32-bit ops and arm64 Wn writes (and
+    // the offlineasm i-op contract established in Phase 2).
+    // Condition mapping: compares set CR0 (LT=bit0, GT=bit1, EQ=bit2);
+    // branches test one CR0 bit with bo=12 (bit set) / bo=4 (bit clear).
+    // ===================================================================
 
-    // 32-bit logical (stub)
-    void and32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void and32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
-    void or32(RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
-    void or32(TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
-    void xor32(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void xor32(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    static bool isInt16(int64_t v) { return v >= INT16_MIN && v <= INT16_MAX; }
+    static bool isUInt16(int64_t v) { return v >= 0 && v <= 0xFFFF; }
 
-    // 64-bit logical (stub)
-    void and64(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void and64(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
-    void or64(RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
-    void or64(TrustedImm32, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
-    void xor64(RegisterID, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
-    void xor64(TrustedImm32, RegisterID)             { UNREACHABLE_FOR_PLATFORM(); }
+    void zeroExtend32ToWordInternal(RegisterID reg)
+    {
+        m_assembler.rldicl(reg, reg, 0, 32);   // clrldi reg, reg, 32
+    }
 
-    // Shifts (stub) — PPC's shift count comes from a register or 5/6-bit imm.
-    void lshift32(RegisterID, RegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
-    void lshift32(TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
-    void rshift32(RegisterID, RegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
-    void rshift32(TrustedImm32, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); }
-    void urshift32(RegisterID, RegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
-    void urshift32(TrustedImm32, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); }
+    void moveImmToScratch(int64_t value, RegisterID scratch)
+    {
+        if (isInt16(value)) {
+            m_assembler.addi(scratch, PPC64Registers::r0, int16_t(value));
+            return;
+        }
+        if (value >= INT32_MIN && value <= INT32_MAX) {
+            m_assembler.lis(scratch, int16_t(uint16_t(uint64_t(value) >> 16)));
+            m_assembler.ori(scratch, scratch, uint16_t(value));
+            return;
+        }
+        m_assembler.lis(scratch, int16_t(uint16_t(uint64_t(value) >> 48)));
+        m_assembler.ori(scratch, scratch, uint16_t(uint64_t(value) >> 32));
+        m_assembler.rldicr(scratch, scratch, 32, 31);
+        m_assembler.oris(scratch, scratch, uint16_t(uint64_t(value) >> 16));
+        m_assembler.ori(scratch, scratch, uint16_t(value));
+    }
 
-    // Compare (stub) — sets `dest` to 0/1 based on the compare result.
-    void compare32(RelationalCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
-    void compare32(RelationalCondition, RegisterID, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
-    void compare64(RelationalCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
-    void compare64(RelationalCondition, RegisterID, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
+    // Compute an Address / BaseIndex effective address into `dest`
+    // (which may be memoryTempRegister).  Returns the base register and
+    // a 16-bit displacement usable directly in a D-form access when
+    // possible, else (dest, 0) after materializing.
+    struct ResolvedAddress {
+        RegisterID base;
+        int16_t offset;
+    };
 
-    // Branch & jump (stub) — return Jump for patching by the caller.
-    Jump branch32(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branch32(RelationalCondition, RegisterID, TrustedImm32) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branch64(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branch64(RelationalCondition, RegisterID, TrustedImm32) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchPtr(RelationalCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchAdd32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchAdd32(ResultCondition, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchSub32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchSub32(ResultCondition, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchMul32(ResultCondition, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchMul32(ResultCondition, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchTest8(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchTest16(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump jump() { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
+    ResolvedAddress resolveAddress(Address address, RegisterID scratch)
+    {
+        if (isInt16(address.offset) && address.base != PPC64Registers::r0)
+            return { address.base, int16_t(address.offset) };
+        moveImmToScratch(address.offset, scratch);
+        m_assembler.add(scratch, scratch, address.base);
+        return { scratch, 0 };
+    }
+
+    ResolvedAddress resolveAddress(BaseIndex address, RegisterID scratch)
+    {
+        if (address.scale) {
+            m_assembler.sldi(scratch, address.index, address.scale);
+            m_assembler.add(scratch, scratch, address.base);
+        } else
+            m_assembler.add(scratch, address.index, address.base);
+        if (isInt16(address.offset))
+            return { scratch, int16_t(address.offset) };
+        // Large offset: fold it in.
+        m_assembler.addis(scratch, scratch, int16_t((address.offset + 0x8000) >> 16));
+        return { scratch, int16_t(address.offset & 0xFFFF) };
+    }
+
+    // --- Condition plumbing --------------------------------------------
+
+    struct BranchBits { uint32_t bo; uint32_t bi; };
+
+    static BranchBits branchBitsFor(RelationalCondition cond)
+    {
+        // CR0 bit indices: 0=LT, 1=GT, 2=EQ.  bo 12 = branch if bit set,
+        // bo 4 = branch if bit clear.  Signed vs unsigned is chosen by the
+        // COMPARE (cmpw/cmpd vs cmplw/cmpld); the bits read the same.
+        switch (cond) {
+        case Equal:                 return { 12, 2 };
+        case NotEqual:              return { 4,  2 };
+        case Above:                 return { 12, 1 };
+        case AboveOrEqual:          return { 4,  0 };
+        case Below:                 return { 12, 0 };
+        case BelowOrEqual:          return { 4,  1 };
+        case GreaterThan:           return { 12, 1 };
+        case GreaterThanOrEqual:    return { 4,  0 };
+        case LessThan:              return { 12, 0 };
+        case LessThanOrEqual:       return { 4,  1 };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return { 20, 0 };
+    }
+
+    static bool isUnsignedCondition(RelationalCondition cond)
+    {
+        return cond == Above || cond == AboveOrEqual || cond == Below || cond == BelowOrEqual;
+    }
+
+    Jump makeBranch(RelationalCondition cond)
+    {
+        return Jump(m_assembler.emitUnlinkedBranch(branchBitsFor(cond).bo, branchBitsFor(cond).bi));
+    }
+
+    // Compare reg/reg or reg/imm at the given width, setting CR0.
+    void emitCompare32(RelationalCondition cond, RegisterID left, RegisterID right)
+    {
+        if (isUnsignedCondition(cond))
+            m_assembler.cmplw(0, left, right);
+        else
+            m_assembler.cmpw(0, left, right);
+    }
+
+    void emitCompare32(RelationalCondition cond, RegisterID left, TrustedImm32 right)
+    {
+        if (isUnsignedCondition(cond)) {
+            if (isUInt16(uint32_t(right.m_value)))
+                m_assembler.cmplwi(0, left, uint16_t(right.m_value));
+            else {
+                moveImmToScratch(uint32_t(right.m_value), dataTempRegister);
+                m_assembler.cmplw(0, left, dataTempRegister);
+            }
+        } else {
+            if (isInt16(right.m_value))
+                m_assembler.cmpwi(0, left, int16_t(right.m_value));
+            else {
+                moveImmToScratch(right.m_value, dataTempRegister);
+                m_assembler.cmpw(0, left, dataTempRegister);
+            }
+        }
+    }
+
+    void emitCompare64(RelationalCondition cond, RegisterID left, RegisterID right)
+    {
+        if (isUnsignedCondition(cond))
+            m_assembler.cmpld(0, left, right);
+        else
+            m_assembler.cmpd(0, left, right);
+    }
+
+    void emitCompare64(RelationalCondition cond, RegisterID left, TrustedImm64 right)
+    {
+        if (isUnsignedCondition(cond)) {
+            if (isUInt16(right.m_value))
+                m_assembler.cmpldi(0, left, uint16_t(right.m_value));
+            else {
+                moveImmToScratch(right.m_value, dataTempRegister);
+                m_assembler.cmpld(0, left, dataTempRegister);
+            }
+        } else {
+            if (isInt16(right.m_value))
+                m_assembler.cmpdi(0, left, int16_t(right.m_value));
+            else {
+                moveImmToScratch(right.m_value, dataTempRegister);
+                m_assembler.cmpd(0, left, dataTempRegister);
+            }
+        }
+    }
+
+    // Set dest = 0/1 from CR0 per cond: mfcr + rlwinm bit extraction,
+    // inverting via xori when the condition is a bit-clear sense.
+    void setFromCondition(RelationalCondition cond, RegisterID dest)
+    {
+        BranchBits bits = branchBitsFor(cond);
+        m_assembler.mfcr(dest);
+        // Rotate CR0 bit `bi` into the LSB: CR bit i (MSB numbering) sits
+        // at 32-bit position 31-i from LSB; rlwinm with SH = bi + 1.
+        m_assembler.rlwinm(dest, dest, bits.bi + 1, 31, 31);
+        if (bits.bo == 4)
+            m_assembler.xori(dest, dest, 1);
+    }
+
+    // --- 32-bit arithmetic ---------------------------------------------
+
+    void add32(RegisterID src, RegisterID dest) { add32(src, dest, dest); }
+    void add32(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.add(dest, a, b);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void add32(TrustedImm32 imm, RegisterID dest) { add32(imm, dest, dest); }
+    void add32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        if (isInt16(imm.m_value))
+            m_assembler.addi(dest, src, int16_t(imm.m_value));
+        else {
+            moveImmToScratch(imm.m_value, dataTempRegister);
+            m_assembler.add(dest, src, dataTempRegister);
+        }
+        zeroExtend32ToWordInternal(dest);
+    }
+
+    void sub32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.subf(dest, src, dest);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void sub32(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.subf(dest, right, left);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void sub32(TrustedImm32 imm, RegisterID dest)
+    {
+        add32(TrustedImm32(-imm.m_value), dest);
+    }
+
+    void mul32(RegisterID src, RegisterID dest) { mul32(src, dest, dest); }
+    void mul32(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.mullw(dest, a, b);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void mul32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        mul32(dataTempRegister, src, dest);
+    }
+
+    void neg32(RegisterID dest)
+    {
+        m_assembler.neg(dest, dest);
+        zeroExtend32ToWordInternal(dest);
+    }
+
+    // --- 32-bit logical -------------------------------------------------
+
+    void and32(RegisterID src, RegisterID dest) { and32(src, dest, dest); }
+    void and32(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.and_(dest, a, b);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void and32(TrustedImm32 imm, RegisterID dest) { and32(imm, dest, dest); }
+    void and32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        if (isUInt16(uint32_t(imm.m_value))) {
+            m_assembler.andi_(dest, src, uint16_t(imm.m_value));   // clears upper ✓
+            return;
+        }
+        moveImmToScratch(uint32_t(imm.m_value), dataTempRegister);
+        and32(dataTempRegister, src, dest);
+    }
+
+    void or32(RegisterID src, RegisterID dest) { or32(src, dest, dest); }
+    void or32(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.or_(dest, a, b);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void or32(TrustedImm32 imm, RegisterID dest) { or32(imm, dest, dest); }
+    void or32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        if (isUInt16(uint32_t(imm.m_value)) && src == dest) {
+            m_assembler.ori(dest, src, uint16_t(imm.m_value));
+            zeroExtend32ToWordInternal(dest);
+            return;
+        }
+        moveImmToScratch(uint32_t(imm.m_value), dataTempRegister);
+        or32(dataTempRegister, src, dest);
+    }
+
+    void xor32(RegisterID src, RegisterID dest) { xor32(src, dest, dest); }
+    void xor32(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.xor_(dest, a, b);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void xor32(TrustedImm32 imm, RegisterID dest) { xor32(imm, dest, dest); }
+    void xor32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        if (imm.m_value == -1) {
+            m_assembler.nor(dest, src, src);
+            zeroExtend32ToWordInternal(dest);
+            return;
+        }
+        moveImmToScratch(uint32_t(imm.m_value), dataTempRegister);
+        xor32(dataTempRegister, src, dest);
+    }
+
+    void not32(RegisterID dest)
+    {
+        m_assembler.nor(dest, dest, dest);
+        zeroExtend32ToWordInternal(dest);
+    }
+
+    // --- 64-bit logical -------------------------------------------------
+
+    void and64(RegisterID src, RegisterID dest) { m_assembler.and_(dest, src, dest); }
+    void and64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.and_(dest, a, b); }
+    void and64(TrustedImm32 imm, RegisterID dest)
+    {
+        if (isUInt16(uint32_t(imm.m_value)) && imm.m_value >= 0) {
+            m_assembler.andi_(dest, dest, uint16_t(imm.m_value));
+            return;
+        }
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);   // sign-extended
+        m_assembler.and_(dest, dataTempRegister, dest);
+    }
+    void and64(TrustedImm64 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.and_(dest, dataTempRegister, dest);
+    }
+
+    void or64(RegisterID src, RegisterID dest) { m_assembler.or_(dest, src, dest); }
+    void or64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.or_(dest, a, b); }
+    void or64(TrustedImm32 imm, RegisterID dest)
+    {
+        if (imm.m_value >= 0 && isUInt16(imm.m_value)) {
+            m_assembler.ori(dest, dest, uint16_t(imm.m_value));
+            return;
+        }
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        m_assembler.or_(dest, dataTempRegister, dest);
+    }
+    void or64(TrustedImm64 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.or_(dest, dataTempRegister, dest);
+    }
+
+    void xor64(RegisterID src, RegisterID dest) { m_assembler.xor_(dest, src, dest); }
+    void xor64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.xor_(dest, a, b); }
+    void xor64(TrustedImm32 imm, RegisterID dest)
+    {
+        if (imm.m_value == -1) {
+            m_assembler.nor(dest, dest, dest);
+            return;
+        }
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        m_assembler.xor_(dest, dataTempRegister, dest);
+    }
+
+    // --- Shifts (count masked like x86/arm64 hardware) -------------------
+
+    void lshift32(RegisterID shiftAmount, RegisterID dest) { lshift32(dest, shiftAmount, dest); }
+    void lshift32(RegisterID src, RegisterID shiftAmount, RegisterID dest)
+    {
+        m_assembler.rlwinm(dataTempRegister, shiftAmount, 0, 27, 31);   // count & 31
+        m_assembler.slw(dest, src, dataTempRegister);                    // slw zero-extends
+    }
+    void lshift32(TrustedImm32 imm, RegisterID dest) { lshift32(dest, imm, dest); }
+    void lshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        m_assembler.slwi(dest, src, imm.m_value & 31);
+    }
+
+    void rshift32(RegisterID shiftAmount, RegisterID dest) { rshift32(dest, shiftAmount, dest); }
+    void rshift32(RegisterID src, RegisterID shiftAmount, RegisterID dest)
+    {
+        m_assembler.rlwinm(dataTempRegister, shiftAmount, 0, 27, 31);
+        m_assembler.sraw(dest, src, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);                                // sraw sign-extends
+    }
+    void rshift32(TrustedImm32 imm, RegisterID dest) { rshift32(dest, imm, dest); }
+    void rshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        m_assembler.srawi(dest, src, imm.m_value & 31);
+        zeroExtend32ToWordInternal(dest);
+    }
+
+    void urshift32(RegisterID shiftAmount, RegisterID dest) { urshift32(dest, shiftAmount, dest); }
+    void urshift32(RegisterID src, RegisterID shiftAmount, RegisterID dest)
+    {
+        m_assembler.rlwinm(dataTempRegister, shiftAmount, 0, 27, 31);
+        m_assembler.srw(dest, src, dataTempRegister);                    // srw zero-extends
+    }
+    void urshift32(TrustedImm32 imm, RegisterID dest) { urshift32(dest, imm, dest); }
+    void urshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        if (!(imm.m_value & 31)) {
+            move(src, dest);
+            zeroExtend32ToWordInternal(dest);
+            return;
+        }
+        m_assembler.srwi(dest, src, imm.m_value & 31);
+    }
+
+    // --- Compare-to-register ---------------------------------------------
+
+    void compare32(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID dest)
+    {
+        emitCompare32(cond, left, right);
+        setFromCondition(cond, dest);
+    }
+    void compare32(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
+    {
+        emitCompare32(cond, left, right);
+        setFromCondition(cond, dest);
+    }
+    void compare64(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID dest)
+    {
+        emitCompare64(cond, left, right);
+        setFromCondition(cond, dest);
+    }
+    void compare64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
+    {
+        emitCompare64(cond, left, TrustedImm64(right.m_value));
+        setFromCondition(cond, dest);
+    }
+
+    // --- Branches ---------------------------------------------------------
+
+    Jump branch32(RelationalCondition cond, RegisterID left, RegisterID right)
+    {
+        emitCompare32(cond, left, right);
+        return makeBranch(cond);
+    }
+    Jump branch32(RelationalCondition cond, RegisterID left, TrustedImm32 right)
+    {
+        emitCompare32(cond, left, right);
+        return makeBranch(cond);
+    }
+
+    Jump branch64(RelationalCondition cond, RegisterID left, RegisterID right)
+    {
+        emitCompare64(cond, left, right);
+        return makeBranch(cond);
+    }
+    Jump branch64(RelationalCondition cond, RegisterID left, TrustedImm32 right)
+    {
+        emitCompare64(cond, left, TrustedImm64(right.m_value));
+        return makeBranch(cond);
+    }
+    Jump branch64(RelationalCondition cond, RegisterID left, TrustedImm64 right)
+    {
+        emitCompare64(cond, left, right);
+        return makeBranch(cond);
+    }
+
+    Jump branchPtr(RelationalCondition cond, RegisterID left, RegisterID right)
+    {
+        return branch64(cond, left, right);
+    }
+
+    // ResultCondition-based test branch: and the operands, test CR0.
+    Jump branchTestImpl32(ResultCondition cond, RegisterID valueLow32)
+    {
+        // valueLow32 has the 32-bit test value zero-extended.
+        switch (cond) {
+        case Zero:
+            m_assembler.cmpdi(0, valueLow32, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 2));
+        case NonZero:
+            m_assembler.cmpdi(0, valueLow32, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        case Signed:
+            m_assembler.cmpwi(0, valueLow32, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 0));
+        case PositiveOrZero:
+            m_assembler.cmpwi(0, valueLow32, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 0));
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            return Jump();
+        }
+    }
+
+    Jump branchTest32(ResultCondition cond, RegisterID reg, RegisterID mask)
+    {
+        m_assembler.and_(dataTempRegister, reg, mask);
+        zeroExtend32ToWordInternal(dataTempRegister);
+        return branchTestImpl32(cond, dataTempRegister);
+    }
+    Jump branchTest32(ResultCondition cond, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        if (mask.m_value == -1) {
+            m_assembler.rldicl(dataTempRegister, reg, 0, 32);
+            return branchTestImpl32(cond, dataTempRegister);
+        }
+        if (isUInt16(uint32_t(mask.m_value))) {
+            m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
+            return branchTestImpl32(cond, dataTempRegister);
+        }
+        moveImmToScratch(uint32_t(mask.m_value), dataTempRegister);
+        return branchTest32(cond, reg, dataTempRegister);
+    }
+
+    Jump branchTest64(ResultCondition cond, RegisterID reg, RegisterID mask)
+    {
+        m_assembler.and_(dataTempRegister, reg, mask);
+        return branchTest64Impl(cond, dataTempRegister);
+    }
+    Jump branchTest64(ResultCondition cond, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        if (mask.m_value == -1)
+            return branchTest64Impl(cond, reg);
+        if (mask.m_value >= 0 && isUInt16(mask.m_value)) {
+            m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
+            return branchTest64Impl(cond, dataTempRegister);
+        }
+        moveImmToScratch(int64_t(mask.m_value), dataTempRegister);
+        return branchTest64(cond, reg, dataTempRegister);
+    }
+    Jump branchTest64Impl(ResultCondition cond, RegisterID value)
+    {
+        switch (cond) {
+        case Zero:
+            m_assembler.cmpdi(0, value, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 2));
+        case NonZero:
+            m_assembler.cmpdi(0, value, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        case Signed:
+            m_assembler.cmpdi(0, value, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 0));
+        case PositiveOrZero:
+            m_assembler.cmpdi(0, value, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 0));
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            return Jump();
+        }
+    }
+
+    // branchAdd32 / branchSub32 / branchMul32 with Overflow use the
+    // exact-64-bit technique validated in the Phase 2 offlineasm work:
+    // do the arithmetic on sign-extended copies; int32 overflow iff the
+    // 64-bit result differs from its own low-word sign extension.
+    Jump branchAdd32(ResultCondition cond, RegisterID src, RegisterID dest) { return branchAdd32(cond, src, dest, dest); }
+    Jump branchAdd32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            m_assembler.extsw(dataTempRegister, a);
+            m_assembler.extsw(memoryTempRegister, b);
+            m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.rldicl(dest, dataTempRegister, 0, 32);           // wrapped result, zero-extended
+            m_assembler.extsw(memoryTempRegister, dataTempRegister);
+            m_assembler.cmpd(0, memoryTempRegister, dataTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));           // != → overflow
+        }
+        add32(a, b, dest);
+        return branchTestImpl32(resultConditionForArith(cond), dest);
+    }
+    Jump branchAdd32(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchAdd32(cond, memoryTempRegister, dest, dest);
+    }
+    Jump branchAdd32(ResultCondition cond, TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchAdd32(cond, memoryTempRegister, src, dest);
+    }
+
+    Jump branchSub32(ResultCondition cond, RegisterID src, RegisterID dest) { return branchSub32(cond, dest, src, dest); }
+    Jump branchSub32(ResultCondition cond, RegisterID left, RegisterID right, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            m_assembler.extsw(dataTempRegister, left);
+            m_assembler.extsw(memoryTempRegister, right);
+            m_assembler.subf(dataTempRegister, memoryTempRegister, dataTempRegister);
+            m_assembler.rldicl(dest, dataTempRegister, 0, 32);
+            m_assembler.extsw(memoryTempRegister, dataTempRegister);
+            m_assembler.cmpd(0, memoryTempRegister, dataTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        }
+        sub32(left, right, dest);
+        return branchTestImpl32(resultConditionForArith(cond), dest);
+    }
+    Jump branchSub32(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchSub32(cond, dest, memoryTempRegister, dest);
+    }
+
+    Jump branchMul32(ResultCondition cond, RegisterID src, RegisterID dest) { return branchMul32(cond, src, dest, dest); }
+    Jump branchMul32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            m_assembler.extsw(dataTempRegister, a);
+            m_assembler.extsw(memoryTempRegister, b);
+            m_assembler.mulld(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.rldicl(dest, dataTempRegister, 0, 32);
+            m_assembler.extsw(memoryTempRegister, dataTempRegister);
+            m_assembler.cmpd(0, memoryTempRegister, dataTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        }
+        mul32(a, b, dest);
+        return branchTestImpl32(resultConditionForArith(cond), dest);
+    }
+
+    static ResultCondition resultConditionForArith(ResultCondition cond)
+    {
+        RELEASE_ASSERT(cond == Zero || cond == NonZero || cond == Signed || cond == PositiveOrZero);
+        return cond;
+    }
+
+    Jump jump()
+    {
+        return Jump(m_assembler.emitUnlinkedJump());
+    }
+
+    // branchTest8/16: load the value, apply the mask, sign-extend, then
+    // test as 64-bit.  Sign extension makes Signed/PositiveOrZero read the
+    // narrow value's sign bit and is neutral for Zero/NonZero.
+    Jump branchTest8(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dataTempRegister, r.offset, r.base);
+        return finishNarrowTest(cond, mask, 0xFF, /*halfword*/ false);
+    }
+    Jump branchTest8(ResultCondition cond, BaseIndex address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dataTempRegister, r.offset, r.base);
+        return finishNarrowTest(cond, mask, 0xFF, false);
+    }
+    Jump branchTest16(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dataTempRegister, r.offset, r.base);
+        return finishNarrowTest(cond, mask, 0xFFFF, true);
+    }
+    Jump branchTest16(ResultCondition cond, BaseIndex address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dataTempRegister, r.offset, r.base);
+        return finishNarrowTest(cond, mask, 0xFFFF, true);
+    }
+    Jump finishNarrowTest(ResultCondition cond, TrustedImm32 mask, uint32_t widthMask, bool halfword)
+    {
+        if (mask.m_value != -1)
+            m_assembler.andi_(dataTempRegister, dataTempRegister, uint16_t(uint32_t(mask.m_value) & widthMask));
+        if (halfword)
+            m_assembler.extsh(dataTempRegister, dataTempRegister);
+        else
+            m_assembler.extsb(dataTempRegister, dataTempRegister);
+        return branchTest64Impl(cond, dataTempRegister);
+    }
+
     void farJump(RegisterID, PtrTag)                                       { UNREACHABLE_FOR_PLATFORM(); }
     void farJump(Address, PtrTag)                                          { UNREACHABLE_FOR_PLATFORM(); }
     void farJump(BaseIndex, PtrTag)                                        { UNREACHABLE_FOR_PLATFORM(); }
@@ -520,6 +1100,8 @@ public:
     void storeDouble(FPRegisterID, Address)          { UNREACHABLE_FOR_PLATFORM(); }
     void storeDouble(FPRegisterID, BaseIndex)        { UNREACHABLE_FOR_PLATFORM(); }
     void loadFloat(Address, FPRegisterID)            { UNREACHABLE_FOR_PLATFORM(); }
+    void loadFloat(TrustedImmPtr, FPRegisterID)      { UNREACHABLE_FOR_PLATFORM(); }
+    void negateFloat(FPRegisterID, FPRegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
     void storeFloat(FPRegisterID, Address)           { UNREACHABLE_FOR_PLATFORM(); }
     void storeFloat(FPRegisterID, BaseIndex)         { UNREACHABLE_FOR_PLATFORM(); }
     void loadVector(Address, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); }
@@ -529,7 +1111,6 @@ public:
     Jump branch32(RelationalCondition, AbsoluteAddress, RegisterID)         { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch32(RelationalCondition, RegisterID, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch32(RelationalCondition, Address, TrustedImm32)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchTest32(ResultCondition, RegisterID, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch8(RelationalCondition, Address, TrustedImm32)                 { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch16(RelationalCondition, Address, TrustedImm32)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
@@ -567,8 +1148,6 @@ public:
     void neg64(RegisterID, RegisterID)                           { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional or64 overloads (MacroAssembler::orPtr)
-    void or64(TrustedImm64, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
-    void or64(RegisterID, RegisterID, RegisterID)                { UNREACHABLE_FOR_PLATFORM(); }
     void or64(TrustedImm32, RegisterID, RegisterID)              { UNREACHABLE_FOR_PLATFORM(); }
 
     // rotateRight64 (MacroAssembler::rotateRightPtr)
@@ -610,15 +1189,12 @@ public:
     void test64(ResultCondition, RegisterID, RegisterID, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional branch64 overloads (MacroAssembler::branchPtr)
-    Jump branch64(RelationalCondition, RegisterID, TrustedImm64)            { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch64(RelationalCondition, RegisterID, Address)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch64(RelationalCondition, Address, RegisterID)                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch64(RelationalCondition, AbsoluteAddress, RegisterID)          { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branch64(RelationalCondition, Address, TrustedImm64)                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // branchTest64 (MacroAssembler::branchTestPtr)
-    Jump branchTest64(ResultCondition, RegisterID, RegisterID)                                    { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchTest64(ResultCondition, RegisterID, TrustedImm32 = TrustedImm32(-1))               { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchTest64(ResultCondition, Address, TrustedImm32 = TrustedImm32(-1))                  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchTest64(ResultCondition, Address, RegisterID)                                       { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchTest64(ResultCondition, BaseIndex, TrustedImm32 = TrustedImm32(-1))                { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
@@ -639,7 +1215,6 @@ public:
 
     // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
     void and64(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void and64(TrustedImm64, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
     void and64(TrustedImm64, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
     void xor64(TrustedImm64, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
     void or64(TrustedImm64, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
@@ -654,25 +1229,16 @@ public:
     Jump branchDouble(DoubleCondition, FPRegisterID, FPRegisterID)           { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // 3-operand 32-bit forms (MacroAssembler blinding helpers + lea32).
-    void add32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void and32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void or32(TrustedImm32, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
     void sub32(RegisterID, TrustedImm32, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void xor32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void mul32(TrustedImm32, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 
     // 3-operand 32-bit shifts.
-    void lshift32(RegisterID, TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
     void lshift32(TrustedImm32, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
-    void rshift32(RegisterID, TrustedImm32, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
     void rshift32(TrustedImm32, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
-    void urshift32(RegisterID, TrustedImm32, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
     void urshift32(TrustedImm32, RegisterID, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
 
     // Additional branchAdd32 / branchMul32 / branchSub32 overloads.
     Jump branchAdd32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchMul32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
-    Jump branchSub32(ResultCondition, RegisterID, RegisterID, RegisterID)    { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
     Jump branchSub32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // nearCall / nearTailCall — required by MacroAssembler::nearCallThunk/nearTailCallThunk.
@@ -747,7 +1313,6 @@ public:
     // All UNREACHABLE_FOR_PLATFORM(); the JIT does not run yet on PPC64LE.
 
     // 32-bit negate
-    void neg32(RegisterID)                                                 { UNREACHABLE_FOR_PLATFORM(); }
     void neg32(RegisterID, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
 
     // load8SignedExtendTo32 / load16 / load16SignedExtendTo32
@@ -775,12 +1340,6 @@ public:
     Jump branchDoubleZeroOrNaN(FPRegisterID, FPRegisterID)                 { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // 32-bit arithmetic — 3-arg forms (DFGSpeculativeJIT.h:641-679)
-    void and32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void or32(RegisterID, RegisterID, RegisterID)                          { UNREACHABLE_FOR_PLATFORM(); }
-    void xor32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
-    void rshift32(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
-    void lshift32(RegisterID, RegisterID, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
-    void urshift32(RegisterID, RegisterID, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
 
     // add32 with TrustedImm32 + Address — DFG/IC use.
     void add32(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
@@ -829,6 +1388,7 @@ public:
     void test32(ResultCondition, Address, TrustedImm32, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
 
     // or16 / add8 — small-width arithmetic with memory destination (typed array writes).
+    void or8(TrustedImm32, AbsoluteAddress)                                { UNREACHABLE_FOR_PLATFORM(); }
     void or16(TrustedImm32, AbsoluteAddress)                               { UNREACHABLE_FOR_PLATFORM(); }
     void or16(TrustedImm32, Address)                                      { UNREACHABLE_FOR_PLATFORM(); }
     void or16(RegisterID, AbsoluteAddress)                                 { UNREACHABLE_FOR_PLATFORM(); }
@@ -855,7 +1415,6 @@ public:
     Jump branchTest32(ResultCondition, AbsoluteAddress, TrustedImm32 = TrustedImm32(-1)) { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // 3-arg add32 — DFGSpeculativeJIT.cpp:2693.
-    void add32(RegisterID, RegisterID, RegisterID)                         { UNREACHABLE_FOR_PLATFORM(); }
 
     // FP truncate / convert / zero-to-double — DFGSpeculativeJIT.cpp.
     enum BranchTruncateType { BranchIfTruncateFailed, BranchIfTruncateSuccessful };
@@ -876,10 +1435,8 @@ public:
     void compare8(RelationalCondition, Address, TrustedImm32, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); }
     void compare8(RelationalCondition, Address, RegisterID, RegisterID)    { UNREACHABLE_FOR_PLATFORM(); }
     void not32(RegisterID, RegisterID)                                     { UNREACHABLE_FOR_PLATFORM(); }
-    void not32(RegisterID)                                                 { UNREACHABLE_FOR_PLATFORM(); }
 
     // 4-arg branchAdd32 (ResultCondition, src1, src2, dest).
-    Jump branchAdd32(ResultCondition, RegisterID, RegisterID, RegisterID)  { UNREACHABLE_FOR_PLATFORM(); return Jump(); }
 
     // Imm64 overloads — Imm64 is privately derived from TrustedImm64, so callers
     // pass it explicitly for "untrusted" 64-bit immediates (range-check checked).
@@ -1057,9 +1614,21 @@ public:
     void load16Unaligned(BaseIndex, RegisterID)                            { UNREACHABLE_FOR_PLATFORM(); }
     void load32WithUnalignedHalfWords(BaseIndex, RegisterID)               { UNREACHABLE_FOR_PLATFORM(); }
 
+    // Sign-extending loads to 64.
+    void load8SignedExtendTo64(Address, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
+    void load8SignedExtendTo64(BaseIndex, RegisterID)                      { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo64(Address, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo64(BaseIndex, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void load32SignedExtendTo64(Address, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
+    void load32SignedExtendTo64(BaseIndex, RegisterID)                     { UNREACHABLE_FOR_PLATFORM(); }
+    void load8SignedExtendTo64(const void*, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+    void load16SignedExtendTo64(const void*, RegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
+    void load32SignedExtendTo64(const void*, RegisterID)                   { UNREACHABLE_FOR_PLATFORM(); }
+
     // loadPair32 / loadPair64 — paired loads.
     void loadPair32(RegisterID, RegisterID, RegisterID, RegisterID)        { UNREACHABLE_FOR_PLATFORM(); }
     void loadPair32(RegisterID, RegisterID, RegisterID)                    { UNREACHABLE_FOR_PLATFORM(); }
+    void loadPair32(RegisterID, TrustedImm32, RegisterID, RegisterID)     { UNREACHABLE_FOR_PLATFORM(); }
     void loadPair32(Address, RegisterID, RegisterID)                       { UNREACHABLE_FOR_PLATFORM(); }
 
     // Bitfield extract — YarrJIT BoyerMoore SIMD path.
@@ -1067,7 +1636,6 @@ public:
     void extractUnsignedBitfield64(RegisterID, TrustedImm32, TrustedImm32, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
 
     // sub32 3-arg form (RegisterID,RegisterID,RegisterID) — DFG.
-    void sub32(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // moveConditionally64 — conditional move based on 64-bit compare.
     void moveConditionally64(RelationalCondition, RegisterID, RegisterID, RegisterID, RegisterID) { UNREACHABLE_FOR_PLATFORM(); }
@@ -1079,8 +1647,6 @@ public:
     void transferPtr(Address, Address)                                    { UNREACHABLE_FOR_PLATFORM(); }
 
     // 64-bit logical 3-arg form — JITInlines.h. (or64 RegisterID×3 already declared above.)
-    void and64(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
-    void xor64(RegisterID, RegisterID, RegisterID)                        { UNREACHABLE_FOR_PLATFORM(); }
 
     // storePtrWithPatch / storePtr-with-patch + patch label — CallLinkInfo.cpp.
     DataLabelPtr storePtrWithPatch(TrustedImmPtr, Address)                { UNREACHABLE_FOR_PLATFORM(); return DataLabelPtr(); }

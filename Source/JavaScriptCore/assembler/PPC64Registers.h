@@ -100,7 +100,11 @@
     macro(fp, "fp"_s, r31)
 
 #define FOR_EACH_SP_REGISTER(macro) \
-    macro(pc, "pc"_s)
+    macro(pc, "pc"_s)                \
+    macro(cr, "cr"_s)                \
+    macro(xer, "xer"_s)              \
+    macro(lr, "lr"_s)                \
+    macro(ctr, "ctr"_s)
 
 #define FOR_EACH_FP_REGISTER(macro) \
     macro(f0, "f0"_s, 0, 0)          \
