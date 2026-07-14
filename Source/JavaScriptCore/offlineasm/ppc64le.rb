@@ -798,6 +798,14 @@ end
 # ±32 MB.  We invert the condition and skip over a long-form `b` so any
 # target reachable by `b` works.  The cost is +1 fall-through instruction.
 # -------------------------------------------------------------------------
+# Zero-extend a 32-bit result into the full 64-bit register (rldicl SH=0,
+# MB=32 = clrldi).  See the width-contract comment at the arithmetic section:
+# offlineasm "i" ops must match x86/arm64 semantics where 32-bit writes
+# zero the upper word.
+def ppc64leZeroExtend32(dst)
+    $asm.puts "rldicl #{dst}, #{dst}, 0, 32"
+end
+
 $ppc64leLongBranchCounter = 0
 PPC64LE_BRANCH_INVERSE = {
     "blt" => "bge", "bge" => "blt",
@@ -1103,13 +1111,32 @@ class Instruction
 
         # ------------------------------------------------------------------
         # Arithmetic — add
+        #
+        # Width contract for every offlineasm "i" (32-bit) op below: the
+        # 32-bit result is ZERO-EXTENDED into the 64-bit register, exactly
+        # like x86 32-bit ops and arm64 Wn writes.  LLInt asm relies on this
+        # implicitly — e.g. op_switch_imm computes `subi min, scrutinee` on a
+        # value whose upper word still holds JSValue tag bits and then uses
+        # the full register as a jump-table index; without the implicit
+        # truncation the numberTag survives and the table load dereferences
+        # (tag << 2) + base (the generator-suite crash, 2026-07-14).  PPC
+        # 64-bit arith (add/subf/neg/nor/or/xor/and) leaves the upper word
+        # dirty and sraw sign-extends (hardware-verified probe matrix on the
+        # POWER9 box), so each i-op clears its result via ppc64leZeroExtend32.
+        # slw/srw/slwi/srwi/andi./lwz/lhz/lbz/cntlzw zero-extend natively.
+        # Inputs may be dirty: 32-bit PPC ops read only the low word, and the
+        # low word of a 64-bit add/sub/mul/logic result equals the 32-bit
+        # result, so output-cleaning is a complete contract.
         # ------------------------------------------------------------------
         when "addp", "addq", "addi"
             ppc64leEmitArith("add", "addi", self)
+            ppc64leZeroExtend32(operands.last.ppc64leOperand) if opcode == "addi"
 
         when "addis"
-            # addis is the immediate-shifted variant (value << 16)
-            ppc64leEmitArith("add", "addis", self)
+            # offlineasm addis = "add integers and set a flag" (x86/arm64
+            # width-table op) — NOT PPC's add-immediate-shifted.  No LLInt
+            # source uses it today; implement against a real consumer.
+            raise "ppc64le: offlineasm addis (add-and-set-flags) not implemented at #{codeOriginString}"
 
         # ------------------------------------------------------------------
         # Arithmetic — subtract
@@ -1140,6 +1167,7 @@ class Instruction
             else
                 raise "ppc64le: unexpected operand count for #{opcode}"
             end
+            ppc64leZeroExtend32(operands.last.ppc64leOperand) if opcode == "subi"
 
         # ------------------------------------------------------------------
         # Arithmetic — multiply
@@ -1170,15 +1198,23 @@ class Instruction
                     raise "ppc64le: muli immediate #{src.value} out of 16-bit range at #{codeOriginString}"
                 end
             else
+                # mullw writes the full 64-bit product of the low words —
+                # the high word holds product overflow bits, not zeros.
                 $asm.puts "mullw #{dst}, #{dst}, #{src.ppc64leOperand}"
             end
+            ppc64leZeroExtend32(dst)
 
         # ------------------------------------------------------------------
         # Arithmetic — negate
         # ------------------------------------------------------------------
-        when "negp", "negq", "negi"
+        when "negp", "negq"
             dst = operands[0].ppc64leOperand
             $asm.puts "neg #{dst}, #{dst}"
+
+        when "negi"
+            dst = operands[0].ppc64leOperand
+            $asm.puts "neg #{dst}, #{dst}"
+            ppc64leZeroExtend32(dst)
 
         # ------------------------------------------------------------------
         # Bitwise: and / or / xor / not
@@ -1211,6 +1247,7 @@ class Instruction
                     $asm.puts "and #{dst}, #{src.ppc64leOperand}, #{dst}"
                 end
             end
+            ppc64leZeroExtend32(dst) if opcode == "andi"
 
         when "orp", "orq", "ori"
             ops = operands
@@ -1233,6 +1270,7 @@ class Instruction
                     $asm.puts "or #{dst}, #{src.ppc64leOperand}, #{dst}"
                 end
             end
+            ppc64leZeroExtend32(dst) if opcode == "ori"
 
         when "xorp", "xorq", "xori"
             ops = operands
@@ -1255,10 +1293,16 @@ class Instruction
                     $asm.puts "xor #{dst}, #{src.ppc64leOperand}, #{dst}"
                 end
             end
+            ppc64leZeroExtend32(dst) if opcode == "xori"
 
-        when "notp", "notq", "noti"
+        when "notp", "notq"
             dst = operands[0].ppc64leOperand
             $asm.puts "nor #{dst}, #{dst}, #{dst}"
+
+        when "noti"
+            dst = operands[0].ppc64leOperand
+            $asm.puts "nor #{dst}, #{dst}, #{dst}"
+            ppc64leZeroExtend32(dst)
 
         # ------------------------------------------------------------------
         # Shifts
@@ -1315,6 +1359,9 @@ class Instruction
                     $asm.puts "sraw #{dst}, #{dst}, #{src.ppc64leOperand}"
                 end
             end
+            # sraw/srawi sign-extend the 32-bit result to 64; x86 sarl and
+            # arm64 asr Wn zero-extend.
+            ppc64leZeroExtend32(operands.last.ppc64leOperand)
 
         when "smulli"
             # smulli src1, src2, dst_lo, dst_hi
@@ -1385,15 +1432,29 @@ class Instruction
             src = operands[0].ppc64leOperand
             $asm.puts "extsw #{dst}, #{src}"
 
-        when "sxb2i", "sxb2q", "sxb2p"
+        when "sxb2q", "sxb2p"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "extsb #{dst}, #{src}"
 
-        when "sxh2i", "sxh2q", "sxh2p"
+        when "sxb2i"
+            # movsbl semantics: sign-extend byte to 32, zero-extend to 64.
+            dst = operands[1].ppc64leOperand
+            src = operands[0].ppc64leOperand
+            $asm.puts "extsb #{dst}, #{src}"
+            ppc64leZeroExtend32(dst)
+
+        when "sxh2q", "sxh2p"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "extsh #{dst}, #{src}"
+
+        when "sxh2i"
+            # movswl semantics: sign-extend half to 32, zero-extend to 64.
+            dst = operands[1].ppc64leOperand
+            src = operands[0].ppc64leOperand
+            $asm.puts "extsh #{dst}, #{src}"
+            ppc64leZeroExtend32(dst)
 
         # ------------------------------------------------------------------
         # Loads
@@ -1433,11 +1494,14 @@ class Instruction
             $asm.puts "lbz #{dst}, #{addr.ppc64leOperand}"
 
         when "loadbs", "load8SignedExtendTo32", "loadbsi"
+            # movsbl semantics: sign-extend byte to 32, zero-extend to 64
+            # (loadbsq below keeps the full 64-bit sign extension).
             addr = operands[0]
             dst  = operands[1].ppc64leOperand
             ppc64leValidateDOffset(addr.offset.value, codeOriginString)
             $asm.puts "lbz #{dst}, #{addr.ppc64leOperand}"
             $asm.puts "extsb #{dst}, #{dst}"
+            ppc64leZeroExtend32(dst)
 
         when "loadbsq"
             addr = operands[0]
@@ -1453,10 +1517,13 @@ class Instruction
             $asm.puts "lhz #{dst}, #{addr.ppc64leOperand}"
 
         when "loadhs", "load16SignedExtendTo32", "loadhsi"
+            # movswl semantics: lha sign-extends to 64, so clear the upper
+            # word (loadhsq below keeps the full 64-bit sign extension).
             addr = operands[0]
             dst  = operands[1].ppc64leOperand
             ppc64leValidateDOffset(addr.offset.value, codeOriginString)
             $asm.puts "lha #{dst}, #{addr.ppc64leOperand}"
+            ppc64leZeroExtend32(dst)
 
         when "loadhsq"
             # lha sign-extends 16-bit to 64-bit in 64-bit mode (POWER ISA §3.3.2)
@@ -1653,7 +1720,25 @@ class Instruction
         when "jmp"
             op = operands[0]
             if op.is_a?(RegisterID) || op.is_a?(SpecialRegister)
-                $asm.puts "mtctr #{op.ppc64leOperand}"
+                # Tail call.  If the target is a C function (e.g.
+                # `jmp a3, CustomAccessorPtrTag`), its GEP computes the
+                # callee's TOC from r12 — set it or the callee runs with a
+                # garbage r2.  (The eventual ld-2-from-24(r1) is the ORIGINAL
+                # caller's duty; a tail call doesn't return here.)  Only do
+                # this for C-classified tags: r12 is ws1 in our register map
+                # and may hold a live value on JS/wasm jump paths.
+                # Unlike `call`, unknown jmp tags stay on the plain path: jmp
+                # targets (exception handlers, dispatch, gates) are same-module
+                # asm labels that need no GEP.
+                tagValue = (operands.length > 1 && operands[1].is_a?(Immediate)) ? operands[1].value : nil
+                tailCName = tagValue ? PPC64LE_C_CALL_TAG_NAMES.find { |n| $ppc64leConstExprValues[n] == tagValue } : nil
+                if tailCName
+                    $asm.comment "tail call C (#{tailCName})"
+                    $asm.puts "mr 12, #{op.ppc64leOperand}"
+                    $asm.puts "mtctr 12"
+                else
+                    $asm.puts "mtctr #{op.ppc64leOperand}"
+                end
                 $asm.puts "bctr"
             elsif op.is_a?(LabelReference) || op.is_a?(LocalLabelReference)
                 $asm.puts "b #{op.asmLabel}"
