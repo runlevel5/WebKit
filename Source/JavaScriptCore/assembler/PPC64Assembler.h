@@ -914,6 +914,13 @@ public:
         insn(dsForm(58, rt, ra, byteOffset, /*XO*/ 0));
     }
 
+    // lwa — Load Word Algebraic (sign-extend 32->64). Power ISA v2.07B
+    // §3.3.2, DS-form, opcode 58, XO=2.
+    void lwa(RegisterID rt, int16_t byteOffset, RegisterID ra)
+    {
+        insn(dsForm(58, rt, ra, byteOffset, /*XO*/ 2));
+    }
+
     // std — Store Doubleword. Power ISA v2.07B §3.3.2, DS-form, opcode 62, XO=0.
     //   Encoding: [op(6)=62 | RS(5) | RA(5) | DS(14) | XO(2)=0]
     //   Semantics: MEM(sign_extend(DS || 0b00) + (RA==0 ? 0 : RA), 8) <- RS

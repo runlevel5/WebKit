@@ -517,9 +517,12 @@ public:
             m_assembler.add(scratch, address.index, address.base);
         if (isInt16(address.offset))
             return { scratch, int16_t(address.offset) };
-        // Large offset: fold it in.
-        m_assembler.addis(scratch, scratch, int16_t((address.offset + 0x8000) >> 16));
-        return { scratch, int16_t(address.offset & 0xFFFF) };
+        // Large offset: materialize and add.  (An addis high-adjust trick
+        // overflows int16 for offsets >= 0x7FFF8000 — testmasm exercises
+        // offsets near INT32_MAX.)
+        moveImmToScratch(int64_t(address.offset), dataTempRegister);
+        m_assembler.add(scratch, scratch, dataTempRegister);
+        return { scratch, 0 };
     }
 
     // --- Condition plumbing --------------------------------------------
@@ -1591,6 +1594,194 @@ public:
 
     // --- 64-bit negate ----------------------------------------------------
 
+    // --- Signed-extending loads (movs[bwl]-style: sign to 32 zero-extends
+    // the upper word; sign to 64 keeps the full extension) ----------------
+
+    template<typename AddressType>
+    void load16SignedExtendTo32(AddressType address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lha(dest, r.offset, r.base);
+        zeroExtend32ToWordInternal(dest);
+    }
+    template<typename AddressType>
+    void load8SignedExtendTo32(AddressType address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dest, r.offset, r.base);
+        m_assembler.extsb(dest, dest);
+        zeroExtend32ToWordInternal(dest);
+    }
+    template<typename AddressType>
+    void load8SignedExtendTo64(AddressType address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dest, r.offset, r.base);
+        m_assembler.extsb(dest, dest);
+    }
+    template<typename AddressType>
+    void load16SignedExtendTo64(AddressType address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lha(dest, r.offset, r.base);
+    }
+    template<typename AddressType>
+    void load32SignedExtendTo64(AddressType address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddressDS(address, memoryTempRegister);
+        m_assembler.lwa(dest, r.offset, r.base);
+    }
+    void load8SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lbz(dest, 0, memoryTempRegister);
+        m_assembler.extsb(dest, dest);
+    }
+    void load16SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lha(dest, 0, memoryTempRegister);
+    }
+    void load32SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lwa(dest, 0, memoryTempRegister);
+    }
+
+    // --- Pair loads/stores (two scalar accesses; no ldp on PPC) ----------
+
+    void loadPair32(RegisterID base, TrustedImm32 offset, RegisterID dest1, RegisterID dest2)
+    {
+        // dest1 may alias base; load into it LAST when needed.
+        if (dest1 == base) {
+            load32(Address(base, offset.m_value + 4), dest2);
+            load32(Address(base, offset.m_value), dest1);
+        } else {
+            load32(Address(base, offset.m_value), dest1);
+            load32(Address(base, offset.m_value + 4), dest2);
+        }
+    }
+    void loadPair32(RegisterID base, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair32(base, TrustedImm32(0), dest1, dest2);
+    }
+    void loadPair64(RegisterID base, TrustedImm32 offset, RegisterID dest1, RegisterID dest2)
+    {
+        if (dest1 == base) {
+            load64(Address(base, offset.m_value + 8), dest2);
+            load64(Address(base, offset.m_value), dest1);
+        } else {
+            load64(Address(base, offset.m_value), dest1);
+            load64(Address(base, offset.m_value + 8), dest2);
+        }
+    }
+    void loadPair64(RegisterID base, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair64(base, TrustedImm32(0), dest1, dest2);
+    }
+    void storePair32(RegisterID src1, RegisterID src2, RegisterID base, TrustedImm32 offset)
+    {
+        store32(src1, Address(base, offset.m_value));
+        store32(src2, Address(base, offset.m_value + 4));
+    }
+    void storePair32(RegisterID src1, RegisterID src2, Address address)
+    {
+        store32(src1, address);
+        store32(src2, address.withOffset(4));
+    }
+    void storePair32(RegisterID src1, RegisterID src2, BaseIndex address)
+    {
+        store32(src1, address);
+        store32(src2, BaseIndex(address.base, address.index, address.scale, address.offset + 4));
+    }
+    void storePair64(RegisterID src1, RegisterID src2, RegisterID base)
+    {
+        storePair64(src1, src2, base, TrustedImm32(0));
+    }
+    void storePair64(RegisterID src1, RegisterID src2, RegisterID base, TrustedImm32 offset)
+    {
+        store64(src1, Address(base, offset.m_value));
+        store64(src2, Address(base, offset.m_value + 8));
+    }
+    void storePair64(RegisterID src1, RegisterID src2, Address address)
+    {
+        store64(src1, address);
+        store64(src2, address.withOffset(8));
+    }
+
+    // --- 32-bit arith, memory-operand forms -------------------------------
+
+    void sub32(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        add32(TrustedImm32(-imm.m_value), src, dest);
+    }
+    void sub32(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        // dest = imm - src
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        m_assembler.subf(dest, src, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void sub32(Address address, RegisterID dest)
+    {
+        load32(address, dataTempRegister);
+        sub32(dataTempRegister, dest);
+    }
+    void sub32(RegisterID src, Address address)
+    {
+        load32(address, dataTempRegister);
+        m_assembler.subf(dataTempRegister, src, dataTempRegister);
+        store32(dataTempRegister, address);
+    }
+    void sub32(TrustedImm32 imm, Address address)
+    {
+        add32(TrustedImm32(-imm.m_value), address);
+    }
+    void add32(Address address, RegisterID dest)
+    {
+        load32(address, dataTempRegister);
+        add32(dataTempRegister, dest);
+    }
+    void add32(RegisterID src, Address address)
+    {
+        // Keep the resolved address: resolveAddress may cache into r12 and
+        // the value scratch is r11 — no overlap.
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.add(dataTempRegister, dataTempRegister, src);
+        m_assembler.stw(dataTempRegister, r.offset, r.base);
+    }
+    void add32(TrustedImm32 imm, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        if (isInt16(imm.m_value))
+            m_assembler.addi(dataTempRegister, dataTempRegister, int16_t(imm.m_value));
+        else {
+            // r11 and r12 are both busy; rebuild the address afterwards.
+            add32(imm, dataTempRegister, dataTempRegister);
+            r = resolveAddress(address, memoryTempRegister);
+        }
+        m_assembler.stw(dataTempRegister, r.offset, r.base);
+    }
+    void add32(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lwz(dataTempRegister, 0, memoryTempRegister);
+        if (isInt16(imm.m_value))
+            m_assembler.addi(dataTempRegister, dataTempRegister, int16_t(imm.m_value));
+        else {
+            add32(imm, dataTempRegister, dataTempRegister);
+            moveToAbsolute(address.m_ptr);
+        }
+        m_assembler.stw(dataTempRegister, 0, memoryTempRegister);
+    }
+    void add32(AbsoluteAddress address, RegisterID dest)
+    {
+        load32(address.m_ptr, dataTempRegister);
+        add32(dataTempRegister, dest);
+    }
+
     // --- 64-bit shifts (count masked & 63, matching x86/arm64 hardware) --
 
     void lshift64(TrustedImm32 imm, RegisterID dest) { m_assembler.sldi(dest, dest, imm.m_value & 63); }
@@ -1732,16 +1923,11 @@ public:
     // Additional load64 overloads (MacroAssembler::loadPtr)
 
     // loadPair64 (MacroAssembler::loadPairPtr)
-    void loadPair64(RegisterID, RegisterID, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
-    void loadPair64(RegisterID, TrustedImm32, RegisterID, RegisterID)        { PPC64_UNIMPLEMENTED(); }
     void loadPair64(Address, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
     // Additional store64 overloads (MacroAssembler::storePtr)
 
     // storePair64 (MacroAssembler::storePairPtr)
-    void storePair64(RegisterID, RegisterID, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void storePair64(RegisterID, RegisterID, RegisterID, TrustedImm32)      { PPC64_UNIMPLEMENTED(); }
-    void storePair64(RegisterID, RegisterID, Address)                       { PPC64_UNIMPLEMENTED(); }
 
     // test64 (MacroAssembler::testPtr)
     void test64(ResultCondition, RegisterID, TrustedImm32, RegisterID)      { PPC64_UNIMPLEMENTED(); }
@@ -1783,7 +1969,6 @@ public:
     // branchDouble — used by MacroAssembler::compareDouble on non-X86/ARM64.
 
     // 3-operand 32-bit forms (MacroAssembler blinding helpers + lea32).
-    void sub32(RegisterID, TrustedImm32, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
     // 3-operand 32-bit shifts.
     void lshift32(TrustedImm32, RegisterID, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
@@ -1943,11 +2128,7 @@ public:
     void neg32(RegisterID, RegisterID)                                     { PPC64_UNIMPLEMENTED(); }
 
     // load8SignedExtendTo32 / load16 / load16SignedExtendTo32
-    void load8SignedExtendTo32(Address, RegisterID)                        { PPC64_UNIMPLEMENTED(); }
-    void load8SignedExtendTo32(BaseIndex, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
     void load8SignedExtendTo32(const void*, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo32(Address, RegisterID)                       { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo32(BaseIndex, RegisterID)                     { PPC64_UNIMPLEMENTED(); }
     void load16SignedExtendTo32(const void*, RegisterID)                   { PPC64_UNIMPLEMENTED(); }
 
     // FP conversions
@@ -1960,7 +2141,6 @@ public:
     // 32-bit arithmetic — 3-arg forms (DFGSpeculativeJIT.h:641-679)
 
     // add32 with TrustedImm32 + Address — DFG/IC use.
-    void add32(TrustedImm32, Address)                                      { PPC64_UNIMPLEMENTED(); }
 
     // store32 with absolute pointer — DFGSpeculativeJIT.cpp:511 abortWithReason.
 
@@ -2007,7 +2187,6 @@ public:
     void store64(TrustedImm64, void*)                                      { PPC64_UNIMPLEMENTED(); }
 
     // add32 with TrustedImm32 + AbsoluteAddress — DFGOSRExitCompilerCommon.cpp:52
-    void add32(TrustedImm32, AbsoluteAddress)                              { PPC64_UNIMPLEMENTED(); }
 
     // moveWithPatch — DFGLazyJSValue.cpp:252.  Returns DataLabelPtr / DataLabel32.
     DataLabelPtr moveWithPatch(TrustedImmPtr, RegisterID)                  { PPC64_UNIMPLEMENTED(); return DataLabelPtr(); }
@@ -2068,8 +2247,6 @@ public:
     void transfer64(BaseIndex, BaseIndex)                                  { PPC64_UNIMPLEMENTED(); }
     void transferVector(Address, Address)                                  { PPC64_UNIMPLEMENTED(); }
     void transferVector(BaseIndex, BaseIndex)                              { PPC64_UNIMPLEMENTED(); }
-    void storePair32(RegisterID, RegisterID, Address)                      { PPC64_UNIMPLEMENTED(); }
-    void storePair32(RegisterID, RegisterID, BaseIndex)                    { PPC64_UNIMPLEMENTED(); }
     void storePair32(RegisterID, TrustedImm32, Address)                    { PPC64_UNIMPLEMENTED(); }
     void storePair32(TrustedImm32, RegisterID, Address)                    { PPC64_UNIMPLEMENTED(); }
     void storePair32(TrustedImm32, TrustedImm32, Address)                  { PPC64_UNIMPLEMENTED(); }
@@ -2092,7 +2269,6 @@ public:
     Jump branchAtomicWeakCAS64(StatusCondition, RegisterID, RegisterID, BaseIndex){ PPC64_UNIMPLEMENTED(); return Jump(); }
 
     // sub32 with memory destination — DFGSpeculativeJIT64.cpp:4332/5858.
-    void sub32(TrustedImm32, Address)                                      { PPC64_UNIMPLEMENTED(); }
     void sub32(TrustedImm32, AbsoluteAddress)                              { PPC64_UNIMPLEMENTED(); }
 
     // branchPtr with BaseIndex — DFGSpeculativeJIT64.cpp:5830.
@@ -2114,11 +2290,9 @@ public:
     void add64(FPRegisterID, FPRegisterID, FPRegisterID)                   { PPC64_UNIMPLEMENTED(); }
 
     // sub32 with Address source — DFG.
-    void sub32(Address, RegisterID)                                        { PPC64_UNIMPLEMENTED(); }
 
     // 4-arg storePair32 (RegisterID, RegisterID, RegisterID baseGPR, TrustedImm32 offset)
     // is the same as ARM64's pre-indexed pair store with a base+offset operand.
-    void storePair32(RegisterID, RegisterID, RegisterID, TrustedImm32)     { PPC64_UNIMPLEMENTED(); }
 
     // store32 to BaseIndex with immediate source.
     void store32(TrustedImm32, BaseIndex)                                  { PPC64_UNIMPLEMENTED(); }
@@ -2137,8 +2311,17 @@ public:
 
     // pushPair / popPair — frame management. ARM64 atomically pushes two regs;
     // PPC64LE has no equivalent atomic — Phase 1 stub.
-    void pushPair(RegisterID, RegisterID)                                  { PPC64_UNIMPLEMENTED(); }
-    void popPair(RegisterID, RegisterID)                                   { PPC64_UNIMPLEMENTED(); }
+    void pushPair(RegisterID src1, RegisterID src2)
+    {
+        m_assembler.stdu(src1, -16, stackPointerRegister);
+        m_assembler.std(src2, 8, stackPointerRegister);
+    }
+    void popPair(RegisterID dest1, RegisterID dest2)
+    {
+        m_assembler.ld(dest1, 0, stackPointerRegister);
+        m_assembler.ld(dest2, 8, stackPointerRegister);
+        m_assembler.addi(stackPointerRegister, stackPointerRegister, 16);
+    }
 
     // Memory-source variants of FP arithmetic — DFG/IC.
     void mulDouble(Address, FPRegisterID)                                  { PPC64_UNIMPLEMENTED(); }
@@ -2187,20 +2370,8 @@ public:
     void load32WithUnalignedHalfWords(BaseIndex, RegisterID)               { PPC64_UNIMPLEMENTED(); }
 
     // Sign-extending loads to 64.
-    void load8SignedExtendTo64(Address, RegisterID)                        { PPC64_UNIMPLEMENTED(); }
-    void load8SignedExtendTo64(BaseIndex, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo64(Address, RegisterID)                       { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo64(BaseIndex, RegisterID)                     { PPC64_UNIMPLEMENTED(); }
-    void load32SignedExtendTo64(Address, RegisterID)                       { PPC64_UNIMPLEMENTED(); }
-    void load32SignedExtendTo64(BaseIndex, RegisterID)                     { PPC64_UNIMPLEMENTED(); }
-    void load8SignedExtendTo64(const void*, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo64(const void*, RegisterID)                   { PPC64_UNIMPLEMENTED(); }
-    void load32SignedExtendTo64(const void*, RegisterID)                   { PPC64_UNIMPLEMENTED(); }
 
     // loadPair32 / loadPair64 — paired loads.
-    void loadPair32(RegisterID, RegisterID, RegisterID, RegisterID)        { PPC64_UNIMPLEMENTED(); }
-    void loadPair32(RegisterID, RegisterID, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void loadPair32(RegisterID, TrustedImm32, RegisterID, RegisterID)     { PPC64_UNIMPLEMENTED(); }
     void loadPair32(Address, RegisterID, RegisterID)                       { PPC64_UNIMPLEMENTED(); }
 
     // Bitfield extract — YarrJIT BoyerMoore SIMD path.
