@@ -42,9 +42,18 @@ static constexpr size_t maxFrameExtentForSlowPathCall = 0;
 // All args in registers. Windows also uses System V ABI.
 static constexpr size_t maxFrameExtentForSlowPathCall = 0;
 
-#elif CPU(ARM64) || CPU(ARM64E) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(ARM64) || CPU(ARM64E) || CPU(RISCV64)
 // All args in registers.
 static constexpr size_t maxFrameExtentForSlowPathCall = 0;
+
+#elif CPU(PPC64LE)
+// Args are in registers, but an ELFv2 callee writes its LR/CR/TOC saves
+// into the CALLER's linkage area at sp+0..31, and callees taking spilled
+// or variadic arguments may store into the caller-allocated parameter
+// save area above it. 32 (linkage) + 64 (param save) — ELFv2 rev 1.5
+// sec 2.2.2. This is also where JIT C-call sites save/restore r2 (TOC),
+// at the ABI-designated slot sp+24.
+static constexpr size_t maxFrameExtentForSlowPathCall = 96;
 
 #elif CPU(ARM)
 // First four args in registers, remaining 4 args on stack.

@@ -667,6 +667,33 @@ public:
     //
     // All verified on POWER9 with FRT=3, FRB=4 — see encoding test.
     // ===================================================================
+    // Single-precision converts/arith (op 59 mirrors op 63 forms; Power ISA
+    // v2.07B §4.6). fcfids/fcfidus verified empirically on POWER9 (Phase 2
+    // conversion harness, 2026-07-14).
+    void fcfids(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(59, frt, PPC64Registers::f0, frb, 846, 0)); }
+    void fcfidus(FPRegisterID frt, FPRegisterID frb) { insn(xFormFp(59, frt, PPC64Registers::f0, frb, 974, 0)); }
+    void frsp(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb,  12, 0)); }
+
+    void fsqrt(FPRegisterID frt, FPRegisterID frb)   { insn(aForm(63, frt, PPC64Registers::f0, frb, PPC64Registers::f0, 22, 0)); }
+    void fsqrts(FPRegisterID frt, FPRegisterID frb)  { insn(aForm(59, frt, PPC64Registers::f0, frb, PPC64Registers::f0, 22, 0)); }
+
+    // Round-to-integer family (X-form, op 63): frin=392 nearest, friz=424
+    // toward zero, frip=456 ceil, frim=488 floor. Power ISA v2.07B §4.6.7.
+    void frin(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 392, 0)); }
+    void friz(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 424, 0)); }
+    void frip(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 456, 0)); }
+    void frim(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 488, 0)); }
+
+    // GPR <-> FPR direct moves (VSX, Power ISA v2.07B §7.6; FPR f_n = VSR n,
+    // TX/SX bit 0). Encodings hardware-verified on POWER9 2026-07-14:
+    //   mtfprwa f3,r5 = 0x7c6501a6 (XO 211), mtfprwz = 0x7c6501e6 (XO 243),
+    //   mtfprd = 0x7c650166 (XO 179).
+    void mtvsrd(FPRegisterID frt, RegisterID ra)  { insn((31u << 26) | (uint32_t(fprValue(frt)) << 21) | (uint32_t(registerValue(ra)) << 16) | (179u << 1)); }
+    void mtvsrwa(FPRegisterID frt, RegisterID ra) { insn((31u << 26) | (uint32_t(fprValue(frt)) << 21) | (uint32_t(registerValue(ra)) << 16) | (211u << 1)); }
+    void mtvsrwz(FPRegisterID frt, RegisterID ra) { insn((31u << 26) | (uint32_t(fprValue(frt)) << 21) | (uint32_t(registerValue(ra)) << 16) | (243u << 1)); }
+    void mfvsrd(RegisterID ra, FPRegisterID frs)  { insn((31u << 26) | (uint32_t(fprValue(frs)) << 21) | (uint32_t(registerValue(ra)) << 16) | (51u << 1)); }
+    void mfvsrwz(RegisterID ra, FPRegisterID frs) { insn((31u << 26) | (uint32_t(fprValue(frs)) << 21) | (uint32_t(registerValue(ra)) << 16) | (115u << 1)); }
+
     void fcfid(FPRegisterID frt, FPRegisterID frb)   { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 846, 0)); }
     void fctid(FPRegisterID frt, FPRegisterID frb)   { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 814, 0)); }
     void fctidz(FPRegisterID frt, FPRegisterID frb)  { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 815, 0)); }
@@ -1371,6 +1398,17 @@ public:
     //   bctrl → bcctr 20,0,0,1 → 0x4e800421
     //   beqlr → bclr 12,2,0    → 0x4d820020
     //   bnelr → bclr  4,2,0    → 0x4c820020
+    // CR-field logical ops (XL-form, opcode 19; Power ISA v2.07B §2.5.1):
+    // cror XO=449, crandc XO=129.  Fields: BT(6-10) BA(11-15) BB(16-20).
+    void cror(uint32_t bt, uint32_t ba, uint32_t bb)
+    {
+        insn((19u << 26) | (bt << 21) | (ba << 16) | (bb << 11) | (449u << 1));
+    }
+    void crandc(uint32_t bt, uint32_t ba, uint32_t bb)
+    {
+        insn((19u << 26) | (bt << 21) | (ba << 16) | (bb << 11) | (129u << 1));
+    }
+
     void bclr(uint32_t bo, uint32_t bi, uint32_t bh = 0, uint32_t lk = 0)
     {
         insn(xlForm(19, bo, bi, bh, /*XO*/ 16, lk));
