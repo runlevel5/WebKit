@@ -252,6 +252,11 @@ bool NODELETE isSpecialGPR(MacroAssembler::RegisterID id)
 #elif CPU(RISCV64)
     if (id == RISCV64Registers::zero || id == RISCV64Registers::ra || id == RISCV64Registers::gp || id == RISCV64Registers::tp)
         return true;
+#elif CPU(PPC64LE)
+    // r2 = TOC pointer, r13 = thread pointer: both must stay valid for the
+    // C++ code that runs once the probe resumes and returns.
+    if (id == PPC64Registers::r2 || id == PPC64Registers::r13)
+        return true;
 #endif
     return false;
 }
