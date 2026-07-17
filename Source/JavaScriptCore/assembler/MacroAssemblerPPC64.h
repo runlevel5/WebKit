@@ -349,6 +349,60 @@ public:
     {
         sub64(imm, dest, dest);
     }
+    void add64(TrustedImm64 imm, RegisterID dest) { add64(imm, dest, dest); }
+    void add64(TrustedImm64 imm, RegisterID src, RegisterID dest)
+    {
+        if (isInt16(imm.m_value))
+            m_assembler.addi(dest, src, int16_t(imm.m_value));
+        else {
+            moveImmToScratch(imm.m_value, dataTempRegister);
+            m_assembler.add(dest, src, dataTempRegister);
+        }
+    }
+    void sub64(TrustedImm64 imm, RegisterID dest)
+    {
+        if (isInt16(-imm.m_value) && imm.m_value != INT64_MIN)
+            m_assembler.addi(dest, dest, int16_t(-imm.m_value));
+        else {
+            moveImmToScratch(imm.m_value, dataTempRegister);
+            m_assembler.subf(dest, dataTempRegister, dest);
+        }
+    }
+    void xor64(TrustedImm64 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.xor_(dest, dest, dataTempRegister);
+    }
+    void and64(TrustedImm64 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.and_(dest, src, dataTempRegister);
+    }
+    void xor64(TrustedImm64 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.xor_(dest, src, dataTempRegister);
+    }
+    void or64(TrustedImm64 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        m_assembler.or_(dest, src, dataTempRegister);
+    }
+    void or64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);   // sign-extend
+        m_assembler.or_(dest, src, dataTempRegister);
+    }
+    void and64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        m_assembler.and_(dest, src, dataTempRegister);
+    }
+    void xor64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        m_assembler.xor_(dest, src, dataTempRegister);
+    }
 
     // dest = src - imm (operand order used by DFG/thunks)
     void sub64(RegisterID src, TrustedImm32 imm, RegisterID dest)
@@ -2324,8 +2378,6 @@ public:
 
     // Additional add64 overloads required by MacroAssembler.h addPtr wrappers.
     void add64(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void add64(TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void add64(TrustedImm64, RegisterID, RegisterID)             { PPC64_UNIMPLEMENTED(); }
     void add64(TrustedImm32, Address)                            { PPC64_UNIMPLEMENTED(); }
     void add64(AbsoluteAddress, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
     void add64(TrustedImm32, AbsoluteAddress)                    { PPC64_UNIMPLEMENTED(); }
@@ -2338,17 +2390,14 @@ public:
     // neg64 (MacroAssembler::negPtr)
 
     // Additional or64 overloads (MacroAssembler::orPtr)
-    void or64(TrustedImm32, RegisterID, RegisterID)              { PPC64_UNIMPLEMENTED(); }
 
     // rotateRight64 (MacroAssembler::rotateRightPtr)
 
     // Additional sub64 overloads (MacroAssembler::subPtr)
-    void sub64(TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
     // Additional xor64 overloads (MacroAssembler::xorPtr)
     void xor64(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
     void xor64(RegisterID, Address)                              { PPC64_UNIMPLEMENTED(); }
-    void xor64(TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
     // Additional load64 overloads (MacroAssembler::loadPtr)
 
@@ -2378,10 +2427,6 @@ public:
     // convertInt32ToDouble(TrustedImm32) — blinding path in MacroAssembler.
 
     // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
-    void and64(TrustedImm32, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void and64(TrustedImm64, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void xor64(TrustedImm64, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void or64(TrustedImm64, RegisterID, RegisterID)                          { PPC64_UNIMPLEMENTED(); }
     void sub64(RegisterID, TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
     void compare64(RelationalCondition, RegisterID, TrustedImm64, RegisterID){ PPC64_UNIMPLEMENTED(); }
 
@@ -2483,7 +2528,6 @@ public:
     static ptrdiff_t patchableJumpSize() { return Assembler::patchableJumpSize(); }
 
     // xor64(TrustedImm32, src, dst) — AssemblyHelpers::branchIfBoolean.
-    void xor64(TrustedImm32, RegisterID, RegisterID)                        { PPC64_UNIMPLEMENTED(); }
 
     // branchTest64 with TrustedImm64 mask — AssemblyHelpers::isStrictInt52.
 
@@ -2513,10 +2557,12 @@ public:
 
     // or32 with Address — AssemblyHelpers::nukeStructureAndStoreButterfly.
 
-    // Memory barrier instructions — AssemblyHelpers::barrierStoreLoadFence/mutatorFence.
-    void memoryFence() { PPC64_UNIMPLEMENTED(); }
-    void storeFence()  { PPC64_UNIMPLEMENTED(); }
-    void loadFence()   { PPC64_UNIMPLEMENTED(); }
+    // Memory barriers (Power ISA v2.07B §1.7.1). lwsync orders all pairs
+    // except StoreLoad; a full StoreLoad / seq-cst fence needs sync.
+    void memoryFence()    { m_assembler.sync(); }       // full (StoreLoad) fence
+    void storeFence()     { m_assembler.lwsync(); }     // release ordering
+    void loadFence()      { m_assembler.lwsync(); }     // acquire ordering
+    void storeLoadFence() { m_assembler.sync(); }
 
     // Count-leading-zeros — AssemblyHelpers::emitComputeButterflyIndexingMask.
 
