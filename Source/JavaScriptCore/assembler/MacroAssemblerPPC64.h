@@ -1440,6 +1440,34 @@ public:
     void divDouble(FPRegisterID src, FPRegisterID dest)               { m_assembler.fdiv(dest, dest, src); }
     void sqrtDouble(FPRegisterID src, FPRegisterID dest)              { m_assembler.fsqrt(dest, src); }
     void absDouble(FPRegisterID src, FPRegisterID dest)               { m_assembler.fabs(dest, src); }
+
+    // FP bitwise ops treat the doubles as bit patterns (used for sign-bit
+    // masking, NaN canonicalization, SIMD-lane logic). FPR f_n aliases
+    // VSR n, so the VSX logical ops apply directly (Power ISA v2.07B §7.6).
+    void andDouble(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        m_assembler.xxland(dest, a, b);
+    }
+    void andDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        m_assembler.xxland(dest, dest, src);
+    }
+    void orDouble(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        m_assembler.xxlor(dest, a, b);
+    }
+    void orDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        m_assembler.xxlor(dest, dest, src);
+    }
+    void xorDouble(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        m_assembler.xxlxor(dest, a, b);
+    }
+    void xorDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        m_assembler.xxlxor(dest, dest, src);
+    }
     void negateDouble(FPRegisterID src, FPRegisterID dest)            { m_assembler.fneg(dest, src); }
     void negateFloat(FPRegisterID src, FPRegisterID dest)             { m_assembler.fneg(dest, src); }
     void floorDouble(FPRegisterID src, FPRegisterID dest)             { m_assembler.frim(dest, src); }
@@ -1831,6 +1859,137 @@ public:
     void countLeadingZeros32(RegisterID src, RegisterID dest) { m_assembler.cntlzw(dest, src); }
     void countLeadingZeros64(RegisterID src, RegisterID dest) { m_assembler.cntlzd(dest, src); }
 
+    // --- Memory-destination logical read-modify-write ---------------------
+    // load width, combine, store back. Byte/halfword forms operate on the
+    // narrow width; the 32-bit result is not required to zero-extend in
+    // memory. src register combines the full low bits (callers pass masked
+    // values for narrow widths).
+
+    void or32(RegisterID src, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.or_(dataTempRegister, dataTempRegister, src);
+        m_assembler.stw(dataTempRegister, r.offset, r.base);
+    }
+    void or32(TrustedImm32 imm, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        if (imm.m_value >= 0 && isUInt16(imm.m_value))
+            m_assembler.ori(dataTempRegister, dataTempRegister, uint16_t(imm.m_value));
+        else {
+            // r11 (data) and r12 (mem) are both live; stash the address.
+            m_assembler.mr(PPC64Registers::r0, r.base);
+            moveImmToScratch(int64_t(imm.m_value), memoryTempRegister);
+            m_assembler.or_(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.stw(dataTempRegister, r.offset, PPC64Registers::r0);
+            return;
+        }
+        m_assembler.stw(dataTempRegister, r.offset, r.base);
+    }
+    void or32(RegisterID src, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lwz(dataTempRegister, 0, memoryTempRegister);
+        m_assembler.or_(dataTempRegister, dataTempRegister, src);
+        m_assembler.stw(dataTempRegister, 0, memoryTempRegister);
+    }
+    void or32(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lwz(dataTempRegister, 0, memoryTempRegister);
+        if (imm.m_value >= 0 && isUInt16(imm.m_value))
+            m_assembler.ori(dataTempRegister, dataTempRegister, uint16_t(imm.m_value));
+        else {
+            moveImmToScratch(int64_t(imm.m_value), PPC64Registers::r0);
+            m_assembler.or_(dataTempRegister, dataTempRegister, PPC64Registers::r0);
+        }
+        m_assembler.stw(dataTempRegister, 0, memoryTempRegister);
+    }
+
+    void or16(TrustedImm32 imm, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dataTempRegister, r.offset, r.base);
+        m_assembler.ori(dataTempRegister, dataTempRegister, uint16_t(imm.m_value));
+        m_assembler.sth(dataTempRegister, r.offset, r.base);
+    }
+    void or16(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lhz(dataTempRegister, 0, memoryTempRegister);
+        m_assembler.ori(dataTempRegister, dataTempRegister, uint16_t(imm.m_value));
+        m_assembler.sth(dataTempRegister, 0, memoryTempRegister);
+    }
+    void or16(RegisterID src, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lhz(dataTempRegister, 0, memoryTempRegister);
+        m_assembler.or_(dataTempRegister, dataTempRegister, src);
+        m_assembler.sth(dataTempRegister, 0, memoryTempRegister);
+    }
+
+    void or8(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lbz(dataTempRegister, 0, memoryTempRegister);
+        m_assembler.ori(dataTempRegister, dataTempRegister, uint16_t(imm.m_value & 0xFF));
+        m_assembler.stb(dataTempRegister, 0, memoryTempRegister);
+    }
+
+    void add8(TrustedImm32 imm, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dataTempRegister, r.offset, r.base);
+        m_assembler.addi(dataTempRegister, dataTempRegister, int16_t(imm.m_value));
+        m_assembler.stb(dataTempRegister, r.offset, r.base);
+    }
+
+    void sub32(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);
+        m_assembler.lwz(dataTempRegister, 0, memoryTempRegister);
+        if (isInt16(-int64_t(imm.m_value)))
+            m_assembler.addi(dataTempRegister, dataTempRegister, int16_t(-imm.m_value));
+        else {
+            moveImmToScratch(int64_t(imm.m_value), PPC64Registers::r0);
+            m_assembler.subf(dataTempRegister, PPC64Registers::r0, dataTempRegister);
+        }
+        m_assembler.stw(dataTempRegister, 0, memoryTempRegister);
+    }
+
+    // --- Memory-source logical (dest is a register) -----------------------
+
+    void and32(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.and_(dest, dest, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void and32(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.and_(dest, dest, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void xor32(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.xor_(dest, dest, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void xor32(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.xor_(dest, dest, dataTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
+
     void neg64(RegisterID srcDest) { m_assembler.neg(srcDest, srcDest); }
     void neg64(RegisterID src, RegisterID dest) { m_assembler.neg(dest, src); }
 
@@ -2094,10 +2253,6 @@ public:
     // load8 with raw pointer — AssemblyHelpers::barrierBranch(VM&, JSCell*, GPRReg).
 
     // or32 with Address — AssemblyHelpers::nukeStructureAndStoreButterfly.
-    void or32(RegisterID, Address)                                         { PPC64_UNIMPLEMENTED(); }
-    void or32(TrustedImm32, Address)                                       { PPC64_UNIMPLEMENTED(); }
-    void or32(RegisterID, AbsoluteAddress)                                 { PPC64_UNIMPLEMENTED(); }
-    void or32(TrustedImm32, AbsoluteAddress)                               { PPC64_UNIMPLEMENTED(); }
 
     // Memory barrier instructions — AssemblyHelpers::barrierStoreLoadFence/mutatorFence.
     void memoryFence() { PPC64_UNIMPLEMENTED(); }
@@ -2173,11 +2328,6 @@ public:
     void test32(ResultCondition, Address, TrustedImm32, RegisterID)        { PPC64_UNIMPLEMENTED(); }
 
     // or16 / add8 — small-width arithmetic with memory destination (typed array writes).
-    void or8(TrustedImm32, AbsoluteAddress)                                { PPC64_UNIMPLEMENTED(); }
-    void or16(TrustedImm32, AbsoluteAddress)                               { PPC64_UNIMPLEMENTED(); }
-    void or16(TrustedImm32, Address)                                      { PPC64_UNIMPLEMENTED(); }
-    void or16(RegisterID, AbsoluteAddress)                                 { PPC64_UNIMPLEMENTED(); }
-    void add8(TrustedImm32, Address)                                      { PPC64_UNIMPLEMENTED(); }
     void add8(TrustedImm32, BaseIndex)                                    { PPC64_UNIMPLEMENTED(); }
     void add8(RegisterID, BaseIndex)                                      { PPC64_UNIMPLEMENTED(); }
 
@@ -2228,10 +2378,6 @@ public:
     Jump branchMul64(ResultCondition, RegisterID, RegisterID)              { PPC64_UNIMPLEMENTED(); return Jump(); }
 
     // FP truncate / bitwise — DFGSpeculativeJIT FP paths.
-    void orDouble(FPRegisterID, FPRegisterID, FPRegisterID)                { PPC64_UNIMPLEMENTED(); }
-    void orDouble(FPRegisterID, FPRegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void andDouble(FPRegisterID, FPRegisterID, FPRegisterID)               { PPC64_UNIMPLEMENTED(); }
-    void andDouble(FPRegisterID, FPRegisterID)                             { PPC64_UNIMPLEMENTED(); }
 
     // branch32 / branch64 with memory operand source — DFG.
     // (branch64(RelationalCondition, Address, RegisterID) is already declared above.)
@@ -2269,7 +2415,6 @@ public:
     Jump branchAtomicWeakCAS64(StatusCondition, RegisterID, RegisterID, BaseIndex){ PPC64_UNIMPLEMENTED(); return Jump(); }
 
     // sub32 with memory destination — DFGSpeculativeJIT64.cpp:4332/5858.
-    void sub32(TrustedImm32, AbsoluteAddress)                              { PPC64_UNIMPLEMENTED(); }
 
     // branchPtr with BaseIndex — DFGSpeculativeJIT64.cpp:5830.
     Jump branchPtr(RelationalCondition, BaseIndex, RegisterID)             { PPC64_UNIMPLEMENTED(); return Jump(); }
@@ -2298,8 +2443,6 @@ public:
     void store32(TrustedImm32, BaseIndex)                                  { PPC64_UNIMPLEMENTED(); }
     // storeDouble to absolute pointer.
     // and32 with Address source.
-    void and32(Address, RegisterID)                                        { PPC64_UNIMPLEMENTED(); }
-    void and32(BaseIndex, RegisterID)                                      { PPC64_UNIMPLEMENTED(); }
 
     // moveConditionally — 32-bit and test-64 forms.
     void moveConditionally32(RelationalCondition, RegisterID, TrustedImm32, RegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
@@ -2335,8 +2478,6 @@ public:
     void addUnsignedRightShift32(RegisterID, RegisterID, TrustedImm32, RegisterID) { PPC64_UNIMPLEMENTED(); }
 
     // xor32 with Address source — AssemblyHelpers.
-    void xor32(Address, RegisterID)                                        { PPC64_UNIMPLEMENTED(); }
-    void xor32(BaseIndex, RegisterID)                                      { PPC64_UNIMPLEMENTED(); }
 
     // not64 — bitwise NOT.
 
