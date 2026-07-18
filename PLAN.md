@@ -427,6 +427,14 @@ Gate: `jsc --useDFGJIT=0 --useFTLJIT=0 --useWasmJIT=0` (Baseline only) passes th
 
 **Verification**: Baseline vs LLInt parity. Any test that passes in LLInt and fails in Baseline is a pure codegen bug; isolate with `JSC_useBaselineJIT=true JSC_jitPolicyScale=0.001`.
 
+### Phase 3 status — Baseline JIT surface COMPLETE, correctness debugging begins (2026-07-18)
+
+**testmasm: 87/87 GREEN** — the entire MacroAssembler surface the harness exercises is verified on POWER9 (arith, logicals, shifts, all loads/stores/addressing modes, branches, compares, conditional moves, calls, full FP, and the complete Probe API). Run it with `JSC_useJIT=1` (mandatory — see harness lessons).
+
+**Baseline JIT: full function compiles.** Driven by `jsc --useJIT=1 --useDFGJIT=0 --useFTLJIT=0 --useWasm=0 --thresholdForJITAfterWarmUp=10`, the grind (run → read the PPC64_UNIMPLEMENTED name → implement → repeat, batching related overloads to amortize the ~90s jsc rebuild) drove the Baseline tier until a whole JS function compiles with **zero remaining MacroAssembler stubs on the hot path**. Everything since testmasm-green is committed (memory-operand branches/tests, calls, callOperation, pairs, transfers, conditional moves, FP-memory arith, 64-bit immediate arith, fences).
+
+**FIRST CORRECTNESS BUG (the active front)**: the compiled code segfaults at runtime. `jsc … -e 'function f(x){var s=0;for(var i=0;i<x;i++)s+=i;return s} print(f(1000))'` (expect 499500) → SIGSEGV in `llint_function_for_call_prologue+384`, at `std r5, 0(r6)` where `r6 = <frameslot> - 24`. Frame #1 in gdb is a garbage return address `0x3821002048dec9ad` — those are raw PPC instruction bytes (`0x38210020` = `addi r1,r1,32`), i.e. an epilogue instruction sitting in a return-address slot. This is the **JIT↔LLInt shared-frame ABI**: the argument-copy / arity-fixup loop in the LLInt call prologue reads/writes bad frame slots when entered from (or transitioning with) baseline-JIT code. Likely suspects: CallerFrameAndPCSize / CallFrame header layout on PPC64, the `move`/`store` of the return-PC into the frame header vs LR handling, or the caller-frame slot arithmetic in `makeJavaScriptCall`-adjacent code. This is a focused frame-ABI investigation, distinct from the surface grind — start here next session. Repro is deterministic and single-function.
+
 ## Phase 4 — DFG (Data Flow Graph) JIT
 
 Gate: `jsc --useFTLJIT=0 --useWasmJIT=0` (Baseline + DFG) passes the stress suite.
