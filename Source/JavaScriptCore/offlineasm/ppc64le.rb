@@ -1189,33 +1189,64 @@ class Instruction
         # mulq / mulp  →  mulld (64-bit multiply low)
         # muli          →  mullw or mulli (immediate)
         # ------------------------------------------------------------------
+        # Multiply. Two forms: 2-operand `mul src, dst` (dst *= src) and
+        # 3-operand `mul src1, src2, dst` (dst = src1 * src2). The dest is
+        # always the LAST operand; earlier hardcoding of operands[1] as dest
+        # silently miscompiled the 3-operand form (e.g. the LLInt
+        # argumentProfileLoop's `mulp sizeof, t0, t2` wrote to t0, corrupting
+        # the loop counter and leaving t2 unset — crashed every JIT-on call).
         when "mulp", "mulq"
-            dst = operands[1].ppc64leOperand
-            src = operands[0]
-            if src.is_a?(Immediate)
-                # mulli RT, RA, SI — 16-bit signed immediate (Power ISA v2.07B §3.3.10)
-                if src.ppc64le16BitSignedImmediate?
-                    $asm.puts "mulli #{dst}, #{dst}, #{src.value}"
+            ops = operands
+            dst = ops.last.ppc64leOperand
+            if ops.length == 3
+                a, b = ops[0], ops[1]
+                if a.is_a?(Immediate) && b.is_a?(Immediate)
+                    raise "ppc64le: mulq with two immediates at #{codeOriginString}"
+                elsif a.is_a?(Immediate)
+                    raise "ppc64le: mulq immediate #{a.value} out of 16-bit range at #{codeOriginString}" unless a.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{b.ppc64leOperand}, #{a.value}"
+                elsif b.is_a?(Immediate)
+                    raise "ppc64le: mulq immediate #{b.value} out of 16-bit range at #{codeOriginString}" unless b.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{a.ppc64leOperand}, #{b.value}"
                 else
-                    raise "ppc64le: mulq immediate #{src.value} out of 16-bit range at #{codeOriginString}"
+                    $asm.puts "mulld #{dst}, #{a.ppc64leOperand}, #{b.ppc64leOperand}"
                 end
             else
-                $asm.puts "mulld #{dst}, #{dst}, #{src.ppc64leOperand}"
+                src = ops[0]
+                if src.is_a?(Immediate)
+                    raise "ppc64le: mulq immediate #{src.value} out of 16-bit range at #{codeOriginString}" unless src.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{dst}, #{src.value}"
+                else
+                    $asm.puts "mulld #{dst}, #{dst}, #{src.ppc64leOperand}"
+                end
             end
 
         when "muli"
-            dst = operands[1].ppc64leOperand
-            src = operands[0]
-            if src.is_a?(Immediate)
-                if src.ppc64le16BitSignedImmediate?
-                    $asm.puts "mulli #{dst}, #{dst}, #{src.value}"
+            ops = operands
+            dst = ops.last.ppc64leOperand
+            if ops.length == 3
+                a, b = ops[0], ops[1]
+                if a.is_a?(Immediate) && b.is_a?(Immediate)
+                    raise "ppc64le: muli with two immediates at #{codeOriginString}"
+                elsif a.is_a?(Immediate)
+                    raise "ppc64le: muli immediate out of range at #{codeOriginString}" unless a.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{b.ppc64leOperand}, #{a.value}"
+                elsif b.is_a?(Immediate)
+                    raise "ppc64le: muli immediate out of range at #{codeOriginString}" unless b.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{a.ppc64leOperand}, #{b.value}"
                 else
-                    raise "ppc64le: muli immediate #{src.value} out of 16-bit range at #{codeOriginString}"
+                    # mullw writes the full 64-bit product of the low words —
+                    # the high word holds product overflow bits, not zeros.
+                    $asm.puts "mullw #{dst}, #{a.ppc64leOperand}, #{b.ppc64leOperand}"
                 end
             else
-                # mullw writes the full 64-bit product of the low words —
-                # the high word holds product overflow bits, not zeros.
-                $asm.puts "mullw #{dst}, #{dst}, #{src.ppc64leOperand}"
+                src = ops[0]
+                if src.is_a?(Immediate)
+                    raise "ppc64le: muli immediate out of range at #{codeOriginString}" unless src.ppc64le16BitSignedImmediate?
+                    $asm.puts "mulli #{dst}, #{dst}, #{src.value}"
+                else
+                    $asm.puts "mullw #{dst}, #{dst}, #{src.ppc64leOperand}"
+                end
             end
             ppc64leZeroExtend32(dst)
 
