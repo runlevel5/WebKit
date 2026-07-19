@@ -480,6 +480,19 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
     jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
     jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 
+#if CPU(PPC64LE)
+    // ELFv2 requires a called C function to save the caller's LR at 16(sp)
+    // and TOC at 24(sp) *before* allocating its own frame — writing into the
+    // caller's frame. This native thunk's frame is just the 2-word JS call
+    // header, so 16(sp)/24(sp) alias the codeBlock and callee slots. Reserve
+    // a scratch linkage+param area (matching every other C-call site) so the
+    // host clobbers scratch instead of the live JS call frame. sp is reset
+    // from fp by emitFunctionEpilogue / the exception handler, so no explicit
+    // restore is needed.
+    if (maxFrameExtentForSlowPathCall)
+        jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
+#endif
+
     if (includeDebuggerHook == IncludeDebuggerHook::Yes) {
         jit.move(JSInterfaceJIT::framePointerRegister, GPRInfo::argumentGPR0);
         jit.callOperation<OperationPtrTag>(operationDebuggerWillCallNativeExecutable);
