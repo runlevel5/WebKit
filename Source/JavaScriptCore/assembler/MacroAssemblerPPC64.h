@@ -814,6 +814,11 @@ public:
         moveImmToScratch(imm.m_value, dataTempRegister);
         m_assembler.and_(dest, dataTempRegister, dest);
     }
+    void and64(TrustedImmPtr imm, RegisterID dest)
+    {
+        moveImmToScratch(int64_t(imm.asIntptr()), dataTempRegister);
+        m_assembler.and_(dest, dataTempRegister, dest);
+    }
 
     void or64(RegisterID src, RegisterID dest) { m_assembler.or_(dest, src, dest); }
     void or64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.or_(dest, a, b); }
@@ -2388,7 +2393,6 @@ public:
     void add64(TrustedImm32, AbsoluteAddress)                    { PPC64_UNIMPLEMENTED(); }
 
     // and64 TrustedImmPtr overload (MacroAssembler::andPtr uses it).
-    void and64(TrustedImmPtr, RegisterID)                        { PPC64_UNIMPLEMENTED(); }
 
     // 64-bit shifts (MacroAssembler::lshiftPtr / rshiftPtr / urshiftPtr).
 

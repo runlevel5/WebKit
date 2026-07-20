@@ -909,11 +909,15 @@ end
 if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     const CalleeSaveRegisterCount = 0
 elsif PPC64LE
-    # 80 bytes total: r25..r30 saves at cfr-80..cfr-40 (6 regs * 8 = 48 bytes
-    # of useful data) plus a 32-byte gap at cfr-40..cfr-8 reserved for the
-    # LLInt's preserveCalleeSavesUsedByLLInt (csr6..csr9, written at fixed
-    # cfr-32..cfr-8 offsets).  Counting in 8-byte slots: 10.
-    const CalleeSaveRegisterCount = 10
+    # 96 bytes total: r24 (csr10) at cfr-96, r25..r30 at cfr-80..cfr-40
+    # (7 saved regs), the fixed cfr-32..cfr-8 window reserved for the LLInt's
+    # preserveCalleeSavesUsedByLLInt (csr6..csr9), and an 8-byte alignment
+    # gap at cfr-88.  Counting in 8-byte slots: 12.  r24 (csr10) MUST be here:
+    # it is C-callee-saved and used by JS-entry dispatch / IPInt (sc3, PL), but
+    # is not one of GPRInfo's regCS0-9 (r14-r23) so preserveCalleeSavesUsedByLLInt
+    # never saves it; omitting it corrupts the C caller's r24 across vmEntry
+    # (crashed executeEval on eval("...") under --useJIT=1).
+    const CalleeSaveRegisterCount = 12
 elsif ARMv7
     const CalleeSaveRegisterCount = 5 + 2 * 2 // 5 32-bit GPRs + 2 64-bit FPRs
 end
@@ -931,21 +935,22 @@ macro pushCalleeSaves()
     # callee save in the JIT ABI.
     if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     elsif PPC64LE
-        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  r14-r24 (csr0-csr10)
-        # are JIT-callee-saved and handled by preserveCalleeSavesUsedByLLInt
-        # later; r31 is cfr.  r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp
-        # pool) are callee-saved by the C ABI yet treated as scratch by the
-        # JIT, so we save them here at every C entry point.
-        # Layout: allocate 80 bytes; place r25..r30 at cfr-80..cfr-40, leaving
-        # cfr-40..cfr-8 free for preserveCalleeSavesUsedByLLInt to write
-        # csr6..csr9 at its fixed cfr-32..cfr-8 offsets.
-        emit "stdu 1, -80(1)"
-        emit "std 25, 0(1)"
-        emit "std 26, 8(1)"
-        emit "std 27, 16(1)"
-        emit "std 28, 24(1)"
-        emit "std 29, 32(1)"
-        emit "std 30, 40(1)"
+        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  csr0-csr9 (r14-r23)
+        # are handled by preserveCalleeSavesUsedByLLInt / JIT prologues; r31 is
+        # cfr.  r24 (csr10), r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp pool)
+        # are callee-saved by the C ABI yet treated as scratch by the JIT and
+        # used by JS-entry dispatch, so we save them here at every C entry point.
+        # Layout: allocate 96 bytes; r24 at cfr-96, r25..r30 at cfr-80..cfr-40
+        # (an 8-byte alignment gap sits at cfr-88), leaving cfr-32..cfr-8 free
+        # for preserveCalleeSavesUsedByLLInt to write csr6..csr9.
+        emit "stdu 1, -96(1)"
+        emit "std 24, 0(1)"
+        emit "std 25, 16(1)"
+        emit "std 26, 24(1)"
+        emit "std 27, 32(1)"
+        emit "std 28, 40(1)"
+        emit "std 29, 48(1)"
+        emit "std 30, 56(1)"
     elsif ARMv7
         emit "vpush.64 {d14, d15}"
         emit "push {r4-r6, r8-r9}"
@@ -955,17 +960,18 @@ end
 macro popCalleeSaves()
     if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     elsif PPC64LE
-        # Caller has set sp = cfr - CalleeRegisterSaveSize (= cfr - 80) so the
-        # saved r25..r30 sit at sp+0..sp+40.  Reload them, then advance sp past
-        # the entire 80-byte sub-frame so functionEpilogue's pop reads the
-        # saved cfr/lr from sp+0/sp+8.
-        emit "ld 25, 0(1)"
-        emit "ld 26, 8(1)"
-        emit "ld 27, 16(1)"
-        emit "ld 28, 24(1)"
-        emit "ld 29, 32(1)"
-        emit "ld 30, 40(1)"
-        emit "addi 1, 1, 80"
+        # Caller has set sp = cfr - CalleeRegisterSaveSize (= cfr - 96) so the
+        # saved r24 sits at sp+0 and r25..r30 at sp+16..sp+56.  Reload them,
+        # then advance sp past the entire 96-byte sub-frame so functionEpilogue's
+        # pop reads the saved cfr/lr from sp+0/sp+8.
+        emit "ld 24, 0(1)"
+        emit "ld 25, 16(1)"
+        emit "ld 26, 24(1)"
+        emit "ld 27, 32(1)"
+        emit "ld 28, 40(1)"
+        emit "ld 29, 48(1)"
+        emit "ld 30, 56(1)"
+        emit "addi 1, 1, 96"
     elsif ARMv7
         emit "pop {r4-r6, r8-r9}"
         emit "vpop.64 {d14, d15}"
