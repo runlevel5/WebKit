@@ -2351,6 +2351,11 @@ public:
         m_assembler.ld(dataTempRegister, 0, memoryTempRegister);
         farJump(dataTempRegister, tag);
     }
+    void farJump(TrustedImmPtr imm, PtrTag tag)
+    {
+        moveImmToScratch(int64_t(imm.asIntptr()), dataTempRegister);
+        farJump(dataTempRegister, tag);
+    }
     void farJump(RegisterID target, RegisterID)                            { farJump(target, NoPtrTag); }
     void farJump(Address address, RegisterID)                              { farJump(address, NoPtrTag); }
 
@@ -2774,7 +2779,6 @@ public:
     void lshift64(Address, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
     // farJump with TrustedImmPtr target — LLIntThunks.
-    void farJump(TrustedImmPtr, PtrTag)                                    { PPC64_UNIMPLEMENTED(); }
 
     // branchAdd32 with TrustedImm32 + Address — JITOpcodes.
     Jump branchAdd32(ResultCondition, TrustedImm32, Address)               { PPC64_UNIMPLEMENTED(); return Jump(); }
