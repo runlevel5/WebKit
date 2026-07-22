@@ -425,7 +425,7 @@ public:
     void emitSaveThenMaterializeTagRegisters()
     {
 #if USE(JSVALUE64)
-#if CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
         pushPair(GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
 #else
         push(GPRInfo::numberTagRegister);
@@ -438,7 +438,7 @@ public:
     void emitRestoreSavedTagRegisters()
     {
 #if USE(JSVALUE64)
-#if CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
         popPair(GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
 #else
         pop(GPRInfo::notCellMaskRegister);
