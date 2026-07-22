@@ -134,6 +134,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallGenerator(VM& vm)
 
     jit.emitFunctionPrologue();
 
+#if CPU(PPC64LE)
+    // ELFv2: the C call below has its callee save our LR/TOC at 16(sp)/24(sp),
+    // which alias this frame's codeBlock/callee slots. Reserve a scratch
+    // linkage area first (the exception handler resets sp, so no restore).
+    if (maxFrameExtentForSlowPathCall)
+        jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
+#endif
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
     jit.prepareCallOperation(vm);
@@ -156,6 +163,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallSlowPathGenerator(VM
     // even though we won't use it.
     jit.preserveReturnAddressAfterCall(GPRInfo::nonPreservedNonReturnGPR);
 
+#if CPU(PPC64LE)
+    // ELFv2: reserve a scratch linkage area so the C call's LR/TOC save at
+    // 16(sp)/24(sp) does not clobber a live call frame's codeBlock/callee.
+    if (maxFrameExtentForSlowPathCall)
+        jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
+#endif
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
 
     jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
