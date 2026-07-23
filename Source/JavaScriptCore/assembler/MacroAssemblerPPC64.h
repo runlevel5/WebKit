@@ -544,6 +544,18 @@ public:
         m_assembler.ori(scratch, scratch, uint16_t(value));
     }
 
+    // Fixed-width 5-instruction li64 (never optimized), so the sequence can be
+    // rewritten in place by PPC64Assembler::repatchPointer / linkPointer. This
+    // is the emit-side twin of writeLi64 — used by the *WithPatch primitives.
+    void moveFixedLi64(RegisterID dest, uint64_t value)
+    {
+        m_assembler.lis(dest, int16_t(uint16_t(value >> 48)));
+        m_assembler.ori(dest, dest, uint16_t(value >> 32));
+        m_assembler.rldicr(dest, dest, 32, 31);
+        m_assembler.oris(dest, dest, uint16_t(value >> 16));
+        m_assembler.ori(dest, dest, uint16_t(value));
+    }
+
     // Compute an Address / BaseIndex effective address into `dest`
     // (which may be memoryTempRegister).  Returns the base register and
     // a 16-bit displacement usable directly in a D-form access when
@@ -2383,8 +2395,17 @@ public:
     Jump branch32WithPatch(RelationalCondition, Address, DataLabel32&, TrustedImm32 = TrustedImm32(0))           { PPC64_UNIMPLEMENTED(); return Jump(); }
 
     // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
-    void abortWithReason(AbortReason)                { PPC64_UNIMPLEMENTED(); }
-    void abortWithReason(AbortReason, intptr_t)      { PPC64_UNIMPLEMENTED(); }
+    void abortWithReason(AbortReason reason)
+    {
+        moveImmToScratch(static_cast<int64_t>(reason), dataTempRegister);
+        breakpoint();
+    }
+    void abortWithReason(AbortReason reason, intptr_t misc)
+    {
+        moveImmToScratch(static_cast<int64_t>(reason), dataTempRegister);
+        moveImmToScratch(static_cast<int64_t>(misc), memoryTempRegister);
+        breakpoint();
+    }
 
     // Additional add64 overloads required by MacroAssembler.h addPtr wrappers.
     void add64(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
@@ -2451,9 +2472,21 @@ public:
     void urshift32(TrustedImm32, RegisterID, RegisterID)                     { PPC64_UNIMPLEMENTED(); }
 
     // Additional branchAdd32 / branchMul32 / branchSub32 overloads.
-    Jump branchAdd32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchMul32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchSub32(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchAdd32(ResultCondition cond, RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchAdd32(cond, src, memoryTempRegister, dest);
+    }
+    Jump branchMul32(ResultCondition cond, RegisterID op1, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchMul32(cond, op1, memoryTempRegister, dest);
+    }
+    Jump branchSub32(ResultCondition cond, RegisterID op1, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchSub32(cond, op1, memoryTempRegister, dest);
+    }
 
     // ------------------------------------------------------------------
     // Calls.
@@ -2652,7 +2685,12 @@ public:
     // add32 with TrustedImm32 + AbsoluteAddress — DFGOSRExitCompilerCommon.cpp:52
 
     // moveWithPatch — DFGLazyJSValue.cpp:252.  Returns DataLabelPtr / DataLabel32.
-    DataLabelPtr moveWithPatch(TrustedImmPtr, RegisterID)                  { PPC64_UNIMPLEMENTED(); return DataLabelPtr(); }
+    DataLabelPtr moveWithPatch(TrustedImmPtr initialValue, RegisterID dest)
+    {
+        DataLabelPtr label(this);
+        moveFixedLi64(dest, uint64_t(initialValue.asIntptr()));
+        return label;
+    }
     DataLabel32 moveWithPatch(TrustedImm32, RegisterID)                    { PPC64_UNIMPLEMENTED(); return DataLabel32(); }
 
     // load32 with absolute pointer — DFGSpeculativeJIT.cpp:511.
@@ -2695,7 +2733,11 @@ public:
     // (branch64(RelationalCondition, Address, RegisterID) is already declared above.)
 
     // branchAdd32 with Address operand — DFG.
-    Jump branchAdd32(ResultCondition, Address, RegisterID)                 { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchAdd32(ResultCondition cond, Address address, RegisterID dest)
+    {
+        load32(address, dataTempRegister);
+        return branchAdd32(cond, dataTempRegister, dest, dest);
+    }
 
     // transfer64 / transferVector / storePair32 — memory shuffles.
     void transferVector(Address, Address)                                  { PPC64_UNIMPLEMENTED(); }
@@ -2785,8 +2827,43 @@ public:
     // farJump with TrustedImmPtr target — LLIntThunks.
 
     // branchAdd32 with TrustedImm32 + Address — JITOpcodes.
-    Jump branchAdd32(ResultCondition, TrustedImm32, Address)               { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAdd32(ResultCondition, TrustedImm32, AbsoluteAddress)       { PPC64_UNIMPLEMENTED(); return Jump(); }
+    // In-memory add: [address] += imm, then branch on the 32-bit result. The
+    // store MUST be emitted before the branch. Assumes an in-range (non-scratch
+    // base) Address, which is the DFG/baseline norm; memoryTempRegister is then
+    // free to hold the immediate.
+    Jump branchAdd32(ResultCondition cond, TrustedImm32 imm, Address address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dataTempRegister, r.offset, r.base);
+        m_assembler.extsw(dataTempRegister, dataTempRegister);
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
+        m_assembler.stw(dataTempRegister, r.offset, r.base);
+        if (cond == Overflow) {
+            m_assembler.extsw(memoryTempRegister, dataTempRegister);
+            m_assembler.cmpd(0, dataTempRegister, memoryTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        }
+        m_assembler.rldicl(dataTempRegister, dataTempRegister, 0, 32);
+        return branchTestImpl32(resultConditionForArith(cond), dataTempRegister);
+    }
+    Jump branchAdd32(ResultCondition cond, TrustedImm32 imm, AbsoluteAddress address)
+    {
+        moveToAbsolute(address.m_ptr);                          // memoryTemp = &address
+        m_assembler.lwz(dataTempRegister, 0, memoryTempRegister);
+        m_assembler.extsw(dataTempRegister, dataTempRegister);  // dataTemp = value
+        moveImmToScratch(imm.m_value, memoryTempRegister);      // memoryTemp = imm
+        m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
+        moveToAbsolute(address.m_ptr);                          // re-materialize constant addr
+        m_assembler.stw(dataTempRegister, 0, memoryTempRegister);
+        if (cond == Overflow) {
+            m_assembler.extsw(memoryTempRegister, dataTempRegister);
+            m_assembler.cmpd(0, dataTempRegister, memoryTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        }
+        m_assembler.rldicl(dataTempRegister, dataTempRegister, 0, 32);
+        return branchTestImpl32(resultConditionForArith(cond), dataTempRegister);
+    }
 
     // convertInt32ToFloat — Wasm float conversion.
     void convertInt32ToFloat(RegisterID, FPRegisterID)                     { PPC64_UNIMPLEMENTED(); }
@@ -2819,18 +2896,38 @@ public:
     // 64-bit logical 3-arg form — JITInlines.h. (or64 RegisterID×3 already declared above.)
 
     // storePtrWithPatch / storePtr-with-patch + patch label — CallLinkInfo.cpp.
-    DataLabelPtr storePtrWithPatch(TrustedImmPtr, Address)                { PPC64_UNIMPLEMENTED(); return DataLabelPtr(); }
-    DataLabelPtr storePtrWithPatch(Address)                               { PPC64_UNIMPLEMENTED(); return DataLabelPtr(); }
+    DataLabelPtr storePtrWithPatch(TrustedImmPtr initialValue, Address address)
+    {
+        DataLabelPtr label = moveWithPatch(initialValue, dataTempRegister);
+        store64(dataTempRegister, address);
+        return label;
+    }
+    DataLabelPtr storePtrWithPatch(Address address)
+    {
+        return storePtrWithPatch(TrustedImmPtr(nullptr), address);
+    }
 
     // Static patch helpers — JIT compile-time stubs (Phase 1 placeholders).
     template<PtrTag startTag, PtrTag destTag>
-    static void replaceWithJump(CodeLocationLabel<startTag>, CodeLocationLabel<destTag>) { PPC64_UNIMPLEMENTED(); }
+    static void replaceWithJump(CodeLocationLabel<startTag> instructionStart, CodeLocationLabel<destTag> destination)
+    {
+        PPC64Assembler::replaceWithJump(instructionStart.dataLocation(), destination.dataLocation());
+    }
     template<PtrTag startTag>
-    static void replaceWithNops(CodeLocationLabel<startTag>, size_t)      { PPC64_UNIMPLEMENTED(); }
+    static void replaceWithNops(CodeLocationLabel<startTag> instructionStart, size_t memoryToFillWithNopsInBytes)
+    {
+        PPC64Assembler::fillNops(instructionStart.dataLocation(), memoryToFillWithNopsInBytes);
+    }
     template<PtrTag callTag, PtrTag destTag>
-    static void repatchCall(CodeLocationCall<callTag>, CodeLocationLabel<destTag>) { PPC64_UNIMPLEMENTED(); }
+    static void repatchCall(CodeLocationCall<callTag> call, CodeLocationLabel<destTag> destination)
+    {
+        PPC64Assembler::relinkCall(call.dataLocation(), destination.taggedPtr());
+    }
     template<PtrTag callTag, PtrTag destTag>
-    static void repatchCall(CodeLocationCall<callTag>, CodePtr<destTag>)  { PPC64_UNIMPLEMENTED(); }
+    static void repatchCall(CodeLocationCall<callTag> call, CodePtr<destTag> destination)
+    {
+        PPC64Assembler::relinkCall(call.dataLocation(), destination.taggedPtr());
+    }
 
     // Required by LinkBuffer — Phase 1 stub.
     friend class LinkBuffer;
