@@ -31,6 +31,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(DFG_JIT)
 
 #include "AtomicsObject.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrameShuffler.h"
 #include "ClonedArguments.h"
@@ -1103,7 +1104,20 @@ void SpeculativeJIT::emitCall(Node* node)
             if (isX86())
                 pop(selectScratchGPR(calleeGPR));
 
+#if CPU(PPC64LE)
+            // The direct-call fast path stages the callee frame at [sp+0..]. On ELFv2 a called C
+            // function saves the caller's LR at 16(sp) and TOC at 24(sp) — which here are the
+            // staged frame's argumentCountIncludingThis and thisArgument slots. mainPath re-enters
+            // *after* those stores, so the clobber would never be repaired. Reserve the linkage
+            // area below the staged frame so the C prologue's saves land in scratch, then restore.
+            if (maxFrameExtentForSlowPathCall)
+                addPtr(TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), stackPointerRegister);
             callOperation(operationLinkDirectCall, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR);
+            if (maxFrameExtentForSlowPathCall)
+                addPtr(TrustedImm32(maxFrameExtentForSlowPathCall), stackPointerRegister);
+#else
+            callOperation(operationLinkDirectCall, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR);
+#endif
             jump().linkTo(mainPath, this);
 
             done.link(this);
