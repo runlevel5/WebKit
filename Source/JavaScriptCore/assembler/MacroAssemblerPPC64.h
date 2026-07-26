@@ -2539,7 +2539,14 @@ public:
         AssemblerLabel label = m_assembler.emitUnlinkedCall();
         if (cCall)
             emitCCallGuardPost();
-        return Call(label, Call::LinkableNear);
+        // General repatchable call (callOperation etc.): must be Linkable and NOT
+        // Near — locationOf()/link() require a non-near call, and JITMathIC queries
+        // locationOf(slowPathCall) to repatch it. Flagging it Near made locationOf
+        // return a bogus location (RELEASE builds silently repatched the wrong PC →
+        // code corruption; the exact fallout was ASLR/layout-sensitive). Only
+        // nearCall() is LinkableNear. On PPC both link via the same applyCallSlot,
+        // so the flag only affects location/repatch routing, not the emitted slot.
+        return Call(label, Call::Linkable);
     }
 
     Call call(RegisterID target, PtrTag tag)
