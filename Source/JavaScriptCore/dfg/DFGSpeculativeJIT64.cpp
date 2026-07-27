@@ -1105,6 +1105,15 @@ void SpeculativeJIT::emitCall(Node* node)
                 pop(selectScratchGPR(calleeGPR));
 
 #if CPU(PPC64LE)
+            // calleeGPR is dead once the callee has been stored into the staged frame (well
+            // before mainPath), so the register allocator reuses it. On a RELINK (e.g. the
+            // callee tiers up and the near-call is reset to the slow path) we re-enter here
+            // with a STALE calleeGPR — observed holding the staged CodeBlock — and passed it
+            // to operationLinkDirectCall, whose callee->realm() then hit the "realmless
+            // structure" RELEASE_ASSERT (a CodeBlock has a realmless structure). Reload the
+            // callee from the slot it was just stored to (calleeFrameSlot(callee)) so the
+            // operation always sees the real JSFunction. Deterministic under threshold=10.
+            load64(calleeFrameSlot(CallFrameSlot::callee), calleeGPR);
             // The direct-call fast path stages the callee frame at [sp+0..]. On ELFv2 a called C
             // function saves the caller's LR at 16(sp) and TOC at 24(sp) — which here are the
             // staged frame's argumentCountIncludingThis and thisArgument slots. mainPath re-enters
