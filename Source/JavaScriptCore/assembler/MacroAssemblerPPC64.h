@@ -2941,9 +2941,15 @@ public:
     template<PtrTag tag>
     static void linkCall(void* code, Call call, CodePtr<tag> function)
     {
-        if (!call.isFlagSet(Call::Near))
-            PPC64Assembler::linkPointer(code, call.m_label.labelAtOffset(0), function.taggedPtr());
-        else if (call.isFlagSet(Call::Tail))
+        // Every call() / nearCall() emits the same 8-insn emitUnlinkedCall slot, so
+        // it must be linked with applyCallSlot (which writes the target + mtctr + bctrl,
+        // or a bl when in range). Only a tail call is a jump. The Near flag merely
+        // distinguishes location/repatch routing (locationOf vs locationOfNearCall) —
+        // it does NOT change how the slot is linked. The old `!Near → linkPointer`
+        // branch was dead while call() wrongly returned LinkableNear; once call()
+        // became Linkable it wrote a bctrl-less li64 pointer into an 8-insn call slot
+        // (→ fall-through to pc=0). Route all non-tail calls through applyCallSlot.
+        if (call.isFlagSet(Call::Tail))
             PPC64Assembler::linkJump(code, call.m_label, function.untaggedPtr());
         else
             PPC64Assembler::linkCall(code, call.m_label, function.untaggedPtr());
