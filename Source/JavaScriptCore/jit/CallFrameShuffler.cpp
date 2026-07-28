@@ -411,6 +411,11 @@ void CallFrameShuffler::prepareForTailCall()
     // sp will point to head1 since the callee's prologue pushes
     // the call frame register
     m_newFrameOffset = -1;
+#elif CPU(PPC64LE)
+    // Like ARM64/RISCV64: the callee's prologue spills the caller fp and the
+    // return PC (2 machine words), so sp will point to head2. The link register
+    // is loaded manually below.
+    m_newFrameOffset = -2;
 #else
     UNREACHABLE_FOR_PLATFORM();
 #endif
@@ -453,6 +458,11 @@ void CallFrameShuffler::prepareForTailCall()
     m_jit.validateUntaggedPtr(MacroAssembler::linkRegister);
 #endif
 
+#elif CPU(PPC64LE)
+    // linkRegister is an r0 placeholder on PPC; loadPtr into it would not touch
+    // the real LR. Load the caller's return PC and commit it to LR via mtlr, so
+    // the tail-callee returns to the caller's caller.
+    m_jit.restoreReturnAddressBeforeReturn(MacroAssembler::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()));
 #endif
 
     // We want the frame pointer to always point to a valid frame, and
