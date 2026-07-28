@@ -2448,9 +2448,33 @@ public:
     // branchAdd64 / branchSub64 (MacroAssembler::branchAddPtr/branchSubPtr)
     Jump branchAdd64(ResultCondition, TrustedImm32, RegisterID)              { PPC64_UNIMPLEMENTED(); return Jump(); }
     Jump branchAdd64(ResultCondition, RegisterID, RegisterID)                { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchSub64(ResultCondition, TrustedImm32, RegisterID)              { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchSub64(ResultCondition, RegisterID, RegisterID)                { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchSub64(ResultCondition, RegisterID, TrustedImm32, RegisterID)  { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchSub64(ResultCondition cond, RegisterID left, RegisterID right, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            // Signed a-b overflows iff (a^b) & (a^result) is negative. Save the
+            // original left first, since dest may alias it.
+            m_assembler.mr(dataTempRegister, left);
+            sub64(left, right, dest);
+            xor64(dataTempRegister, right, memoryTempRegister);   // origLeft ^ right
+            xor64(dataTempRegister, dest, dataTempRegister);      // origLeft ^ result
+            m_assembler.and_(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.cmpdi(0, dataTempRegister, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 0));   // branch if LT (negative => overflow)
+        }
+        sub64(left, right, dest);
+        return branchTest64Impl(resultConditionForArith(cond), dest);
+    }
+    Jump branchSub64(ResultCondition cond, RegisterID src, RegisterID dest)              { return branchSub64(cond, dest, src, dest); }
+    Jump branchSub64(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchSub64(cond, dest, memoryTempRegister, dest);
+    }
+    Jump branchSub64(ResultCondition cond, RegisterID left, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchSub64(cond, left, memoryTempRegister, dest);
+    }
 
     // move(TrustedImm64) — used by blinding helpers in MacroAssembler.
 

@@ -869,6 +869,12 @@ public:
 #elif CPU(X86_64)
         push(Address(framePointerRegister, sizeof(void*)));
         subPtr(TrustedImm32(sizeof(void*)), newFrameSizeGPR);
+#elif CPU(PPC64LE)
+        // linkRegister is an r0 placeholder on PPC; commit the caller's return PC
+        // to the real LR (mtlr). Like ARM64, the callee prologue re-pushes fp +
+        // returnPC, so the new frame's counted size excludes those two header words.
+        restoreReturnAddressBeforeReturn(Address(framePointerRegister, CallFrame::returnPCOffset()));
+        subPtr(TrustedImm32(2 * sizeof(void*)), newFrameSizeGPR);
 #else
         UNREACHABLE_FOR_PLATFORM();
 #endif
