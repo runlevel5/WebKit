@@ -2707,7 +2707,25 @@ public:
     // 3-arg add32 — DFGSpeculativeJIT.cpp:2693.
 
     // FP truncate / convert / zero-to-double — DFGSpeculativeJIT.cpp.
-    void branchConvertDoubleToInt32(FPRegisterID, RegisterID, JumpList&, FPRegisterID, bool = true) { PPC64_UNIMPLEMENTED(); }
+    void branchConvertDoubleToInt32(FPRegisterID src, RegisterID dest, JumpList& failureCases, FPRegisterID fpTemp, bool negZeroCheck = true)
+    {
+        // Convert the (integer-valued) double to int32 via round-toward-zero,
+        // then round-trip back to double and compare: any mismatch or unordered
+        // result (NaN, or an out-of-int32-range value that fctiwz saturated to
+        // INT32_MIN/MAX) means the double was not an exact int32 -> failure.
+        m_assembler.fctiwz(fpTempRegister, src);
+        m_assembler.mfvsrwz(dest, fpTempRegister);
+        convertInt32ToDouble(dest, fpTemp);
+        failureCases.append(branchDouble(DoubleNotEqualOrUnordered, src, fpTemp));
+
+        // Negative zero: dest == 0 but src has its sign bit set (src == -0.0).
+        if (negZeroCheck) {
+            Jump valueIsNonZero = branchTest32(NonZero, dest);
+            moveDoubleTo64(src, dataTempRegister);
+            failureCases.append(branch64(LessThan, dataTempRegister, TrustedImm64(0)));
+            valueIsNonZero.link(this);
+        }
+    }
 
     // FP rounding / arithmetic — DFGSpeculativeJIT.
 
