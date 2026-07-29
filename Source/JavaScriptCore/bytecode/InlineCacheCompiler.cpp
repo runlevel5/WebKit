@@ -1400,8 +1400,22 @@ void InlineCacheCompiler::emitDataICPrepareForCall(CCallHelpers& jit)
     static_assert(!maxFrameExtentForSlowPathCall);
     jit.pushPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
 #elif CPU(PPC64LE)
-    // Phase 2 stub: JIT does not run yet on PPC64LE.
-    UNUSED_PARAM(jit);
+    static_assert(!!maxFrameExtentForSlowPathCall);
+    // The DataIC handler is entered as a leaf with its return address live in
+    // LR (set by the bctrl at the IC call site) and the caller's fp unchanged.
+    // Before making the nested slow-path C call — which clobbers LR — spill a
+    // 16-byte JSC frame header ([sp] = fp, [sp+8] = return address) so that
+    // emitDataICRestoreAfterCall's emitFunctionEpilogueWithEmptyFrame() can
+    // reload LR afterwards. Unlike a normal prologue we must NOT set fp = sp
+    // (the handler keeps the caller's callFrameRegister). linkRegister is only
+    // an r0 placeholder on PPC, so read the real LR via moveFromLR rather than
+    // pushPair. Then reserve the ELFv2 linkage + parameter save area for the
+    // call, matching the addPtr(maxFrameExtentForSlowPathCall) on restore.
+    jit.sub64(CCallHelpers::TrustedImm32(16), CCallHelpers::stackPointerRegister);
+    jit.store64(CCallHelpers::framePointerRegister, CCallHelpers::Address(CCallHelpers::stackPointerRegister));
+    jit.moveFromLR(CCallHelpers::dataTempRegister);
+    jit.store64(CCallHelpers::dataTempRegister, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 8));
+    jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
 #endif
 }
 
