@@ -637,19 +637,24 @@ public:
 
     void emitCompare32(RelationalCondition cond, RegisterID left, TrustedImm32 right)
     {
+        // The immediate scratch must not alias `left`: callers such as
+        // branch32(Address, TrustedImm32) load the memory operand into
+        // dataTempRegister and pass it as `left`, so materializing the
+        // immediate there would clobber it before the compare.
+        RegisterID scratch = (left == dataTempRegister) ? memoryTempRegister : dataTempRegister;
         if (isUnsignedCondition(cond)) {
             if (isUInt16(uint32_t(right.m_value)))
                 m_assembler.cmplwi(0, left, uint16_t(right.m_value));
             else {
-                moveImmToScratch(uint32_t(right.m_value), dataTempRegister);
-                m_assembler.cmplw(0, left, dataTempRegister);
+                moveImmToScratch(uint32_t(right.m_value), scratch);
+                m_assembler.cmplw(0, left, scratch);
             }
         } else {
             if (isInt16(right.m_value))
                 m_assembler.cmpwi(0, left, int16_t(right.m_value));
             else {
-                moveImmToScratch(right.m_value, dataTempRegister);
-                m_assembler.cmpw(0, left, dataTempRegister);
+                moveImmToScratch(right.m_value, scratch);
+                m_assembler.cmpw(0, left, scratch);
             }
         }
     }
@@ -664,19 +669,21 @@ public:
 
     void emitCompare64(RelationalCondition cond, RegisterID left, TrustedImm64 right)
     {
+        // See emitCompare32: the immediate scratch must not alias `left`.
+        RegisterID scratch = (left == dataTempRegister) ? memoryTempRegister : dataTempRegister;
         if (isUnsignedCondition(cond)) {
             if (isUInt16(right.m_value))
                 m_assembler.cmpldi(0, left, uint16_t(right.m_value));
             else {
-                moveImmToScratch(right.m_value, dataTempRegister);
-                m_assembler.cmpld(0, left, dataTempRegister);
+                moveImmToScratch(right.m_value, scratch);
+                m_assembler.cmpld(0, left, scratch);
             }
         } else {
             if (isInt16(right.m_value))
                 m_assembler.cmpdi(0, left, int16_t(right.m_value));
             else {
-                moveImmToScratch(right.m_value, dataTempRegister);
-                m_assembler.cmpd(0, left, dataTempRegister);
+                moveImmToScratch(right.m_value, scratch);
+                m_assembler.cmpd(0, left, scratch);
             }
         }
     }
