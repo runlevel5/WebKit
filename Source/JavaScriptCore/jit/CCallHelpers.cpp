@@ -93,7 +93,15 @@ void CCallHelpers::emitCTIThunkPrologue(bool returnAddressAlreadyTagged)
         tagReturnAddress();
 #if CPU(X86_64)
     push(X86Registers::ebp); // return address pushed by the call instruction
-#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(PPC64LE)
+    // linkRegister is only an r0 placeholder on PPC; the real return address
+    // lives in the LR special register. Read it into a scratch before pushing
+    // so the nested operation call (which clobbers LR via bctrl) can't lose it.
+    // emitCTIThunkEpilogue pops it back and restores LR, so the tail jump to
+    // CheckException returns to the caller correctly.
+    moveFromLR(dataTempRegister);
+    pushPair(framePointerRegister, dataTempRegister);
+#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64)
     pushPair(framePointerRegister, linkRegister);
 #else
 #   error "Not implemented on platform"
@@ -111,7 +119,12 @@ void CCallHelpers::emitCTIThunkEpilogue()
     // Restore frame pointer and return address
 #if CPU(X86_64)
     pop(X86Registers::ebp); // Return address left on stack
-#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(PPC64LE)
+    // Restore fp and the real return address (see emitCTIThunkPrologue), then
+    // write it back to LR so the subsequent tail jump / ret returns correctly.
+    popPair(framePointerRegister, dataTempRegister);
+    moveToLR(dataTempRegister);
+#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64)
     popPair(framePointerRegister, linkRegister);
 #else
 #   error "Not implemented on platform"
