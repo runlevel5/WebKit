@@ -862,7 +862,13 @@ public:
 class GPRInfo {
 public:
     typedef GPRReg RegisterType;
-    static constexpr unsigned numberOfRegisters = 8;
+    // 8 volatile temps (r3-r10) plus the 6 non-reserved callee-saved GPRs
+    // (r14-r19 = regCS0-regCS5). regCS6-9 (r20-r23) are reserved for
+    // metadataTable/jitData/numberTag/notCellMask and stay out of the pool.
+    // The callee-saves are in calleeSaveRegisters() so the register allocator
+    // preserves them; a larger pool is needed for complex inline caches
+    // (put_by_val_direct, defineProperty) which otherwise exhaust scratch GPRs.
+    static constexpr unsigned numberOfRegisters = 14;
     static constexpr unsigned numberOfArgumentRegisters = NUMBER_OF_ARGUMENT_REGISTERS;
 
     static constexpr GPRReg callFrameRegister    = PPC64Registers::fp;       // r31
@@ -944,6 +950,8 @@ public:
         ASSERT_UNDER_CONSTEXPR_CONTEXT(index < numberOfRegisters);
         constexpr GPRReg registerForIndex[numberOfRegisters] = {
             regT0, regT1, regT2, regT3, regT4, regT5, regT6, regT7,
+            // Callee-saved temps last so the allocator prefers volatiles.
+            regCS0, regCS1, regCS2, regCS3, regCS4, regCS5,
         };
         return registerForIndex[index];
     }
@@ -965,10 +973,11 @@ public:
         static const unsigned indexForRegister[32] = {
             // r0-r7
             InvalidIndex, InvalidIndex, InvalidIndex, 0, 1, 2, 3, 4,
-            // r8-r15: r8-r10 are regT5-7; r11/r12 excluded (assembler scratch)
-            5, 6, 7, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex,
-            // r16-r23: callee-saves, not in temp pool
-            InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex,
+            // r8-r15: r8-r10 are regT5-7; r11/r12 excluded (assembler scratch);
+            // r13 reserved (thread ptr); r14/r15 = regCS0/regCS1 pool indices 8/9.
+            5, 6, 7, InvalidIndex, InvalidIndex, InvalidIndex, 8, 9,
+            // r16-r23: r16-r19 = regCS2-regCS5 pool indices 10-13; r20-r23 reserved.
+            10, 11, 12, 13, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex,
             // r24-r31: callee-saves / cfr
             InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex,
         };
