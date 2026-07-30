@@ -2528,7 +2528,11 @@ public:
 
     // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
     void sub64(RegisterID, TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void compare64(RelationalCondition, RegisterID, TrustedImm64, RegisterID){ PPC64_UNIMPLEMENTED(); }
+    void compare64(RelationalCondition cond, RegisterID left, TrustedImm64 right, RegisterID dest)
+    {
+        emitCompare64(cond, left, right);
+        setFromCondition(cond, dest);
+    }
 
     // move32ToFloat / move64ToDouble with immediate forms.
 
