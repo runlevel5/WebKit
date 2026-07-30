@@ -2541,9 +2541,26 @@ public:
     // 3-operand 32-bit forms (MacroAssembler blinding helpers + lea32).
 
     // 3-operand 32-bit shifts.
-    void lshift32(TrustedImm32, RegisterID, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
-    void rshift32(TrustedImm32, RegisterID, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
-    void urshift32(TrustedImm32, RegisterID, RegisterID)                     { PPC64_UNIMPLEMENTED(); }
+    // Shift an immediate value by a register count (dest = imm OP (count & 31)).
+    void lshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, dataTempRegister);
+        m_assembler.rlwinm(memoryTempRegister, shiftAmount, 0, 27, 31);   // count & 31
+        m_assembler.slw(dest, dataTempRegister, memoryTempRegister);      // slw zero-extends
+    }
+    void rshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, dataTempRegister);
+        m_assembler.rlwinm(memoryTempRegister, shiftAmount, 0, 27, 31);
+        m_assembler.sraw(dest, dataTempRegister, memoryTempRegister);
+        zeroExtend32ToWordInternal(dest);                                // sraw sign-extends
+    }
+    void urshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, dataTempRegister);
+        m_assembler.rlwinm(memoryTempRegister, shiftAmount, 0, 27, 31);
+        m_assembler.srw(dest, dataTempRegister, memoryTempRegister);      // srw zero-extends
+    }
 
     // Additional branchAdd32 / branchMul32 / branchSub32 overloads.
     Jump branchAdd32(ResultCondition cond, RegisterID src, TrustedImm32 imm, RegisterID dest)
@@ -2910,9 +2927,32 @@ public:
     void move16ToFloat16(RegisterID, FPRegisterID)                         { PPC64_UNIMPLEMENTED(); }
     void moveFloat16To16(FPRegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
 
-    // moveDoubleConditionallyDouble — FP-conditional FP-move.
-    void moveDoubleConditionallyDouble(DoubleCondition, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void moveDoubleConditionallyDouble(DoubleCondition, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    // moveDoubleConditionallyDouble — FP-conditional FP-move. Mirrors
+    // moveConditionallyDouble but moves an FPR (fmr) instead of a GPR (mr).
+    void moveDoubleConditionallyDouble(DoubleCondition cond, FPRegisterID left, FPRegisterID right, FPRegisterID src, FPRegisterID dest)
+    {
+        // dest = cond ? src : dest
+        DoubleBranchBits bits = doubleBranchBitsFor(cond);
+        m_assembler.fcmpu(0, left, right);
+        emitDoubleConditionCRop(bits);
+        emitSkipOneInstruction(bits.bo ^ 0x8, bits.bi); // skip the move when cond is false
+        m_assembler.fmr(dest, src);
+    }
+    void moveDoubleConditionallyDouble(DoubleCondition cond, FPRegisterID left, FPRegisterID right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        // dest = cond ? thenCase : elseCase, handling dest aliasing either input.
+        DoubleBranchBits bits = doubleBranchBitsFor(cond);
+        m_assembler.fcmpu(0, left, right);
+        emitDoubleConditionCRop(bits);
+        if (dest == thenCase) {
+            emitSkipOneInstruction(bits.bo, bits.bi);   // skip when cond true (keep thenCase)
+            m_assembler.fmr(dest, elseCase);
+        } else {
+            m_assembler.fmr(dest, elseCase);            // default to elseCase (no-op if dest==elseCase)
+            emitSkipOneInstruction(bits.bo ^ 0x8, bits.bi); // skip when cond false
+            m_assembler.fmr(dest, thenCase);
+        }
+    }
 
     // 64-bit int ops on FP registers — used for NaN-boxing arithmetic in
     // DFGSpeculativeJIT64.  Implementing these properly will need VSX/VMX
@@ -2955,9 +2995,23 @@ public:
     // not64 — bitwise NOT.
 
     // Atomic 64-bit load — AssemblyHelpers.
-    void atomicLoad64(Address, RegisterID)                                 { PPC64_UNIMPLEMENTED(); }
-    void atomicLoad64(BaseIndex, RegisterID)                               { PPC64_UNIMPLEMENTED(); }
-    void atomicLoad64(const void*, RegisterID)                             { PPC64_UNIMPLEMENTED(); }
+    // A naturally-aligned 64-bit ld is single-copy atomic on PPC64; add an
+    // lwsync after it to give load-acquire ordering (matches loadAcq64 use).
+    void atomicLoad64(Address address, RegisterID dest)
+    {
+        load64(address, dest);
+        m_assembler.lwsync();
+    }
+    void atomicLoad64(BaseIndex address, RegisterID dest)
+    {
+        load64(address, dest);
+        m_assembler.lwsync();
+    }
+    void atomicLoad64(const void* address, RegisterID dest)
+    {
+        load64(address, dest);
+        m_assembler.lwsync();
+    }
 
     // 64-bit shifts with memory source / 3-arg forms.
     void lshift64(Address, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
