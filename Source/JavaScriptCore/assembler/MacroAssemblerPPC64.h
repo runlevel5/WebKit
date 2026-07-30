@@ -701,6 +701,28 @@ public:
             m_assembler.xori(dest, dest, 1);
     }
 
+    // Set dest = 0/1 from CR0 for a test-style ResultCondition. CR0 must
+    // already be set (by cmp against 0). Mirrors branchTest*Impl's bo/bi:
+    // EQ bit (bi=2) for Zero/NonZero, LT bit (bi=0) for Signed/PositiveOrZero;
+    // bo==4 is the bit-clear sense, inverted via xori.
+    void setFromResultCondition(ResultCondition cond, RegisterID dest)
+    {
+        unsigned bi, bo;
+        switch (cond) {
+        case Zero:           bi = 2; bo = 12; break;
+        case NonZero:        bi = 2; bo = 4;  break;
+        case Signed:         bi = 0; bo = 12; break;
+        case PositiveOrZero: bi = 0; bo = 4;  break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            bi = 2; bo = 12; break;
+        }
+        m_assembler.mfcr(dest);
+        m_assembler.rlwinm(dest, dest, bi + 1, 31, 31);
+        if (bo == 4)
+            m_assembler.xori(dest, dest, 1);
+    }
+
     // --- 32-bit arithmetic ---------------------------------------------
 
     void add32(RegisterID src, RegisterID dest) { add32(src, dest, dest); }
@@ -2445,8 +2467,25 @@ public:
     // storePair64 (MacroAssembler::storePairPtr)
 
     // test64 (MacroAssembler::testPtr)
-    void test64(ResultCondition, RegisterID, TrustedImm32, RegisterID)      { PPC64_UNIMPLEMENTED(); }
-    void test64(ResultCondition, RegisterID, RegisterID, RegisterID)        { PPC64_UNIMPLEMENTED(); }
+    void test64(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
+    {
+        if (mask.m_value == -1)
+            m_assembler.mr(dataTempRegister, reg);
+        else if (mask.m_value >= 0 && isUInt16(mask.m_value))
+            m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
+        else {
+            moveImmToScratch(int64_t(mask.m_value), dataTempRegister);
+            m_assembler.and_(dataTempRegister, reg, dataTempRegister);
+        }
+        m_assembler.cmpdi(0, dataTempRegister, 0);
+        setFromResultCondition(cond, dest);
+    }
+    void test64(ResultCondition cond, RegisterID reg, RegisterID mask, RegisterID dest)
+    {
+        m_assembler.and_(dataTempRegister, reg, mask);
+        m_assembler.cmpdi(0, dataTempRegister, 0);
+        setFromResultCondition(cond, dest);
+    }
 
     // Additional branch64 overloads (MacroAssembler::branchPtr)
 
@@ -2707,9 +2746,32 @@ public:
     }
 
     // test32 — DFG/IC test-and-result. Mirrors RISCV64.
-    void test32(ResultCondition, RegisterID, TrustedImm32, RegisterID)     { PPC64_UNIMPLEMENTED(); }
-    void test32(ResultCondition, RegisterID, RegisterID, RegisterID)       { PPC64_UNIMPLEMENTED(); }
-    void test32(ResultCondition, Address, TrustedImm32, RegisterID)        { PPC64_UNIMPLEMENTED(); }
+    void test32(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
+    {
+        if (mask.m_value == -1)
+            m_assembler.mr(dataTempRegister, reg);
+        else if (mask.m_value >= 0 && isUInt16(mask.m_value))
+            m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
+        else {
+            moveImmToScratch(uint32_t(mask.m_value), dataTempRegister);
+            m_assembler.and_(dataTempRegister, reg, dataTempRegister);
+        }
+        // cmpwi tests only the low 32 bits (EQ for Zero/NonZero, LT for the
+        // 32-bit sign), so it serves all four ResultConditions.
+        m_assembler.cmpwi(0, dataTempRegister, 0);
+        setFromResultCondition(cond, dest);
+    }
+    void test32(ResultCondition cond, RegisterID reg, RegisterID mask, RegisterID dest)
+    {
+        m_assembler.and_(dataTempRegister, reg, mask);
+        m_assembler.cmpwi(0, dataTempRegister, 0);
+        setFromResultCondition(cond, dest);
+    }
+    void test32(ResultCondition cond, Address address, TrustedImm32 mask, RegisterID dest)
+    {
+        load32(address, memoryTempRegister);
+        test32(cond, memoryTempRegister, mask, dest);
+    }
 
     // or16 / add8 — small-width arithmetic with memory destination (typed array writes).
     void add8(TrustedImm32, BaseIndex)                                    { PPC64_UNIMPLEMENTED(); }
@@ -2761,9 +2823,25 @@ public:
     // FP rounding / arithmetic — DFGSpeculativeJIT.
 
     // Byte-width test/compare and bitwise NOT.
-    void test8(ResultCondition, Address, TrustedImm32, RegisterID)         { PPC64_UNIMPLEMENTED(); }
-    void compare8(RelationalCondition, Address, TrustedImm32, RegisterID)  { PPC64_UNIMPLEMENTED(); }
-    void compare8(RelationalCondition, Address, RegisterID, RegisterID)    { PPC64_UNIMPLEMENTED(); }
+    void test8(ResultCondition cond, Address address, TrustedImm32 mask, RegisterID dest)
+    {
+        load8(address, dataTempRegister); // zero-extended byte
+        m_assembler.andi_(dataTempRegister, dataTempRegister, uint16_t(mask.m_value & 0xFF));
+        m_assembler.cmpwi(0, dataTempRegister, 0);
+        setFromResultCondition(cond, dest);
+    }
+    void compare8(RelationalCondition cond, Address left, TrustedImm32 right, RegisterID dest)
+    {
+        load8(left, dataTempRegister); // zero-extended byte
+        emitCompare32(cond, dataTempRegister, TrustedImm32(right.m_value & 0xFF));
+        setFromCondition(cond, dest);
+    }
+    void compare8(RelationalCondition cond, Address left, RegisterID right, RegisterID dest)
+    {
+        load8(left, dataTempRegister); // zero-extended byte
+        emitCompare32(cond, dataTempRegister, right);
+        setFromCondition(cond, dest);
+    }
     void not32(RegisterID, RegisterID)                                     { PPC64_UNIMPLEMENTED(); }
 
     // 4-arg branchAdd32 (ResultCondition, src1, src2, dest).
