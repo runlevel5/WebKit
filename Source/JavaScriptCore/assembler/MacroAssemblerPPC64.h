@@ -2408,7 +2408,11 @@ public:
     // Stores (stub) — store64 with Address is implemented above.
 
     // FP / SIMD moves (stub)
-    void moveVector(FPRegisterID, FPRegisterID)      { PPC64_UNIMPLEMENTED(); }
+    void moveVector(FPRegisterID src, FPRegisterID dest)
+    {
+        if (src != dest)
+            m_assembler.xxlor(dest, src, src); // 128-bit VSR copy
+    }
 
     // Push (stub) — TrustedImm32 overload required by MacroAssembler.h wrappers.
     void push(TrustedImm32 imm)
@@ -2418,8 +2422,19 @@ public:
     }
 
     // 32-bit / float / double / vector loads and stores (stub)
-    void loadVector(Address, FPRegisterID)           { PPC64_UNIMPLEMENTED(); }
-    void storeVector(FPRegisterID, Address)          { PPC64_UNIMPLEMENTED(); }
+    // lxvd2x/stxvd2x are indexed (RA+RB) with no displacement, so compute the
+    // effective address into a GPR and use RA=0 (literal zero). See the VSX
+    // note in PPC64Assembler.h re: little-endian doubleword order.
+    void loadVector(Address address, FPRegisterID dest)
+    {
+        add64(TrustedImm32(address.offset), address.base, memoryTempRegister);
+        m_assembler.lxvd2x(dest, PPC64Registers::r0, memoryTempRegister);
+    }
+    void storeVector(FPRegisterID src, Address address)
+    {
+        add64(TrustedImm32(address.offset), address.base, memoryTempRegister);
+        m_assembler.stxvd2x(src, PPC64Registers::r0, memoryTempRegister);
+    }
 
     // Additional branch32 overloads (stub)
 
@@ -2795,8 +2810,19 @@ public:
     }
 
     // load8SignedExtendTo32 / load16 / load16SignedExtendTo32
-    void load8SignedExtendTo32(const void*, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void load16SignedExtendTo32(const void*, RegisterID)                   { PPC64_UNIMPLEMENTED(); }
+    void load8SignedExtendTo32(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lbz(dest, 0, memoryTempRegister);
+        m_assembler.extsb(dest, dest);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void load16SignedExtendTo32(const void* address, RegisterID dest)
+    {
+        moveToAbsolute(address);
+        m_assembler.lha(dest, 0, memoryTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
 
     // FP conversions
     void loadFloat16(Address, FPRegisterID)                                { PPC64_UNIMPLEMENTED(); }
@@ -2826,7 +2852,11 @@ public:
     }
 
     // Byte/half store, FP type conversion, FP16, and 32-bit transfers.
-    void store8(TrustedImm32, BaseIndex)                                   { PPC64_UNIMPLEMENTED(); }
+    void store8(TrustedImm32 imm, BaseIndex address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store8(dataTempRegister, address);
+    }
     void convertDoubleToFloat16(FPRegisterID, FPRegisterID)                { PPC64_UNIMPLEMENTED(); }
     void storeFloat16(FPRegisterID, Address)                               { PPC64_UNIMPLEMENTED(); }
     void storeFloat16(FPRegisterID, BaseIndex)                             { PPC64_UNIMPLEMENTED(); }
@@ -2885,8 +2915,17 @@ public:
 
     // Stores to absolute (raw void*) addresses — DFGOSRExit, DFGJITCompiler.
     // (store64(RegisterID, void*) and store32(RegisterID, void*) already declared above.)
-    void store8(TrustedImm32, void*)                                       { PPC64_UNIMPLEMENTED(); }
-    void store64(TrustedImm64, void*)                                      { PPC64_UNIMPLEMENTED(); }
+    void store8(TrustedImm32 imm, void* address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        moveToAbsolute(address);
+        m_assembler.stb(dataTempRegister, 0, memoryTempRegister);
+    }
+    void store64(TrustedImm64 imm, void* address)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        store64(dataTempRegister, address);
+    }
 
     // add32 with TrustedImm32 + AbsoluteAddress — DFGOSRExitCompilerCommon.cpp:52
 
@@ -3031,11 +3070,33 @@ public:
     }
 
     // transfer64 / transferVector / storePair32 — memory shuffles.
-    void transferVector(Address, Address)                                  { PPC64_UNIMPLEMENTED(); }
-    void transferVector(BaseIndex, BaseIndex)                              { PPC64_UNIMPLEMENTED(); }
-    void storePair32(RegisterID, TrustedImm32, Address)                    { PPC64_UNIMPLEMENTED(); }
-    void storePair32(TrustedImm32, RegisterID, Address)                    { PPC64_UNIMPLEMENTED(); }
-    void storePair32(TrustedImm32, TrustedImm32, Address)                  { PPC64_UNIMPLEMENTED(); }
+    void transferVector(Address src, Address dest)
+    {
+        loadVector(src, fpTempRegister);
+        storeVector(fpTempRegister, dest);
+    }
+    void transferVector(BaseIndex src, BaseIndex dest)
+    {
+        getEffectiveAddress(src, memoryTempRegister);
+        m_assembler.lxvd2x(fpTempRegister, PPC64Registers::r0, memoryTempRegister);
+        getEffectiveAddress(dest, memoryTempRegister);
+        m_assembler.stxvd2x(fpTempRegister, PPC64Registers::r0, memoryTempRegister);
+    }
+    void storePair32(RegisterID src1, TrustedImm32 imm2, Address address)
+    {
+        store32(src1, address);
+        store32(imm2, address.withOffset(4));
+    }
+    void storePair32(TrustedImm32 imm1, RegisterID src2, Address address)
+    {
+        store32(imm1, address);
+        store32(src2, address.withOffset(4));
+    }
+    void storePair32(TrustedImm32 imm1, TrustedImm32 imm2, Address address)
+    {
+        store32(imm1, address);
+        store32(imm2, address.withOffset(4));
+    }
 
     // Sign-extend 8/16-bit values; byte-swap halfword.
     void signExtend8To32(RegisterID src, RegisterID dest)
@@ -3141,7 +3202,11 @@ public:
     // is the same as ARM64's pre-indexed pair store with a base+offset operand.
 
     // store32 to BaseIndex with immediate source.
-    void store32(TrustedImm32, BaseIndex)                                  { PPC64_UNIMPLEMENTED(); }
+    void store32(TrustedImm32 imm, BaseIndex address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store32(dataTempRegister, address);
+    }
     // storeDouble to absolute pointer.
     // and32 with Address source.
 
@@ -3255,9 +3320,23 @@ public:
     }
 
     // Unaligned 16-bit load — YarrJIT.
-    void load16Unaligned(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void load16Unaligned(BaseIndex, RegisterID)                            { PPC64_UNIMPLEMENTED(); }
-    void load32WithUnalignedHalfWords(BaseIndex, RegisterID)               { PPC64_UNIMPLEMENTED(); }
+    // PPC64LE performs unaligned integer loads in hardware for cacheable
+    // memory, so these are ordinary zero-extending loads.
+    void load16Unaligned(Address address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dest, r.offset, r.base);
+    }
+    void load16Unaligned(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lhz(dest, r.offset, r.base);
+    }
+    void load32WithUnalignedHalfWords(BaseIndex address, RegisterID dest)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lwz(dest, r.offset, r.base);
+    }
 
     // Sign-extending loads to 64.
 
