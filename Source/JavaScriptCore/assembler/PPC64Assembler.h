@@ -1756,6 +1756,24 @@ public:
     void stvehx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 167)); }
     void stvewx(VRegisterID vrs, RegisterID ra, RegisterID rb) { insn(xFormVrMem(31, vrs, ra, rb, 199)); }
 
+    // VSX 128-bit indexed load/store and register move (Power ISA v2.07B,
+    // ISA v2.06 VSX). Operands here are FPRegisterID = VSR 0-31, so the
+    // T/A/B extension bits (TX/AX/BX) are always 0 and the encoding reduces
+    // to the plain X-form (lxvd2x reuses the lfdx X-form path). Verified on
+    // POWER8 `as`: lxvd2x 0,3,4 → 0x7c032698; stxvd2x → 0x7c032798;
+    // xxlor 0,1,1 → 0xf0010c90. NOTE (little-endian lane order): lxvd2x/
+    // stxvd2x do NOT perform the per-element LE reversal that POWER9 lxv/stxv
+    // do; a value round-trips correctly through a matched stxvd2x/lxvd2x pair
+    // (and xxlor is a pure copy), but element-wise SIMD semantics that mix
+    // these with lane ops must account for the doubleword order.
+    void lxvd2x(FPRegisterID xt, RegisterID ra, RegisterID rb)  { insn(xFormFpMem(31, xt, ra, rb, 844)); }
+    void stxvd2x(FPRegisterID xs, RegisterID ra, RegisterID rb) { insn(xFormFpMem(31, xs, ra, rb, 972)); }
+    void xxlor(FPRegisterID xt, FPRegisterID xa, FPRegisterID xb)
+    {
+        // XX3-form, opcode 60, XO=146; AX/BX/TX = 0 for VSR 0-31.
+        insn((60u << 26) | (fprValue(xt) << 21) | (fprValue(xa) << 16) | (fprValue(xb) << 11) | (146u << 3));
+    }
+
     // ===================================================================
     // VMX vector compares (VC-form, opcode 4). Power ISA v2.07B §6.10.
     // Each lane is set to all-ones (true) or all-zeros (false). The Rc=1
