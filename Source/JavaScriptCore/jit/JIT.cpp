@@ -835,6 +835,16 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
 
 #if CPU(X86_64)
         pop(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        // On PPC the caller's return address is in the LR special register, not
+        // in `linkRegister` (which is only an r0 placeholder). Save it via mflr
+        // before the nearCallThunk clobbers LR, and restore it via mtlr after,
+        // so the function prologue captures the correct returnPC. Using the
+        // placeholder here would spill garbage and leave the callee returning
+        // into its own arity-check stub (infinite loop / corrupted frame) —
+        // this hit every under-applied baseline call. arityFixup must preserve
+        // argumentGPR1 (r4), same contract as ARM64.
+        moveFromLR(GPRInfo::argumentGPR1);
 #else
         tagPtr(NoPtrTag, linkRegister);
         move(linkRegister, GPRInfo::argumentGPR1);
@@ -842,6 +852,8 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
         nearCallThunk(CodeLocationLabel { LLInt::arityFixup() });
 #if CPU(X86_64)
         push(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        moveToLR(GPRInfo::argumentGPR1);
 #else
         move(GPRInfo::argumentGPR1, linkRegister);
         untagPtr(NoPtrTag, linkRegister);
