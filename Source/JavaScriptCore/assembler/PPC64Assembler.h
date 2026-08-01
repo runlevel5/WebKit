@@ -3221,9 +3221,21 @@ public:
         intptr_t offset = intptr_t(to) - intptr_t(location + 7);
         uint32_t words[JUMP_SLOT_INSNS];
         for (auto& w : words) w = PPC_NOP;
-        if (fitsBranch26(offset))
-            words[7] = insnB(int32_t(offset), 1);   // bl
-        else {
+        if (fitsBranch26(offset)) {
+            // Even for a near (relative) call we must materialize r12 = target.
+            // ELFv2 callees reached at their global entry recompute the TOC as
+            // r2 = addis/addi(r12, .TOC.-func), so r12 must equal the callee's
+            // entry address. A bare `bl` leaves r12 stale, giving the callee a
+            // wrong TOC — which crashes the moment the callee makes a TOC-
+            // relative or PLT call (e.g. operationCompareStringEq -> resolveRope).
+            // The 8-insn slot has room: li64 r12,target in [0..4], then bl at [7].
+            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
+            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+            words[7] = insnB(int32_t(offset), 1);   // bl target (relative)
+        } else {
             words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
             words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
             words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
