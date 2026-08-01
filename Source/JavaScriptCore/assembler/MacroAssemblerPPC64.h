@@ -770,6 +770,11 @@ public:
         mul32(dataTempRegister, src, dest);
     }
 
+    // 64-bit multiply: low 64 bits (mulld) and unsigned high 64 bits (mulhdu).
+    void mul64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.mulld(dest, a, b); }
+    void mul64(RegisterID src, RegisterID dest) { mul64(src, dest, dest); }
+    void uMulHigh64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.mulhdu(dest, a, b); }
+
     void neg32(RegisterID dest)
     {
         m_assembler.neg(dest, dest);

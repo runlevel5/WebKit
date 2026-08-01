@@ -1319,7 +1319,8 @@ void AssemblyHelpers::rapidHashMix64(GPRReg inputAndResult, GPRReg scratch1, GPR
     ASSERT(scratch1 != input);
     ASSERT(scratch2 != input);
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
+    // Both are RISC 3-operand: mul64 = mulld (low 64), uMulHigh64 = umulh/mulhdu.
     // scratch1 = input ^ secret1 = a
     move(TrustedImm64(static_cast<int64_t>(0x2d358dccaa6c78a5ULL)), scratch1);
     xor64(input, scratch1);
