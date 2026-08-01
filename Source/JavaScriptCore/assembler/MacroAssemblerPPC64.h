@@ -2486,7 +2486,7 @@ public:
     {
         load64(address.m_ptr, dataTempRegister);
         add64(imm, dataTempRegister, dataTempRegister);
-        store64(dataTempRegister, address.m_ptr);
+        store64(dataTempRegister, const_cast<void*>(address.m_ptr));
     }
 
     // and64 TrustedImmPtr overload (MacroAssembler::andPtr uses it).
@@ -3303,11 +3303,30 @@ public:
         return branchTestImpl32(resultConditionForArith(cond), dataTempRegister);
     }
 
-    // convertInt32ToFloat — Wasm float conversion.
-    void convertInt32ToFloat(RegisterID, FPRegisterID)                     { PPC64_UNIMPLEMENTED(); }
-    void convertUInt32ToFloat(RegisterID, FPRegisterID)                    { PPC64_UNIMPLEMENTED(); }
-    void convertInt64ToFloat(RegisterID, FPRegisterID)                     { PPC64_UNIMPLEMENTED(); }
-    void convertUInt64ToFloat(RegisterID, FPRegisterID)                    { PPC64_UNIMPLEMENTED(); }
+    // int/uint -> single-precision float. Mirrors convertInt32ToDouble but uses
+    // the round-to-single convert (fcfids/fcfidus). Move the integer into the
+    // FPR/VSR: mtvsrwa sign-extends a 32-bit source, mtvsrwz zero-extends it,
+    // mtvsrd moves a full 64-bit source. fcfids/fcfidus were verified on POWER9.
+    void convertInt32ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.mtvsrwa(dest, src);
+        m_assembler.fcfids(dest, dest);
+    }
+    void convertUInt32ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.mtvsrwz(dest, src);
+        m_assembler.fcfidus(dest, dest);
+    }
+    void convertInt64ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.mtvsrd(dest, src);
+        m_assembler.fcfids(dest, dest);
+    }
+    void convertUInt64ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.mtvsrd(dest, src);
+        m_assembler.fcfidus(dest, dest);
+    }
 
     // branchTest8 with ExtendedAddress — YarrJIT.
     Jump branchTest8(ResultCondition cond, ExtendedAddress address, TrustedImm32 mask = TrustedImm32(-1))
