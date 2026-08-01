@@ -1536,7 +1536,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeBoundFunctionTargetCode)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // Reserve the C-call linkage/parameter area so the callee's ABI prologue
+    // saves (e.g. its LR at [sp+16] under ELFv2) land in scratch rather than
+    // clobbering the callee JS frame being built here — on PPC the JS frame's
+    // argumentCount slot overlaps [sp+16] at this point. No-op on platforms
+    // where maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.reclaimSpaceOnStackForCCall();
     exceptionChecks.append(jit.emitJumpIfException(vm));
     jit.storePtr(GPRInfo::returnValueGPR2, CCallHelpers::calleeFrameCodeBlockBeforeCall());
     jit.move(GPRInfo::returnValueGPR, GPRInfo::regT2);
