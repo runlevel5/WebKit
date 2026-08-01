@@ -2411,7 +2411,11 @@ public:
     void moveVector(FPRegisterID, FPRegisterID)      { PPC64_UNIMPLEMENTED(); }
 
     // Push (stub) — TrustedImm32 overload required by MacroAssembler.h wrappers.
-    void push(TrustedImm32)                          { PPC64_UNIMPLEMENTED(); }
+    void push(TrustedImm32 imm)
+    {
+        moveImmToScratch(imm.m_value, dataTempRegister);
+        push(dataTempRegister);
+    }
 
     // 32-bit / float / double / vector loads and stores (stub)
     void loadVector(Address, FPRegisterID)           { PPC64_UNIMPLEMENTED(); }
@@ -2420,8 +2424,18 @@ public:
     // Additional branch32 overloads (stub)
 
     // Patchable branch stubs
-    Jump branchPtrWithPatch(RelationalCondition, Address, DataLabelPtr&, TrustedImmPtr = TrustedImmPtr(nullptr)) { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branch32WithPatch(RelationalCondition, Address, DataLabel32&, TrustedImm32 = TrustedImm32(0))           { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchPtrWithPatch(RelationalCondition cond, Address left, DataLabelPtr& dataLabel, TrustedImmPtr initialRightValue = TrustedImmPtr(nullptr))
+    {
+        load64(left, dataTempRegister);
+        dataLabel = moveWithPatch(initialRightValue, memoryTempRegister);
+        return branch64(cond, dataTempRegister, memoryTempRegister);
+    }
+    Jump branch32WithPatch(RelationalCondition cond, Address left, DataLabel32& dataLabel, TrustedImm32 initialRightValue = TrustedImm32(0))
+    {
+        load32(left, dataTempRegister);
+        dataLabel = moveWithPatch(initialRightValue, memoryTempRegister);
+        return branch32(cond, dataTempRegister, memoryTempRegister);
+    }
 
     // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
     void abortWithReason(AbortReason reason)
@@ -2437,10 +2451,28 @@ public:
     }
 
     // Additional add64 overloads required by MacroAssembler.h addPtr wrappers.
-    void add64(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void add64(TrustedImm32, Address)                            { PPC64_UNIMPLEMENTED(); }
-    void add64(AbsoluteAddress, RegisterID)                      { PPC64_UNIMPLEMENTED(); }
-    void add64(TrustedImm32, AbsoluteAddress)                    { PPC64_UNIMPLEMENTED(); }
+    void add64(Address address, RegisterID dest)
+    {
+        load64(address, dataTempRegister);
+        add64(dataTempRegister, dest);
+    }
+    void add64(TrustedImm32 imm, Address address)
+    {
+        load64(address, dataTempRegister);
+        add64(imm, dataTempRegister, dataTempRegister);
+        store64(dataTempRegister, address);
+    }
+    void add64(AbsoluteAddress address, RegisterID dest)
+    {
+        load64(address.m_ptr, dataTempRegister);
+        add64(dataTempRegister, dest);
+    }
+    void add64(TrustedImm32 imm, AbsoluteAddress address)
+    {
+        load64(address.m_ptr, dataTempRegister);
+        add64(imm, dataTempRegister, dataTempRegister);
+        store64(dataTempRegister, address.m_ptr);
+    }
 
     // and64 TrustedImmPtr overload (MacroAssembler::andPtr uses it).
 
@@ -2455,8 +2487,17 @@ public:
     // Additional sub64 overloads (MacroAssembler::subPtr)
 
     // Additional xor64 overloads (MacroAssembler::xorPtr)
-    void xor64(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void xor64(RegisterID, Address)                              { PPC64_UNIMPLEMENTED(); }
+    void xor64(Address address, RegisterID dest)
+    {
+        load64(address, dataTempRegister);
+        xor64(dataTempRegister, dest);
+    }
+    void xor64(RegisterID src, Address address)
+    {
+        load64(address, dataTempRegister);
+        m_assembler.xor_(dataTempRegister, dataTempRegister, src);
+        store64(dataTempRegister, address);
+    }
 
     // Additional load64 overloads (MacroAssembler::loadPtr)
 
@@ -2492,8 +2533,27 @@ public:
     // branchTest64 (MacroAssembler::branchTestPtr)
 
     // branchAdd64 / branchSub64 (MacroAssembler::branchAddPtr/branchSubPtr)
-    Jump branchAdd64(ResultCondition, TrustedImm32, RegisterID)              { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAdd64(ResultCondition, RegisterID, RegisterID)                { PPC64_UNIMPLEMENTED(); return Jump(); }
+    // dest = dest + src, branch on cond. Signed overflow iff the operands
+    // agree in sign but the result differs: (origLeft ^ result) & (src ^ result) < 0.
+    Jump branchAdd64(ResultCondition cond, RegisterID src, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            m_assembler.mr(dataTempRegister, dest);              // origLeft
+            add64(src, dest);                                    // dest = origLeft + src
+            xor64(dataTempRegister, dest, memoryTempRegister);   // origLeft ^ result
+            xor64(src, dest, dataTempRegister);                  // src ^ result
+            m_assembler.and_(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.cmpdi(0, dataTempRegister, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 0));  // LT (negative) => overflow
+        }
+        add64(src, dest);
+        return branchTest64Impl(resultConditionForArith(cond), dest);
+    }
+    Jump branchAdd64(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        return branchAdd64(cond, memoryTempRegister, dest);
+    }
     Jump branchSub64(ResultCondition cond, RegisterID left, RegisterID right, RegisterID dest)
     {
         if (cond == Overflow) {
@@ -2527,7 +2587,11 @@ public:
     // convertInt32ToDouble(TrustedImm32) — blinding path in MacroAssembler.
 
     // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
-    void sub64(RegisterID, TrustedImm64, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
+    void sub64(RegisterID src, TrustedImm64 imm, RegisterID dest)
+    {
+        moveImmToScratch(imm.m_value, memoryTempRegister);
+        sub64(src, memoryTempRegister, dest);   // dest = src - imm
+    }
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm64 right, RegisterID dest)
     {
         emitCompare64(cond, left, right);
@@ -2724,7 +2788,11 @@ public:
     // All PPC64_UNIMPLEMENTED(); the JIT does not run yet on PPC64LE.
 
     // 32-bit negate
-    void neg32(RegisterID, RegisterID)                                     { PPC64_UNIMPLEMENTED(); }
+    void neg32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.neg(dest, src);
+        zeroExtend32ToWordInternal(dest);
+    }
 
     // load8SignedExtendTo32 / load16 / load16SignedExtendTo32
     void load8SignedExtendTo32(const void*, RegisterID)                    { PPC64_UNIMPLEMENTED(); }
@@ -2750,7 +2818,12 @@ public:
     // getEffectiveAddress — InlineCacheCompiler.cpp:2840
 
     // BaseIndex / TrustedImmPtr variants of FP load/store not already declared.
-    Jump branchIfNaN(FPRegisterID)                                         { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchIfNaN(FPRegisterID reg)
+    {
+        // NaN iff reg is unordered with itself. fcmpu sets CR0[FU] (bit 3).
+        m_assembler.fcmpu(0, reg, reg);
+        return Jump(m_assembler.emitUnlinkedBranch(12, 3));   // branch if FU (unordered) set
+    }
 
     // Byte/half store, FP type conversion, FP16, and 32-bit transfers.
     void store8(TrustedImm32, BaseIndex)                                   { PPC64_UNIMPLEMENTED(); }
@@ -2795,8 +2868,20 @@ public:
     }
 
     // or16 / add8 — small-width arithmetic with memory destination (typed array writes).
-    void add8(TrustedImm32, BaseIndex)                                    { PPC64_UNIMPLEMENTED(); }
-    void add8(RegisterID, BaseIndex)                                      { PPC64_UNIMPLEMENTED(); }
+    void add8(TrustedImm32 imm, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dataTempRegister, r.offset, r.base);
+        m_assembler.addi(dataTempRegister, dataTempRegister, int16_t(imm.m_value));
+        m_assembler.stb(dataTempRegister, r.offset, r.base);
+    }
+    void add8(RegisterID src, BaseIndex address)
+    {
+        ResolvedAddress r = resolveAddress(address, memoryTempRegister);
+        m_assembler.lbz(dataTempRegister, r.offset, r.base);
+        m_assembler.add(dataTempRegister, dataTempRegister, src);
+        m_assembler.stb(dataTempRegister, r.offset, r.base);
+    }
 
     // Stores to absolute (raw void*) addresses — DFGOSRExit, DFGJITCompiler.
     // (store64(RegisterID, void*) and store32(RegisterID, void*) already declared above.)
@@ -2812,7 +2897,14 @@ public:
         moveFixedLi64(dest, uint64_t(initialValue.asIntptr()));
         return label;
     }
-    DataLabel32 moveWithPatch(TrustedImm32, RegisterID)                    { PPC64_UNIMPLEMENTED(); return DataLabel32(); }
+    // Fixed 2-instruction (lis/ori) patchable 32-bit immediate load.
+    DataLabel32 moveWithPatch(TrustedImm32 initialValue, RegisterID dest)
+    {
+        DataLabel32 label(this);
+        m_assembler.lis(dest, int16_t(uint16_t(uint32_t(initialValue.m_value) >> 16)));
+        m_assembler.ori(dest, dest, uint16_t(initialValue.m_value));
+        return label;
+    }
 
     // load32 with absolute pointer — DFGSpeculativeJIT.cpp:511.
 
@@ -2863,7 +2955,11 @@ public:
         emitCompare32(cond, dataTempRegister, right);
         setFromCondition(cond, dest);
     }
-    void not32(RegisterID, RegisterID)                                     { PPC64_UNIMPLEMENTED(); }
+    void not32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.nor(dest, src, src);   // ~src
+        zeroExtend32ToWordInternal(dest);
+    }
 
     // 4-arg branchAdd32 (ResultCondition, src1, src2, dest).
 
@@ -2877,10 +2973,50 @@ public:
     // FP arithmetic — DFGSpeculativeJIT.
 
     // Negate-with-branch-on-overflow.
-    Jump branchNeg32(ResultCondition, RegisterID)                          { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchNeg64(ResultCondition, RegisterID)                          { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchMul64(ResultCondition, RegisterID, RegisterID, RegisterID)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchMul64(ResultCondition, RegisterID, RegisterID)              { PPC64_UNIMPLEMENTED(); return Jump(); }
+    // srcDest = -srcDest (32-bit). Signed overflow iff srcDest was INT32_MIN.
+    Jump branchNeg32(ResultCondition cond, RegisterID srcDest)
+    {
+        if (cond == Overflow) {
+            m_assembler.rldicl(dataTempRegister, srcDest, 0, 32);   // orig, zero-extended low32
+            m_assembler.neg(srcDest, srcDest);
+            zeroExtend32ToWordInternal(srcDest);
+            moveImmToScratch(int64_t(0x80000000u), memoryTempRegister);
+            m_assembler.cmpld(0, dataTempRegister, memoryTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 2));     // EQ (orig==INT32_MIN) => overflow
+        }
+        m_assembler.neg(srcDest, srcDest);
+        zeroExtend32ToWordInternal(srcDest);
+        return branchTestImpl32(resultConditionForArith(cond), srcDest);
+    }
+    // srcDest = -srcDest (64-bit). Signed overflow iff srcDest was INT64_MIN.
+    Jump branchNeg64(ResultCondition cond, RegisterID srcDest)
+    {
+        if (cond == Overflow) {
+            m_assembler.mr(dataTempRegister, srcDest);              // orig
+            m_assembler.neg(srcDest, srcDest);
+            moveImmToScratch(int64_t(0x8000000000000000ull), memoryTempRegister);
+            m_assembler.cmpd(0, dataTempRegister, memoryTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 2));     // EQ (orig==INT64_MIN) => overflow
+        }
+        m_assembler.neg(srcDest, srcDest);
+        return branchTest64Impl(resultConditionForArith(cond), srcDest);
+    }
+    // dest = a * b (64-bit). Signed overflow iff the 128-bit product's high
+    // word differs from the sign-extension of the low word (mulhd != low>>63).
+    Jump branchMul64(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            m_assembler.mulld(dataTempRegister, a, b);              // low 64
+            m_assembler.mulhd(memoryTempRegister, a, b);            // high 64 (signed)
+            m_assembler.mr(dest, dataTempRegister);                 // result = low
+            m_assembler.sradi(dataTempRegister, dataTempRegister, 63);  // sign of low
+            m_assembler.cmpd(0, memoryTempRegister, dataTempRegister);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));      // high != sign => overflow
+        }
+        m_assembler.mulld(dest, a, b);
+        return branchTest64Impl(resultConditionForArith(cond), dest);
+    }
+    Jump branchMul64(ResultCondition cond, RegisterID src, RegisterID dest) { return branchMul64(cond, src, dest, dest); }
 
     // FP truncate / bitwise — DFGSpeculativeJIT FP paths.
 
@@ -2902,11 +3038,50 @@ public:
     void storePair32(TrustedImm32, TrustedImm32, Address)                  { PPC64_UNIMPLEMENTED(); }
 
     // Sign-extend 8/16-bit values; byte-swap halfword.
-    void signExtend8To32(RegisterID, RegisterID)                           { PPC64_UNIMPLEMENTED(); }
-    void signExtend16To32(RegisterID, RegisterID)                          { PPC64_UNIMPLEMENTED(); }
-    void byteSwap16(RegisterID)                                            { PPC64_UNIMPLEMENTED(); }
-    void byteSwap32(RegisterID)                                            { PPC64_UNIMPLEMENTED(); }
-    void byteSwap64(RegisterID)                                            { PPC64_UNIMPLEMENTED(); }
+    void signExtend8To32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.extsb(dest, src);
+        zeroExtend32ToWordInternal(dest);   // 32-bit result, upper word cleared
+    }
+    void signExtend16To32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.extsh(dest, src);
+        zeroExtend32ToWordInternal(dest);
+    }
+    // Register byte-reverse without POWER10 brh/brw/brd: rotate/mask sequences.
+    // Verified on POWER9 (bswap16(0xABCD)=0xCDAB, bswap32(0x11223344)=0x44332211,
+    // bswap64(0x1122334455667788)=0x8877665544332211).
+    void byteSwap16(RegisterID reg)
+    {
+        m_assembler.rlwinm(dataTempRegister, reg, 8, 16, 23);   // (reg<<8) & 0x0000ff00
+        m_assembler.rlwinm(memoryTempRegister, reg, 24, 24, 31); // (reg>>8) & 0x000000ff
+        m_assembler.or_(reg, dataTempRegister, memoryTempRegister);
+    }
+    void byteSwap32(RegisterID reg)
+    {
+        m_assembler.rlwinm(dataTempRegister, reg, 8, 0, 31);    // rotl(reg,8)
+        m_assembler.rlwimi(dataTempRegister, reg, 24, 0, 7);
+        m_assembler.rlwimi(dataTempRegister, reg, 24, 16, 23);
+        m_assembler.mr(reg, dataTempRegister);
+    }
+    void byteSwap64(RegisterID reg)
+    {
+        // reg = HIGH:LOW; result = bswap32(LOW):bswap32(HIGH).
+        m_assembler.rldicl(dataTempRegister, reg, 32, 32);      // dataTemp = HIGH (zero-extended)
+        m_assembler.rldicl(memoryTempRegister, reg, 0, 32);     // memoryTemp = LOW (zero-extended)
+        // bswap32 HIGH in place (dataTemp)
+        m_assembler.rlwinm(reg, dataTempRegister, 8, 0, 31);
+        m_assembler.rlwimi(reg, dataTempRegister, 24, 0, 7);
+        m_assembler.rlwimi(reg, dataTempRegister, 24, 16, 23);
+        m_assembler.mr(dataTempRegister, reg);                  // dataTemp = bswap32(HIGH)
+        // bswap32 LOW in place (memoryTemp)
+        m_assembler.rlwinm(reg, memoryTempRegister, 8, 0, 31);
+        m_assembler.rlwimi(reg, memoryTempRegister, 24, 0, 7);
+        m_assembler.rlwimi(reg, memoryTempRegister, 24, 16, 23);
+        // reg = bswap32(LOW); result = (bswap32(LOW) << 32) | bswap32(HIGH)
+        m_assembler.sldi(reg, reg, 32);
+        m_assembler.or_(reg, reg, dataTempRegister);
+    }
 
     // Atomic CAS — Atomics typed-array operations in DFG.
     Jump branchAtomicWeakCAS8(StatusCondition, RegisterID, RegisterID, Address)   { PPC64_UNIMPLEMENTED(); return Jump(); }
@@ -3014,7 +3189,13 @@ public:
     }
 
     // 64-bit shifts with memory source / 3-arg forms.
-    void lshift64(Address, RegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
+    void lshift64(Address src, RegisterID shiftAmount, RegisterID dest)
+    {
+        // Load the value into memoryTempRegister; lshift64(reg,reg,reg) uses
+        // dataTempRegister as its shift-count scratch, so they must not alias.
+        load64(src, memoryTempRegister);
+        lshift64(memoryTempRegister, shiftAmount, dest);
+    }
 
     // farJump with TrustedImmPtr target — LLIntThunks.
 
@@ -3064,7 +3245,14 @@ public:
     void convertUInt64ToFloat(RegisterID, FPRegisterID)                    { PPC64_UNIMPLEMENTED(); }
 
     // branchTest8 with ExtendedAddress — YarrJIT.
-    Jump branchTest8(ResultCondition, ExtendedAddress, TrustedImm32 = TrustedImm32(-1)) { PPC64_UNIMPLEMENTED(); return Jump(); }
+    Jump branchTest8(ResultCondition cond, ExtendedAddress address, TrustedImm32 mask = TrustedImm32(-1))
+    {
+        // ExtendedAddress is a base register plus a (possibly large) offset.
+        move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), memoryTempRegister);
+        m_assembler.add(memoryTempRegister, memoryTempRegister, address.base);
+        m_assembler.lbz(dataTempRegister, 0, memoryTempRegister);
+        return finishNarrowTest(cond, mask, 0xFF, /*halfword*/ false);
+    }
 
     // Unaligned 16-bit load — YarrJIT.
     void load16Unaligned(Address, RegisterID)                              { PPC64_UNIMPLEMENTED(); }
@@ -3076,8 +3264,17 @@ public:
     // loadPair32 / loadPair64 — paired loads.
 
     // Bitfield extract — YarrJIT BoyerMoore SIMD path.
-    void extractUnsignedBitfield32(RegisterID, TrustedImm32, TrustedImm32, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void extractUnsignedBitfield64(RegisterID, TrustedImm32, TrustedImm32, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    // dest = (src >> lsb) & ((1 << width) - 1). Verified on POWER9.
+    void extractUnsignedBitfield32(RegisterID src, TrustedImm32 lsb, TrustedImm32 width, RegisterID dest)
+    {
+        int l = lsb.m_value & 31, w = width.m_value;
+        m_assembler.rlwinm(dest, src, (32 - l) & 31, 32 - w, 31);
+    }
+    void extractUnsignedBitfield64(RegisterID src, TrustedImm32 lsb, TrustedImm32 width, RegisterID dest)
+    {
+        int l = lsb.m_value & 63, w = width.m_value;
+        m_assembler.rldicl(dest, src, (64 - l) & 63, 64 - w);
+    }
 
     // sub32 3-arg form (RegisterID,RegisterID,RegisterID) — DFG.
 
