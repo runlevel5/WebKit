@@ -3207,8 +3207,25 @@ public:
     // 64-bit int ops on FP registers — used for NaN-boxing arithmetic in
     // DFGSpeculativeJIT64.  Implementing these properly will need VSX/VMX
     // (Power ISA v2.07B Book I §6) — out of scope for Phase 1.
-    void sub64(FPRegisterID, FPRegisterID, FPRegisterID)                   { PPC64_UNIMPLEMENTED(); }
-    void add64(FPRegisterID, FPRegisterID, FPRegisterID)                   { PPC64_UNIMPLEMENTED(); }
+    // 64-bit integer add/sub on values held in FP registers (dest = left +/-
+    // right on the raw bit patterns). Used by DFGSpeculativeJIT64 to NaN-box /
+    // unbox doubles (add/subtract DoubleEncodeOffset). PPC FPRs can't do integer
+    // arithmetic, so shuttle the bits through the assembler scratch GPRs. Both
+    // operands are read before dest is written, so dest may alias left or right.
+    void sub64(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        moveDoubleTo64(left, dataTempRegister);
+        moveDoubleTo64(right, memoryTempRegister);
+        sub64(dataTempRegister, memoryTempRegister, dataTempRegister); // dataTemp = left - right
+        move64ToDouble(dataTempRegister, dest);
+    }
+    void add64(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        moveDoubleTo64(left, dataTempRegister);
+        moveDoubleTo64(right, memoryTempRegister);
+        add64(dataTempRegister, memoryTempRegister, dataTempRegister); // dataTemp = left + right
+        move64ToDouble(dataTempRegister, dest);
+    }
 
     // sub32 with Address source — DFG.
 
