@@ -979,7 +979,19 @@ void SpeculativeJIT::emitCall(Node* node)
         // - The caller frame and PC of a call to operationCallDirectEvalSloppy/operationCallDirectEvalStrict.
         // - Potentially two arguments on the stack.
         CodeBlock* baselineCodeBlock = m_graph.baselineCodeBlockFor(staticOrigin);
+#if CPU(PPC64LE)
+        // ELFv2: a C callee clobbers its caller's linkage + parameter save area,
+        // i.e. [sp, sp + maxFrameExtentForSlowPathCall). We build the prototypical
+        // eval callee frame just below the current sp (its CallerFrameAndPC — with
+        // callerFrame at calleeFrameGPR+0 — sits at sp-16), so the C-call scratch
+        // area must be reserved entirely BELOW that frame. Otherwise the callee's
+        // LR save at [sp+16] lands on the callerFrame slot and corrupts it (the
+        // operation then dereferences a return address as a CallFrame*). Reserve
+        // CallerFrameAndPC plus the full slow-path call extent.
+        unsigned requiredBytes = sizeof(CallerFrameAndPC) + maxFrameExtentForSlowPathCall;
+#else
         unsigned requiredBytes = sizeof(CallerFrameAndPC) + sizeof(CallFrame*) * 2;
+#endif
         requiredBytes = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(requiredBytes);
         subPtr(TrustedImm32(requiredBytes), stackPointerRegister);
         setupArguments<decltype(operationCallDirectEvalSloppy)>(calleeFrameGPR, evalScopeGPR, evalThisValueGPR, CCallHelpers::TrustedImmPtr(baselineCodeBlock), TrustedImm32(staticOrigin.bytecodeIndex().asBits()));
