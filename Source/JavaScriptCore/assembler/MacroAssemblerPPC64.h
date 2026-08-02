@@ -3159,14 +3159,91 @@ public:
     }
 
     // Atomic CAS — Atomics typed-array operations in DFG.
-    Jump branchAtomicWeakCAS8(StatusCondition, RegisterID, RegisterID, Address)   { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS8(StatusCondition, RegisterID, RegisterID, BaseIndex) { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS16(StatusCondition, RegisterID, RegisterID, Address)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS16(StatusCondition, RegisterID, RegisterID, BaseIndex){ PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS32(StatusCondition, RegisterID, RegisterID, Address)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS32(StatusCondition, RegisterID, RegisterID, BaseIndex){ PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS64(StatusCondition, RegisterID, RegisterID, Address)  { PPC64_UNIMPLEMENTED(); return Jump(); }
-    Jump branchAtomicWeakCAS64(StatusCondition, RegisterID, RegisterID, BaseIndex){ PPC64_UNIMPLEMENTED(); return Jump(); }
+    // Fold an Address/BaseIndex into a single register holding the full
+    // effective address, as required by the indexed larx/stcx. forms (which
+    // take rA+rB and no displacement). We pass rA=0, rB=this register.
+    template<typename AddressType>
+    RegisterID prepareAtomicAddress(AddressType address, RegisterID scratch)
+    {
+        ResolvedAddress r = resolveAddress(address, scratch);
+        if (r.offset) {
+            m_assembler.addi(scratch, r.base, r.offset);
+            return scratch;
+        }
+        return r.base;
+    }
+
+    // Atomic weak compare-and-swap (Power ISA v2.07B larx/stcx.). Load-reserve,
+    // compare against `expected`, and if equal attempt a store-conditional of
+    // `newValue`. The returned Jump follows the StatusCondition:
+    //   Success -> taken iff the value matched AND the store-conditional held
+    //              (the CAS completed).
+    //   Failure -> taken iff the CAS did not complete (value mismatch or the
+    //              reservation was lost).
+    // Mirrors the ARM64 ldaxr/stlxr contract. Seq-cst ordering: a leading full
+    // `sync` and an `isync` on the success (acquire) path. `expected` is
+    // clobbered — zero-extended to `width` to match the zero-extended larx
+    // result. The load value uses dataTempRegister; the address uses
+    // memoryTempRegister.
+    template<typename AddressType>
+    Jump branchAtomicWeakCAS(unsigned width, StatusCondition cond, RegisterID expected, RegisterID newValue, AddressType address)
+    {
+        RegisterID addr = prepareAtomicAddress(address, memoryTempRegister);
+        RegisterID tmp = dataTempRegister;
+        constexpr RegisterID zero = PPC64Registers::r0; // rA=0 -> literal 0 in larx/stcx.
+
+        switch (width) {
+        case 8:  and64(TrustedImm32(0xFF), expected); break;
+        case 16: and64(TrustedImm32(0xFFFF), expected); break;
+        case 32: zeroExtend32ToWord(expected, expected); break;
+        default: break; // 64-bit: full width
+        }
+
+        m_assembler.sync(); // seq-cst leading barrier
+
+        switch (width) {
+        case 8:  m_assembler.lbarx(tmp, zero, addr); break;
+        case 16: m_assembler.lharx(tmp, zero, addr); break;
+        case 32: m_assembler.lwarx(tmp, zero, addr); break;
+        default: m_assembler.ldarx(tmp, zero, addr); break;
+        }
+
+        m_assembler.cmpld(0, expected, tmp); // unsigned 64-bit; both zero-extended
+        Jump mismatch = makeBranch(NotEqual);
+
+        switch (width) {
+        case 8:  m_assembler.stbcx_(newValue, zero, addr); break;
+        case 16: m_assembler.sthcx_(newValue, zero, addr); break;
+        case 32: m_assembler.stwcx_(newValue, zero, addr); break;
+        default: m_assembler.stdcx_(newValue, zero, addr); break;
+        }
+        // stcx. sets CR0[EQ]=1 iff the store succeeded (reservation held).
+
+        if (cond == Success) {
+            Jump storeFailed = makeBranch(NotEqual); // CR0[EQ] clear -> stcx. failed
+            m_assembler.isync();                     // acquire (reached only on success)
+            Jump success = jump();
+            mismatch.link(this);
+            storeFailed.link(this);
+            return success;
+        }
+        // Failure form: taken on value mismatch or a lost reservation.
+        Jump stored = makeBranch(Equal); // CR0[EQ] set -> stcx. succeeded
+        mismatch.link(this);             // mismatch joins the store-failed fall-through
+        Jump failure = jump();
+        stored.link(this);
+        m_assembler.isync();             // acquire on the success path
+        return failure;
+    }
+
+    Jump branchAtomicWeakCAS8(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)    { return branchAtomicWeakCAS(8, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS8(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address)  { return branchAtomicWeakCAS(8, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS16(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)   { return branchAtomicWeakCAS(16, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS16(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(16, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS32(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)   { return branchAtomicWeakCAS(32, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS32(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(32, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)   { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
+    Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
 
     // sub32 with memory destination — DFGSpeculativeJIT64.cpp:4332/5858.
 
