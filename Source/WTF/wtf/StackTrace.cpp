@@ -42,7 +42,33 @@
 
 void WTFGetBacktrace(void** stack, int* size)
 {
-#if HAVE(BACKTRACE)
+#if CPU(PPC64LE) && OS(LINUX)
+    // glibc's backtrace() on PPC64 walks the ELFv2 back-chain (each frame's
+    // first doubleword points to the caller's frame) and reads the saved LR
+    // from the caller's frame. JSC's JIT/LLInt frames don't maintain the back-
+    // chain the way the C ABI expects, so the walk can dereference a garbage
+    // pointer and SIGSEGV — fatal because captureStackTrace() runs during
+    // exception-scope verification and crash logging, turning any such event
+    // into a secondary crash. Walk the back-chain ourselves and stop at the
+    // first frame that isn't a strictly-higher, 16-byte-aligned, nearby stack
+    // slot, so we never fault (we simply truncate the trace at JIT frames).
+    int maxFrames = *size;
+    int captured = 0;
+    void** frame = reinterpret_cast<void**>(__builtin_frame_address(0));
+    while (captured < maxFrames && frame) {
+        void** next = reinterpret_cast<void**>(*frame); // back chain
+        if (next <= frame)
+            break; // the back-chain must ascend (the stack grows down)
+        if (reinterpret_cast<uintptr_t>(next) & 0xf)
+            break; // frames are 16-byte aligned in ELFv2
+        if (reinterpret_cast<uintptr_t>(next) - reinterpret_cast<uintptr_t>(frame) > (16u << 20))
+            break; // an implausibly large gap means a bogus back-chain
+        // ELFv2 saves the return address (LR) at caller_sp + 16, i.e. next[2].
+        stack[captured++] = next[2];
+        frame = next;
+    }
+    *size = captured;
+#elif HAVE(BACKTRACE)
     *size = backtrace(stack, *size);
 #elif OS(WINDOWS)
     *size = RtlCaptureStackBackTrace(0, *size, stack, nullptr);
