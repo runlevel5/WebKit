@@ -2381,7 +2381,16 @@ public:
     // Indirect jumps: mtctr + bctr (PtrTag is ignored — no pointer auth).
     void farJump(RegisterID target, PtrTag)
     {
-        m_assembler.mtctr(target);
+        // ELFv2: a tail jump to a C function reaches its global entry, whose
+        // prologue recomputes the TOC as r2 = addis/addi(r12, .TOC.-func). So
+        // r12 must equal the target (its own entry address); a bare mtctr/bctr
+        // leaves r12 stale, giving the callee a wrong TOC that faults the moment
+        // it makes a TOC-relative/PLT call (e.g. the StringEqual thunk tail-
+        // jumping to operationCompareStringEq -> resolveRope PLT). Harmless for
+        // JIT-to-JIT targets. memoryTempRegister is r12.
+        if (target != memoryTempRegister)
+            m_assembler.mr(memoryTempRegister, target);
+        m_assembler.mtctr(memoryTempRegister);
         m_assembler.bctr();
     }
     void farJump(Address address, PtrTag tag)
