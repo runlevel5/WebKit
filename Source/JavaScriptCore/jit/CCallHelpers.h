@@ -303,7 +303,21 @@ private:
             return ArgCollection<numGPRArgs, numGPRSources, numFPRArgs, numFPRSources, numCrossSources, extraGPRArgs, nonArgGPRs, extraPoke + 1>(*this);
         }
 
+#if CPU(PPC64LE)
+        // ELFv2: a floating-point argument is passed in an FPR but still
+        // consumes its doubleword in the parameter save area, so the matching
+        // GPR (r3-r10) is skipped. An integer/pointer argument is therefore
+        // assigned a GPR by its total argument position (GP + FP args seen so
+        // far), not by the count of GP args alone. FP args still select FPRs by
+        // FP count. Verified on POWER9 with gcc -O2:
+        //   p(void* a, double b, void* c)          -> a=r3, c=r5   (r4 skipped)
+        //   p(double a, void* b)                   -> b=r4         (r3 skipped)
+        //   p(void* a, double b, double c, void* d)-> a=r3, d=r6   (r4,r5 skipped)
+        // extraGPRArgs is always 0 on this JSVALUE64 target.
+        unsigned argCount(GPRReg) { return numGPRArgs + numFPRArgs + extraGPRArgs; }
+#else
         unsigned argCount(GPRReg) { return numGPRArgs + extraGPRArgs; }
+#endif
         unsigned argCount(FPRReg) { return numFPRArgs; }
 
         // store GPR -> GPR assignments
