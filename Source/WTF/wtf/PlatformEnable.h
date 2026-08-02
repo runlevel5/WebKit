@@ -792,6 +792,10 @@
 #define ENABLE_DFG_JIT 1
 #endif
 
+#if CPU(PPC64LE) && OS(LINUX)
+#define ENABLE_DFG_JIT 1
+#endif
+
 #endif /* !defined(ENABLE_DFG_JIT) && ENABLE(JIT) */
 
 #if ENABLE(DFG_JIT) && ASSERT_ENABLED
