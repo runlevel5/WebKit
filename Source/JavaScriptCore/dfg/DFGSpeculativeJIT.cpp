@@ -247,6 +247,14 @@ void SpeculativeJIT::compileFunction()
 
 #if CPU(X86_64)
         pop(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        // linkRegister is an r0 placeholder on PPC; the real return address is
+        // in the LR SPR, so a plain move(linkRegister, ...) would spill r0, not
+        // LR. nearCallThunk (bl) clobbers the real LR, so the callee's prologue
+        // would then mflr garbage into its ReturnPC slot and return wild. Spill
+        // and restore the real LR with mflr/mtlr, matching the baseline arity
+        // check (JIT.cpp).
+        moveFromLR(GPRInfo::argumentGPR1);
 #else
         tagPtr(NoPtrTag, linkRegister);
         move(linkRegister, GPRInfo::argumentGPR1);
@@ -254,6 +262,8 @@ void SpeculativeJIT::compileFunction()
         nearCallThunk(CodeLocationLabel { LLInt::arityFixup() });
 #if CPU(X86_64)
         push(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        moveToLR(GPRInfo::argumentGPR1);
 #else
         move(GPRInfo::argumentGPR1, linkRegister);
         untagPtr(NoPtrTag, linkRegister);
