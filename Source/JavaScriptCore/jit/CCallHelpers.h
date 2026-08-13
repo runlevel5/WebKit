@@ -565,10 +565,34 @@ private:
         // gross so it's probably better to do that marshalling before the call operation...
         static_assert(!std::is_floating_point_v<CURRENT_ARGUMENT_TYPE>, "We don't support immediate floats/doubles in setupArguments");
         auto numArgRegisters = GPRInfo::numberOfArgumentRegisters;
+#if CPU(PPC64LE)
+        // ELFv2: FP arguments consume their GPR slot, so an immediate integer
+        // argument's register is selected by total argument position, matching
+        // ArgCollection::argCount(GPRReg).
+        auto currentArgCount = numGPRArgs + numFPRArgs + extraGPRArgs;
+#else
         auto currentArgCount = numGPRArgs + extraGPRArgs;
+#endif
         if (currentArgCount < numArgRegisters) {
             setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
+#if CPU(PPC64LE)
+            // ELFv2 requires the caller to extend a 32-bit register argument
+            // to 64 bits according to its signedness; the callee may read the
+            // full register. move(TrustedImm32) zero-extends (the ARM64/x86_64
+            // contract), which mis-passes negative signed arguments — e.g. the
+            // varargs machineStart stack offset reached operationLoadVarargs
+            // as a huge positive value. Materialize immediates with the C
+            // argument type's own extension.
+            if constexpr (std::is_same_v<std::decay_t<Arg>, TrustedImm32> && std::is_integral_v<CURRENT_ARGUMENT_TYPE> && sizeof(CURRENT_ARGUMENT_TYPE) <= 4) {
+                if constexpr (std::is_signed_v<CURRENT_ARGUMENT_TYPE>)
+                    move(TrustedImm64(static_cast<int64_t>(arg.m_value)), GPRInfo::toArgumentRegister(currentArgCount));
+                else
+                    move(TrustedImm64(static_cast<int64_t>(static_cast<uint32_t>(arg.m_value))), GPRInfo::toArgumentRegister(currentArgCount));
+            } else
+                move(arg, GPRInfo::toArgumentRegister(currentArgCount));
+#else
             move(arg, GPRInfo::toArgumentRegister(currentArgCount));
+#endif
             return;
         }
 
