@@ -1057,9 +1057,14 @@ void SpeculativeJIT::emitCall(Node* node)
                     CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
                 } else
                     CCallHelpers::callOperation<HostFunctionPtrTag>(nativeFunction);
-#if CPU(PPC64LE)
-                reclaimSpaceOnStackForCCall();
-#endif
+                // Note: no reclaimSpaceOnStackForCCall — sp stays lowered
+                // through the exception check on purpose. If the check takes
+                // the HandleException thunk, that thunk makes its own C call
+                // (operationLookupExceptionHandler) whose ELFv2 linkage writes
+                // (TOC save at [sp+24]) would otherwise stomp this frame's
+                // Callee slot, and genericUnwind's topJSCallFrame would then
+                // read a TOC value as the callee cell. The normal path's
+                // emitFunctionEpilogue restores sp from the frame pointer.
                 loadPtr(vm().addressOfException(), GPRInfo::regT2);
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
