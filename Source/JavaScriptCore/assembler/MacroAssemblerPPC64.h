@@ -226,10 +226,19 @@ public:
     // ori only writes the low 16 bits and leaves the rest untouched.
     void move(TrustedImm32 imm, RegisterID dest)
     {
+        // Contract (matches ARM64 `mov wN` / x86_64 `movl`): the upper 32 bits
+        // of dest are ZEROED, never sign-extended. JSValue boxing depends on
+        // it — e.g. move(TrustedImm32(-1)) then or64(numberTag) must yield the
+        // int32 box 0xFFFE0000FFFFFFFF, not all-ones (which still decodes as
+        // int32 -1 but breaks the 64-bit strictEq/full-box comparison; seen as
+        // DFG ArrayIndexOf's miss result -1 failing `=== -1`). addi/lis
+        // sign-extend, so clear the upper word for negative values.
         int32_t v = imm.m_value;
         if (v >= INT16_MIN && v <= INT16_MAX) {
-            // case (a): 16-bit signed range — single addi suffices.
+            // case (a): 16-bit signed range — single addi.
             m_assembler.addi(dest, PPC64Registers::r0, static_cast<int16_t>(v));
+            if (v < 0)
+                m_assembler.rldicl(dest, dest, 0, 32); // clrldi: zero upper 32
             return;
         }
 
@@ -240,14 +249,18 @@ public:
         uint16_t lo16 = static_cast<uint16_t>(v);
 
         if (lo16 == 0) {
-            // case (b): low 16 zero — single lis suffices.
+            // case (b): low 16 zero — single lis.
             m_assembler.lis(dest, hi16);
+            if (v < 0)
+                m_assembler.rldicl(dest, dest, 0, 32);
             return;
         }
 
         // case (c): general 32-bit immediate.
         m_assembler.lis(dest, hi16);
         m_assembler.ori(dest, dest, lo16);
+        if (v < 0)
+            m_assembler.rldicl(dest, dest, 0, 32);
     }
 
     // move — load a 64-bit pointer immediate. Always emits the
