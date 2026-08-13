@@ -294,7 +294,25 @@ RegisterSet RegisterSet::dfgCalleeSaveRegisters()
 #elif CPU(ARM_THUMB2)
     result.add(GPRInfo::regCS0);
     result.add(GPRInfo::regCS1);
-#elif CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(ARM64) || CPU(RISCV64)
+    static_assert(GPRInfo::regCS7 == GPRInfo::jitDataRegister);
+    static_assert(GPRInfo::regCS8 == GPRInfo::numberTagRegister);
+    static_assert(GPRInfo::regCS9 == GPRInfo::notCellMaskRegister);
+    result.add(GPRInfo::regCS7);
+    result.add(GPRInfo::regCS8);
+    result.add(GPRInfo::regCS9);
+#elif CPU(PPC64LE)
+    // The allocatable GPR pool includes regCS0-regCS5 (r14-r19), so the DFG
+    // register allocator hands them out like scratch registers. They are
+    // C-callee-saved (ELFv2), so the DFG prologue must save them or the C
+    // caller's values leak through vmEntry (observed as a SIGSEGV in the jsc
+    // driver after JS execution returned, with a corrupted non-volatile GPR).
+    result.add(GPRInfo::regCS0);
+    result.add(GPRInfo::regCS1);
+    result.add(GPRInfo::regCS2);
+    result.add(GPRInfo::regCS3);
+    result.add(GPRInfo::regCS4);
+    result.add(GPRInfo::regCS5);
     static_assert(GPRInfo::regCS7 == GPRInfo::jitDataRegister);
     static_assert(GPRInfo::regCS8 == GPRInfo::numberTagRegister);
     static_assert(GPRInfo::regCS9 == GPRInfo::notCellMaskRegister);
