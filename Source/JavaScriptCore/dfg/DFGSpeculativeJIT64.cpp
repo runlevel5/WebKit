@@ -1041,11 +1041,25 @@ void SpeculativeJIT::emitCall(Node* node)
                     loadPtr(Address(GPRInfo::argumentGPR2, JSCallee::offsetOfScopeChain()), GPRInfo::argumentGPR0);
                 }
                 move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
+#if CPU(PPC64LE)
+                // ELFv2: the C callee writes its linkage area into the CALLER's
+                // frame — CR save (stw) at [sp+8], LR at [sp+16], TOC at
+                // [sp+24]. After emitFunctionPrologue sp == cfr here, so those
+                // writes land on this JS frame's header: a callee that saves CR
+                // overwrites the LOW 32 BITS of the returnPC slot at [cfr+8]
+                // (observed: 0x...f27ed4c4 -> 0x...00002000), and the epilogue
+                // then returns to garbage. Drop sp below the frame around the
+                // call.
+                makeSpaceOnStackForCCall();
+#endif
                 if (Options::useJITCage()) {
                     move(TrustedImmPtr(nativeFunction.taggedPtr()), GPRInfo::argumentGPR2);
                     CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
                 } else
                     CCallHelpers::callOperation<HostFunctionPtrTag>(nativeFunction);
+#if CPU(PPC64LE)
+                reclaimSpaceOnStackForCCall();
+#endif
                 loadPtr(vm().addressOfException(), GPRInfo::regT2);
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
