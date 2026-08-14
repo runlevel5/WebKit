@@ -103,9 +103,11 @@ void lowerStackArgs(Code& code)
                 // We solve this in AirAllocateRegistersAndStackAndGenerateCode.cpp.
                 UNUSED_PARAM(insertionIndex);
                 return result;
-#elif CPU(X86_64)
+#elif CPU(X86_64) || CPU(PPC64LE)
                 UNUSED_PARAM(insertionIndex);
                 // Can't happen on x86: immediates are always big enough for frame size.
+                // Same on PPC64: isValidAddrForm() accepts any offset (the
+                // MacroAssembler folds large displacements via scratch registers).
                 RELEASE_ASSERT_NOT_REACHED();
 #else
 #error Unhandled architecture.
@@ -207,7 +209,7 @@ void lowerStackArgs(Code& code)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::ZeroReg;
                             Air::Arg operand = Arg::zeroReg();
-#elif CPU(X86_64) || CPU(ARM)
+#elif CPU(X86_64) || CPU(ARM) || CPU(PPC64LE)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::Imm;
                             Air::Arg operand = Arg::imm(0);

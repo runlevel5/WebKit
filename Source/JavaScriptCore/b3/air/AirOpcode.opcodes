@@ -722,7 +722,7 @@ Move U:G:Ptr, D:G:Ptr
     Index, Tmp as loadPtr
     Tmp, Addr as storePtr
     Tmp, Index as storePtr
-    x86: Imm, Addr as storePtr
+    x86 ppc64le: Imm, Addr as storePtr
     arm64: ZeroReg, Tmp
     arm64: ZeroReg, Addr as storePtr
     arm64: ZeroReg, Index as storePtr
@@ -752,7 +752,7 @@ Move32 U:G:32, ZD:G:32
     Tmp, Addr as store32
     Tmp, Index as store32
     x86: Imm, Tmp as zeroExtend32ToWord
-    x86 armv7: Imm, Addr as store32
+    x86 armv7 ppc64le: Imm, Addr as store32
     x86: Imm, Index as store32
     arm64: ZeroReg, Tmp as move
     arm64: ZeroReg, Addr as store32
