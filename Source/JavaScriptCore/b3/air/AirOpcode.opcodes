@@ -481,7 +481,7 @@ x86: XorFloat U:F:32, U:F:32, D:F:32
 x86: XorFloat U:F:32, UD:F:32
     Tmp, Tmp
 
-arm: Lshift32 U:G:32, U:G:32, ZD:G:32
+arm ppc64le: Lshift32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -489,7 +489,7 @@ x86:Lshift32 U:G:32, UZD:G:32
     Tmp*, Tmp
     Imm, Tmp
 
-arm64: Lshift64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: Lshift64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -497,7 +497,7 @@ x86_64: Lshift64 U:G:64, UD:G:64
     Tmp*, Tmp
     Imm, Tmp
 
-arm: Rshift32 U:G:32, U:G:32, ZD:G:32
+arm ppc64le: Rshift32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -505,7 +505,7 @@ x86: Rshift32 U:G:32, UZD:G:32
     Tmp*, Tmp
     Imm, Tmp
 
-arm64: Rshift64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: Rshift64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -513,7 +513,7 @@ x86_64: Rshift64 U:G:64, UD:G:64
     Tmp*, Tmp
     Imm, Tmp
 
-arm: Urshift32 U:G:32, U:G:32, ZD:G:32
+arm ppc64le: Urshift32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -521,7 +521,7 @@ x86: Urshift32 U:G:32, UZD:G:32
     Tmp*, Tmp
     Imm, Tmp
 
-arm64: Urshift64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: Urshift64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 

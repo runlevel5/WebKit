@@ -334,9 +334,11 @@ public:
             m_assembler.addi(dest, src, static_cast<int16_t>(imm.m_value));
             return;
         }
-        // Out of 16-bit range: load imm into scratch, then add.
-        // Use dataTempRegister (r11) as the scratch.
-        move(imm, dataTempRegister);
+        // Out of 16-bit range: materialize the SIGN-EXTENDED immediate in the
+        // scratch, then add. move(TrustedImm32) zero-extends per the
+        // MacroAssembler contract, which would turn a negative offset into
+        // +2^32 in 64-bit address arithmetic.
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
         m_assembler.add(dest, src, dataTempRegister);
     }
 
@@ -434,8 +436,9 @@ public:
             m_assembler.addi(dest, src, static_cast<int16_t>(-imm.m_value));
             return;
         }
-        // Out of negatable-int16 range: materialize imm in scratch, subf.
-        move(imm, dataTempRegister);
+        // Out of negatable-int16 range: materialize the SIGN-EXTENDED imm in
+        // the scratch (see add64), then subf.
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
         m_assembler.subf(dest, dataTempRegister, src);
     }
 
@@ -454,9 +457,9 @@ public:
             m_assembler.ld(dest, static_cast<int16_t>(offset), address.base);
             return;
         }
-        // Out-of-range / unaligned offset: materialize the offset in
-        // memoryTempRegister (r12), then load via indexed form.
-        move(TrustedImm32(offset), memoryTempRegister);
+        // Out-of-range / unaligned offset: materialize the SIGN-EXTENDED
+        // offset in memoryTempRegister (r12), then load via indexed form.
+        moveImmToScratch(int64_t(offset), memoryTempRegister);
         m_assembler.ldx(dest, address.base, memoryTempRegister);
     }
 
@@ -467,7 +470,7 @@ public:
             m_assembler.std(src, static_cast<int16_t>(offset), address.base);
             return;
         }
-        move(TrustedImm32(offset), memoryTempRegister);
+        moveImmToScratch(int64_t(offset), memoryTempRegister);
         m_assembler.stdx(src, address.base, memoryTempRegister);
     }
 
