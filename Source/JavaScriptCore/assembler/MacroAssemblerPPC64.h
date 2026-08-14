@@ -31,6 +31,7 @@
 
 #include "AbstractMacroAssembler.h"
 #include "PPC64Assembler.h"
+#include "SIMDInfo.h"
 
 // MacroAssemblerPPC64 — Phase 1 skeleton.
 //
@@ -1214,6 +1215,12 @@ public:
     Jump branchAdd32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
     {
         if (cond == Overflow) {
+            // Seed XER.CA with the 32-bit carry-out (both inputs are
+            // zero-extended by convention, so the raw 64-bit sum's bit 32 is
+            // the carry); the B3 CheckAdd recovery reads it via setCarry.
+            m_assembler.add(dataTempRegister, a, b);
+            m_assembler.rldicl(dataTempRegister, dataTempRegister, 32, 63); // (sum >> 32) & 1
+            m_assembler.addic(dataTempRegister, dataTempRegister, -1);      // CA := carry
             m_assembler.extsw(dataTempRegister, a);
             m_assembler.extsw(memoryTempRegister, b);
             m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
@@ -1794,6 +1801,15 @@ public:
         m_assembler.fctidz(fpTempRegister, src);
         m_assembler.mfvsrd(dest, fpTempRegister);
     }
+    void truncateDoubleToUint32(FPRegisterID src, RegisterID dest)
+    {
+        // fctiduz truncates toward zero to unsigned 64-bit (saturating);
+        // in-range uint32 values convert exactly, matching the contract's
+        // defined domain.
+        m_assembler.fctiduz(fpTempRegister, src);
+        m_assembler.mfvsrd(dest, fpTempRegister);
+        zeroExtend32ToWordInternal(dest);
+    }
 
     // --- Double compares/branches ---------------------------------------
     // fcmpu sets CR0 bits LT=0, GT=1, EQ=2, UN=3.  Compound conditions
@@ -1850,6 +1866,288 @@ public:
         moveZeroToDouble(scratch);
         return branchDouble(DoubleEqualOrUnordered, reg, scratch);
     }
+
+    // --- Single-precision (float) family, for Air/FTL -------------------
+    // Floats live in FPRs as doubles rounded to single (the PPC convention);
+    // the -s arithmetic forms keep results in single range and precision.
+    void addFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)  { m_assembler.fadds(dest, a, b); }
+    void addFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fadds(dest, dest, src); }
+    void subFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)  { m_assembler.fsubs(dest, a, b); }
+    void subFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fsubs(dest, dest, src); }
+    void mulFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)  { m_assembler.fmuls(dest, a, b); }
+    void mulFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fmuls(dest, dest, src); }
+    void divFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)  { m_assembler.fdivs(dest, a, b); }
+    void divFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fdivs(dest, dest, src); }
+    void sqrtFloat(FPRegisterID src, FPRegisterID dest)               { m_assembler.fsqrts(dest, src); }
+    // Rounding an already-single value to an integral yields a value still
+    // exactly representable as single (below 2^24 integrals are exact; larger
+    // singles are already integral and unchanged), so the double
+    // round-to-integral instructions suffice.
+    void floorFloat(FPRegisterID src, FPRegisterID dest)              { m_assembler.frim(dest, src); }
+    void ceilFloat(FPRegisterID src, FPRegisterID dest)               { m_assembler.frip(dest, src); }
+    void truncFloat(FPRegisterID src, FPRegisterID dest)              { m_assembler.friz(dest, src); }
+    void roundTowardZeroFloat(FPRegisterID src, FPRegisterID dest)    { m_assembler.friz(dest, src); }
+    void roundTowardNearestIntFloat(FPRegisterID src, FPRegisterID dest) { m_assembler.frin(dest, src); }
+    // Bitwise float ops act on the 32-bit single-format pattern: shuttle
+    // through the GPR scratches via the single<->double converting bit moves.
+    void andFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        moveFloatTo32(a, dataTempRegister);
+        moveFloatTo32(b, memoryTempRegister);
+        and32(memoryTempRegister, dataTempRegister);
+        move32ToFloat(dataTempRegister, dest);
+    }
+    void andFloat(FPRegisterID src, FPRegisterID dest) { andFloat(src, dest, dest); }
+    void orFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        moveFloatTo32(a, dataTempRegister);
+        moveFloatTo32(b, memoryTempRegister);
+        or32(memoryTempRegister, dataTempRegister);
+        move32ToFloat(dataTempRegister, dest);
+    }
+    void orFloat(FPRegisterID src, FPRegisterID dest) { orFloat(src, dest, dest); }
+    void xorFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        moveFloatTo32(a, dataTempRegister);
+        moveFloatTo32(b, memoryTempRegister);
+        xor32(memoryTempRegister, dataTempRegister);
+        move32ToFloat(dataTempRegister, dest);
+    }
+    void xorFloat(FPRegisterID src, FPRegisterID dest) { xorFloat(src, dest, dest); }
+    void compareFloat(DoubleCondition cond, FPRegisterID left, FPRegisterID right, RegisterID dest)
+    {
+        // Same as a double compare: floats are held as doubles in FPRs.
+        DoubleBranchBits bits = doubleBranchBitsFor(cond);
+        m_assembler.fcmpu(0, left, right);
+        emitDoubleConditionCRop(bits);
+        m_assembler.mfcr(dest);
+        m_assembler.rlwinm(dest, dest, bits.bi + 1, 31, 31);
+        if (bits.bo == 4)
+            m_assembler.xori(dest, dest, 1);
+    }
+
+    // --- Width extensions (Air SignExtend/ZeroExtend opcodes) -----------
+    void signExtend8To64(RegisterID src, RegisterID dest)  { m_assembler.extsb(dest, src); }
+    void signExtend16To64(RegisterID src, RegisterID dest) { m_assembler.extsh(dest, src); }
+    void signExtend32To64(RegisterID src, RegisterID dest) { m_assembler.extsw(dest, src); }
+    void zeroExtend8To32(RegisterID src, RegisterID dest)  { m_assembler.rldicl(dest, src, 0, 56); }
+    void zeroExtend16To32(RegisterID src, RegisterID dest) { m_assembler.rldicl(dest, src, 0, 48); }
+    void zeroExtend8To64(RegisterID src, RegisterID dest)  { m_assembler.rldicl(dest, src, 0, 56); }
+    void zeroExtend16To64(RegisterID src, RegisterID dest) { m_assembler.rldicl(dest, src, 0, 48); }
+
+    // --- Test32-based conditional moves (mirror the Test64 family) ------
+    void emitTest32ToCR0(RegisterID left, RegisterID mask)
+    {
+        m_assembler.and_(dataTempRegister, left, mask);
+        m_assembler.extsw(dataTempRegister, dataTempRegister); // Signed = bit31
+        m_assembler.cmpdi(0, dataTempRegister, 0);
+    }
+    void emitTest32ToCR0(RegisterID left, TrustedImm32 mask)
+    {
+        moveImmToScratch(int64_t(uint32_t(mask.m_value)), dataTempRegister);
+        m_assembler.and_(dataTempRegister, left, dataTempRegister);
+        m_assembler.extsw(dataTempRegister, dataTempRegister);
+        m_assembler.cmpdi(0, dataTempRegister, 0);
+    }
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, RegisterID mask, RegisterID src, RegisterID dest)
+    {
+        emitTest32ToCR0(left, mask);
+        BranchBitsRC b = testBranchBitsFor(cond);
+        emitSkipOneInstruction(b.bo ^ 0x8, b.bi);
+        m_assembler.mr(dest, src);
+    }
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, RegisterID mask, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest32ToCR0(left, mask); });
+    }
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, TrustedImm32 mask, RegisterID src, RegisterID dest)
+    {
+        emitTest32ToCR0(left, mask);
+        BranchBitsRC b = testBranchBitsFor(cond);
+        emitSkipOneInstruction(b.bo ^ 0x8, b.bi);
+        m_assembler.mr(dest, src);
+    }
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, TrustedImm32 mask, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest32ToCR0(left, mask); });
+    }
+
+    // --- Carry access for the B3 CheckAdd recovery path -----------------
+    // Valid after an instruction that maintains XER.CA: the branchAdd64
+    // emitters use addc, and branchAdd32's overflow form seeds CA via the
+    // addic trick, precisely so this recovery works.
+    void setCarry(RegisterID dest)
+    {
+        m_assembler.addi(dest, PPC64Registers::r0, 0); // li dest, 0
+        m_assembler.addze(dest, dest);                 // dest = 0 + CA
+    }
+
+    // --- Vector load/store, BaseIndex forms -----------------------------
+    void loadVector(BaseIndex address, FPRegisterID dest)
+    {
+        RegisterID ea = prepareAtomicAddress(address, memoryTempRegister);
+        m_assembler.lxvd2x(dest, PPC64Registers::r0, ea);
+    }
+    void storeVector(FPRegisterID src, BaseIndex address)
+    {
+        RegisterID ea = prepareAtomicAddress(address, memoryTempRegister);
+        m_assembler.stxvd2x(src, PPC64Registers::r0, ea);
+    }
+    void move128ToVector(v128_t, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+
+    // --- FP conditional moves (Air MoveDoubleConditionally* / *Float) ----
+    template<typename CompareEmitter>
+    void moveDoubleConditionallyImpl(BranchBits bits, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest, const CompareEmitter& emitCompareFn)
+    {
+        emitCompareFn();
+        if (dest == thenCase) {
+            emitSkipOneInstruction(bits.bo, bits.bi);          // taken: keep then-value
+            m_assembler.fmr(dest, elseCase);
+        } else if (dest == elseCase) {
+            emitSkipOneInstruction(bits.bo ^ 0x8, bits.bi);    // not taken: keep else-value
+            m_assembler.fmr(dest, thenCase);
+        } else {
+            m_assembler.fmr(dest, elseCase);
+            emitSkipOneInstruction(bits.bo ^ 0x8, bits.bi);
+            m_assembler.fmr(dest, thenCase);
+        }
+    }
+    // Floats live as doubles in FPRs, so the float variants are the double ones.
+    void moveConditionallyFloat(DoubleCondition cond, FPRegisterID left, FPRegisterID right, RegisterID src, RegisterID dest)
+    {
+        moveConditionallyDouble(cond, left, right, src, dest);
+    }
+    void moveConditionallyFloat(DoubleCondition cond, FPRegisterID left, FPRegisterID right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        moveConditionallyDouble(cond, left, right, thenCase, elseCase, dest);
+    }
+    void moveDoubleConditionallyFloat(DoubleCondition cond, FPRegisterID left, FPRegisterID right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        moveDoubleConditionallyDouble(cond, left, right, thenCase, elseCase, dest);
+    }
+    void moveDoubleConditionally32(RelationalCondition cond, RegisterID left, RegisterID right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        moveDoubleConditionallyImpl(branchBitsFor(cond), thenCase, elseCase, dest, [&] { emitCompare32(cond, left, right); });
+    }
+    void moveDoubleConditionally32(RelationalCondition cond, RegisterID left, TrustedImm32 right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        moveDoubleConditionallyImpl(branchBitsFor(cond), thenCase, elseCase, dest, [&] { emitCompare32(cond, left, right); });
+    }
+    void moveDoubleConditionally64(RelationalCondition cond, RegisterID left, RegisterID right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        moveDoubleConditionallyImpl(branchBitsFor(cond), thenCase, elseCase, dest, [&] { emitCompare64(cond, left, right); });
+    }
+    void moveDoubleConditionally64(RelationalCondition cond, RegisterID left, TrustedImm32 right, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        moveDoubleConditionallyImpl(branchBitsFor(cond), thenCase, elseCase, dest, [&] { emitCompare64(cond, left, TrustedImm64(right.m_value)); });
+    }
+    void moveDoubleConditionallyTest32(ResultCondition cond, RegisterID left, RegisterID mask, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveDoubleConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest32ToCR0(left, mask); });
+    }
+    void moveDoubleConditionallyTest32(ResultCondition cond, RegisterID left, TrustedImm32 mask, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveDoubleConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest32ToCR0(left, mask); });
+    }
+    void moveDoubleConditionallyTest64(ResultCondition cond, RegisterID left, RegisterID mask, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveDoubleConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest64ToCR0(left, mask); });
+    }
+    void moveDoubleConditionallyTest64(ResultCondition cond, RegisterID left, TrustedImm32 mask, FPRegisterID thenCase, FPRegisterID elseCase, FPRegisterID dest)
+    {
+        BranchBitsRC b = testBranchBitsFor(cond);
+        moveDoubleConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest64ToCR0(left, mask); });
+    }
+
+    // --- SIMD vector surface: unimplemented stubs ------------------------
+    void vectorDupElementFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorDupElementFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorDupElementInt32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorDupElementInt64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneInt32(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneInt64(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneSignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneSignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneUnsignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLaneUnsignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneInt16(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneInt32(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneInt64(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLaneInt8(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    // ENABLE_WEBASSEMBLY_SIMD is off for this port; these exist so the
+    // unguarded Air opcode forms compile. Signatures scraped from ARM64.
+    void compareFloatingPointVector(DoubleCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAndnot(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAnyTrue(FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorBitwiseSelect(FPRegisterID left, FPRegisterID right, FPRegisterID inputBitsAndDest) { PPC64_UNIMPLEMENTED(); }
+    void vectorCeil(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorConvert(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorDemote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtendHigh(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtendLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractPair(SIMDInfo simdInfo, TrustedImm32 firstLane, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorFloor(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorFusedNegMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad16Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad16Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad32Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad32Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad64Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad64Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad8Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorNarrow(SIMDInfo simdInfo, FPRegisterID lower, FPRegisterID upper, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorNearest(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorPromote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorRelaxedDotI8x16I7x16(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID a, FPRegisterID b, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch1, FPRegisterID scratch2) { PPC64_UNIMPLEMENTED(); }
+    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorRelaxedQ15Mulr(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorStore16Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
+    void vectorStore32Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
+    void vectorStore64Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
+    void vectorStore8Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
+    void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSwizzle(FPRegisterID a, FPRegisterID control, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorTrunc(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+
 
     Jump branchTruncateDoubleToInt32(FPRegisterID src, RegisterID dest, BranchTruncateType branchType = BranchIfTruncateFailed)
     {
@@ -2581,7 +2879,7 @@ public:
     {
         if (cond == Overflow) {
             m_assembler.mr(dataTempRegister, dest);              // origLeft
-            add64(src, dest);                                    // dest = origLeft + src
+            m_assembler.addc(dest, dest, src);                   // addc keeps XER.CA for setCarry recovery
             xor64(dataTempRegister, dest, memoryTempRegister);   // origLeft ^ result
             xor64(src, dest, dataTempRegister);                  // src ^ result
             m_assembler.and_(dataTempRegister, dataTempRegister, memoryTempRegister);
@@ -2589,6 +2887,23 @@ public:
             return Jump(m_assembler.emitUnlinkedBranch(12, 0));  // LT (negative) => overflow
         }
         add64(src, dest);
+        return branchTest64Impl(resultConditionForArith(cond), dest);
+    }
+    Jump branchAdd64(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
+    {
+        if (cond == Overflow) {
+            // Save both operands first: dest may alias either. addc keeps
+            // XER.CA correct for the B3 CheckAdd setCarry recovery.
+            m_assembler.mr(dataTempRegister, a);
+            m_assembler.mr(memoryTempRegister, b);
+            m_assembler.addc(dest, a, b);
+            xor64(dataTempRegister, dest, dataTempRegister);     // origA ^ result
+            xor64(memoryTempRegister, dest, memoryTempRegister); // origB ^ result
+            m_assembler.and_(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.cmpdi(0, dataTempRegister, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(12, 0));  // LT (negative) => overflow
+        }
+        add64(a, b, dest);
         return branchTest64Impl(resultConditionForArith(cond), dest);
     }
     Jump branchAdd64(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
@@ -3535,6 +3850,11 @@ public:
     static void repatchCall(CodeLocationCall<callTag> call, CodePtr<destTag> destination)
     {
         PPC64Assembler::relinkCall(call.dataLocation(), destination.taggedPtr());
+    }
+    template<PtrTag resultTag, PtrTag locationTag>
+    static CodePtr<resultTag> readCallTarget(CodeLocationCall<locationTag> call)
+    {
+        return CodePtr<resultTag>(PPC64Assembler::readCallTarget(call.dataLocation()));
     }
 
     // Required by LinkBuffer — Phase 1 stub.

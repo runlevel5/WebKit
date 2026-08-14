@@ -219,6 +219,23 @@ public:
 
     // mfcr — Move From Condition Register. Power ISA v2.07B §3.3.17,
     // XFX-form, opcode 31, XO=19 (bit 11 = 0 selects the full-CR form).
+    // Carrying adds (XER.CA). Encodings verified against powerpc64le as:
+    //   addc 3,4,5 -> 0x7c642814 (opcode 31, XO=10)
+    //   addze 6,7  -> 0x7cc70194 (opcode 31, XO=202, rb=0)
+    //   addic 8,9,-1 -> 0x3109ffff (D-form opcode 12)
+    void addc(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 10, /*Rc*/ 0));
+    }
+    void addze(RegisterID rt, RegisterID ra)
+    {
+        insn(xoForm(31, rt, ra, PPC64Registers::r0, /*OE*/ 0, /*XO*/ 202, /*Rc*/ 0));
+    }
+    void addic(RegisterID rt, RegisterID ra, int16_t si)
+    {
+        insn(dForm(12, rt, ra, uint16_t(si)));
+    }
+
     void mfcr(RegisterID rt)
     {
         insn((31u << 26) | (uint32_t(registerValue(rt)) << 21) | (19u << 1));
