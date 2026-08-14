@@ -2130,8 +2130,17 @@ void linkDirectCall(DirectCallLinkInfo& callLinkInfo, CodeBlock* calleeCodeBlock
 {
     // DirectCall is only used from DFG / FTL.
     callLinkInfo.setCallTarget(uncheckedDowncast<FunctionCodeBlock>(calleeCodeBlock), CodeLocationLabel<JSEntryPtrTag>(codePtr));
-    if (calleeCodeBlock)
+    if (calleeCodeBlock) {
+        // Guard against a double push: if this info is already on an incoming-
+        // calls list (e.g. relinked while a speculative repatch had chained it),
+        // pushing it again while it sits at the head of the same list would
+        // make its next pointer refer to itself and wedge the next
+        // unlinkOrUpgradeIncomingCalls walk (observed on PPC64 where the
+        // allocation layout made the interleaving deterministic).
+        if (callLinkInfo.isOnList())
+            callLinkInfo.remove();
         calleeCodeBlock->linkIncomingCall(callLinkInfo.owner(), &callLinkInfo);
+    }
 }
 
 void resetGetBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, GetByKind kind)
