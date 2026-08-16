@@ -88,7 +88,18 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
         GPRInfo::argumentGPR1,
         (stackMisalignment - pushToSaveByteOffset) / sizeof(void*));
     jit.prepareCallOperation(vm);
+#if CPU(PPC64LE)
+    // ELFv2: the C callee writes its linkage area into the caller's frame
+    // (CR save at [sp+8], LR at [sp+16], TOC at [sp+24]). The pushToSave
+    // slots this thunk just laid out live exactly there, and the saved frame
+    // pointer at [sp+16] would come back as the call's return address.
+    // Reserve the slow-path call extent for the duration of the call.
+    jit.makeSpaceOnStackForCCall();
+#endif
     jit.callOperation<OperationPtrTag>(generationFunction.retagged<OperationPtrTag>());
+#if CPU(PPC64LE)
+    jit.reclaimSpaceOnStackForCCall();
+#endif
 
     // At this point we want to make a tail call to what was returned to us in the
     // returnValueGPR. But at the same time as we do this, we must restore all registers.
