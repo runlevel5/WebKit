@@ -321,6 +321,28 @@ public:
         m_assembler.add(dest, src1, src2);
     }
 
+    // Integer division (Air Div32/UDiv32/Div64/UDiv64). divw/divwu operate on
+    // the low 32 bits and leave the upper half undefined, so re-establish the
+    // zero-extended-32 convention on the result.
+    void div32(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        m_assembler.divw(dest, dividend, divisor);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void uDiv32(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        m_assembler.divwu(dest, dividend, divisor);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void div64(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        m_assembler.divd(dest, dividend, divisor);
+    }
+    void uDiv64(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        m_assembler.divdu(dest, dividend, divisor);
+    }
+
     // dest = dest + imm
     void add64(TrustedImm32 imm, RegisterID dest)
     {
@@ -3575,6 +3597,43 @@ public:
     Jump branchAtomicWeakCAS32(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(32, cond, expected, newValue, address); }
     Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)   { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
     Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
+
+    // --- Air LoadLink/StoreCond (B3 atomics LL/SC loops) ----------------
+    // The Air forms use SimpleAddr (a bare register address, offset 0).
+    // storeCond* results follow the ARM64 stxr convention the lowering
+    // expects: 0 = success, nonzero = reservation lost. Acq/Rel variants add
+    // lwsync (load-acquire after the load-reserve; store-release before the
+    // store-conditional).
+    void loadLink8(Address address, RegisterID dest)  { m_assembler.lbarx(dest, PPC64Registers::r0, address.base); }
+    void loadLink16(Address address, RegisterID dest) { m_assembler.lharx(dest, PPC64Registers::r0, address.base); }
+    void loadLink32(Address address, RegisterID dest) { m_assembler.lwarx(dest, PPC64Registers::r0, address.base); }
+    void loadLink64(Address address, RegisterID dest) { m_assembler.ldarx(dest, PPC64Registers::r0, address.base); }
+    void loadLinkAcq8(Address address, RegisterID dest)  { loadLink8(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq16(Address address, RegisterID dest) { loadLink16(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq32(Address address, RegisterID dest) { loadLink32(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq64(Address address, RegisterID dest) { loadLink64(address, dest); m_assembler.lwsync(); }
+    void emitStoreCondResult(RegisterID result)
+    {
+        // CR0.EQ set by st*cx. on success; produce 0 on success, 1 on failure.
+        m_assembler.mfcr(result);
+        m_assembler.rlwinm(result, result, 3, 31, 31); // CR0 bit 2 (EQ) -> LSB
+        m_assembler.xori(result, result, 1);
+    }
+    void storeCond8(RegisterID src, Address address, RegisterID result)  { m_assembler.stbcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond16(RegisterID src, Address address, RegisterID result) { m_assembler.sthcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond32(RegisterID src, Address address, RegisterID result) { m_assembler.stwcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond64(RegisterID src, Address address, RegisterID result) { m_assembler.stdcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCondRel8(RegisterID src, Address address, RegisterID result)  { m_assembler.lwsync(); storeCond8(src, address, result); }
+    void storeCondRel16(RegisterID src, Address address, RegisterID result) { m_assembler.lwsync(); storeCond16(src, address, result); }
+    void storeCondRel32(RegisterID src, Address address, RegisterID result) { m_assembler.lwsync(); storeCond32(src, address, result); }
+    void storeCondRel64(RegisterID src, Address address, RegisterID result) { m_assembler.lwsync(); storeCond64(src, address, result); }
+
+    // Artificial value dependency (Air Depend32/64): dest = 0 with a data
+    // dependency on src, used to order dependent loads. Same trick as ARM64's
+    // eor x,x,x.
+    void depend32(RegisterID src, RegisterID dest) { m_assembler.xor_(dest, src, src); zeroExtend32ToWordInternal(dest); }
+    void depend64(RegisterID src, RegisterID dest) { m_assembler.xor_(dest, src, src); }
+
 
     // sub32 with memory destination — DFGSpeculativeJIT64.cpp:4332/5858.
 

@@ -333,16 +333,16 @@ x86_64: X86MulHigh64 U:G:64, UD:G:64, D:G:64
 x86_64: X86UMulHigh64 U:G:64, UD:G:64, D:G:64
     Tmp, Tmp*, Tmp*
 
-arm64: Div32 U:G:32, U:G:32, ZD:G:32
+arm64 ppc64le: Div32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
 
-arm64: UDiv32 U:G:32, U:G:32, ZD:G:32
+arm64 ppc64le: UDiv32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
 
-arm64: Div64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: Div64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
-arm64: UDiv64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: UDiv64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
 MulDouble U:F:64, U:F:64, D:F:64
@@ -1402,65 +1402,65 @@ x86_64: AtomicXchg64 UD:G:64, UD:G:64 /effects
     Tmp, Addr
     Tmp, Index
 
-arm: LoadLink8 U:G:8, ZD:G:8 /effects
+arm ppc64le: LoadLink8 U:G:8, ZD:G:8 /effects
     SimpleAddr, Tmp
 
-arm64: LoadLinkAcq8 U:G:8, ZD:G:8 /effects
+arm64 ppc64le: LoadLinkAcq8 U:G:8, ZD:G:8 /effects
     SimpleAddr, Tmp
 
 # Super confusing fact: this returns 0 to mean success, 1 to mean failure.
-arm: StoreCond8 U:G:8, D:G:8, EZD:G:8 /effects
+arm ppc64le: StoreCond8 U:G:8, D:G:8, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm64: StoreCondRel8 U:G:8, D:G:8, EZD:G:8 /effects
+arm64 ppc64le: StoreCondRel8 U:G:8, D:G:8, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm: LoadLink16 U:G:16, ZD:G:16 /effects
+arm ppc64le: LoadLink16 U:G:16, ZD:G:16 /effects
     SimpleAddr, Tmp
 
-arm64: LoadLinkAcq16 U:G:16, ZD:G:16 /effects
+arm64 ppc64le: LoadLinkAcq16 U:G:16, ZD:G:16 /effects
     SimpleAddr, Tmp
 
-arm: StoreCond16 U:G:16, D:G:16, EZD:G:8 /effects
+arm ppc64le: StoreCond16 U:G:16, D:G:16, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm64: StoreCondRel16 U:G:16, D:G:16, EZD:G:8 /effects
+arm64 ppc64le: StoreCondRel16 U:G:16, D:G:16, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm: LoadLink32 U:G:32, ZD:G:32 /effects
+arm ppc64le: LoadLink32 U:G:32, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-arm64: LoadLinkAcq32 U:G:32, ZD:G:32 /effects
+arm64 ppc64le: LoadLinkAcq32 U:G:32, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-arm: StoreCond32 U:G:32, D:G:32, EZD:G:8 /effects
+arm ppc64le: StoreCond32 U:G:32, D:G:32, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm64: StoreCondRel32 U:G:32, D:G:32, EZD:G:8 /effects
+arm64 ppc64le: StoreCondRel32 U:G:32, D:G:32, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
 armv7: LoadLinkPair32 U:G:64, D:G:32, D:G:32 /effects
     SimpleAddr, Tmp, Tmp
 
-arm64: LoadLink64 U:G:64, ZD:G:64 /effects
+arm64 ppc64le: LoadLink64 U:G:64, ZD:G:64 /effects
     SimpleAddr, Tmp
 
-arm64: LoadLinkAcq64 U:G:64, ZD:G:64 /effects
+arm64 ppc64le: LoadLinkAcq64 U:G:64, ZD:G:64 /effects
     SimpleAddr, Tmp
 
 armv7: StoreCondPair32 U:G:32, U:G:32, D:G:64, EZD:G:8 /effects
     Tmp, Tmp, SimpleAddr, Tmp
 
-arm64: StoreCond64 U:G:64, D:G:64, EZD:G:8 /effects
+arm64 ppc64le: StoreCond64 U:G:64, D:G:64, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm64: StoreCondRel64 U:G:64, D:G:64, EZD:G:8 /effects
+arm64 ppc64le: StoreCondRel64 U:G:64, D:G:64, EZD:G:8 /effects
     Tmp, SimpleAddr, Tmp
 
-arm arm64: Depend32 U:G:32, ZD:G:32
+arm arm64 ppc64le: Depend32 U:G:32, ZD:G:32
     Tmp, Tmp
 
-arm64: Depend64 U:G:64, ZD:G:64
+arm64 ppc64le: Depend64 U:G:64, ZD:G:64
     Tmp, Tmp
 
 arm64_lse: AtomicXchgAdd8 U:G:8, UD:G:8, ZD:G:32 /effects
