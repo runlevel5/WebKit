@@ -129,7 +129,7 @@ private:
             switch (m_value->opcode()) {
             case Mod: {
                 if (m_value->isChill()) {
-                    if (isARM64()) {
+                    if (isARM64() || isPPC64LE()) {
                         BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
                         BasicBlock* zeroDenCase = m_blockInsertionSet.insertBefore(m_block);
                         BasicBlock* normalModCase = m_blockInsertionSet.insertBefore(m_block);
@@ -289,7 +289,7 @@ private:
                     break;
                 }
 
-                if (isARM64()) {
+                if (isARM64() || isPPC64LE()) {
                     Value* divResult = m_insertionSet.insert<Value>(m_index, chill(Div), m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
                     Value* result = m_insertionSet.insert<Value>(m_index, Sub, m_origin, m_value->child(0), multipliedBack);
@@ -308,7 +308,7 @@ private:
                         replaceWithBinaryCall(Math::i32_rem_u);
                     break;
                 }
-                if (isARM64()) {
+                if (isARM64() || isPPC64LE()) {
                     Value* divResult = m_insertionSet.insert<Value>(m_index, UDiv, m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
                     Value* result = m_insertionSet.insert<Value>(m_index, Sub, m_origin, m_value->child(0), multipliedBack);
@@ -329,7 +329,7 @@ private:
             }
             case FMax:
             case FMin: {
-                if (isX86() || isARM_THUMB2()) {
+                if (isX86() || isARM_THUMB2() || isPPC64LE()) {
                     bool isMax = m_value->opcode() == FMax;
 
                     Value* a = m_value->child(0);
@@ -1093,8 +1093,10 @@ private:
     {
         ASSERT(nonChillOpcode == Div || nonChillOpcode == Mod);
 
-        // ARM supports this instruction natively.
-        if (isARM64())
+        // ARM supports this instruction natively. PPC64's divd/divw likewise
+        // never trap (divide-by-zero and overflow give an undefined result),
+        // which satisfies the chill contract.
+        if (isARM64() || isPPC64LE())
             return;
 
         // We implement "res = Div<Chill>/Mod<Chill>(num, den)" as follows:

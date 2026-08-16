@@ -3537,7 +3537,7 @@ private:
             return;
         }
         
-        RELEASE_ASSERT(isARM64());
+        RELEASE_ASSERT(isARM64() || isPPC64LE());
         // We wish to emit:
         //
         // Block #reloop:
@@ -3692,7 +3692,7 @@ private:
                 break;
             }
         } else {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(isARM64() || isPPC64LE());
             prepareOpcode = loadLinkOpcode(atomic->accessWidth(), atomic->hasFence());
         }
         reloopBlock->append(trappingInst(m_value, prepareOpcode, m_value, address, oldValue));
@@ -3723,7 +3723,7 @@ private:
             reloopBlock->append(relaxedMoveForType(atomic->type()), m_value, oldValue, m_eax);
             reloopBlock->append(trappingInst(m_value, casOpcode, m_value, Arg::statusCond(MacroAssembler::Success), m_eax, newValue, address));
         } else {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(isARM64() || isPPC64LE());
             Tmp boolResult = m_code.newTmp(GP);
             reloopBlock->append(trappingInst(m_value, storeCondOpcode(atomic->accessWidth(), atomic->hasFence()), m_value, newValue, address, boolResult));
             reloopBlock->append(BranchTest32, m_value, Arg::resCond(MacroAssembler::Zero), boolResult, boolResult);
@@ -4122,7 +4122,7 @@ private:
 
         case Div: {
             if (m_value->isChill())
-                RELEASE_ASSERT(isARM64());
+                RELEASE_ASSERT(isARM64() || isPPC64LE());
             if (m_value->type().isInt() && isX86()) {
                 appendX86Div(Div);
                 return;
