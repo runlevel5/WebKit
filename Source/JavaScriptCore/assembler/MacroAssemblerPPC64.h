@@ -101,7 +101,7 @@ public:
     // Feature flags consulted by JSC when generating code. Both default
     // to conservative "not yet supported" until their implementations
     // land; overriding can be done as instruction coverage grows.
-    static bool supportsFloatingPointRounding() { return false; }
+    static bool supportsFloatingPointRounding() { return true; } // frip/frim/friz + xsrdpic
     static bool supportsFloat16() { return false; }
 
     // Conditions. Values are opaque to callers — the branch-emitting
@@ -1815,7 +1815,10 @@ public:
     void roundTowardZeroDouble(FPRegisterID src, FPRegisterID dest)   { m_assembler.friz(dest, src); }
     // NOTE: frin rounds ties AWAY from zero; JS ties-to-even call sites
     // guard this at a higher level.  Revisit if testmasm flags it.
-    void roundTowardNearestIntDouble(FPRegisterID src, FPRegisterID dest) { m_assembler.frin(dest, src); }
+    // Ties-to-even (ARM64 frintn semantics): frin rounds ties away from
+    // zero, which is wrong for the MacroAssembler contract; xsrdpic rounds
+    // in the current mode (default ties-to-even).
+    void roundTowardNearestIntDouble(FPRegisterID src, FPRegisterID dest) { m_assembler.xsrdpic(dest, src); }
 
     void truncateDoubleToInt32(FPRegisterID src, RegisterID dest)
     {
@@ -1913,7 +1916,7 @@ public:
     void ceilFloat(FPRegisterID src, FPRegisterID dest)               { m_assembler.frip(dest, src); }
     void truncFloat(FPRegisterID src, FPRegisterID dest)              { m_assembler.friz(dest, src); }
     void roundTowardZeroFloat(FPRegisterID src, FPRegisterID dest)    { m_assembler.friz(dest, src); }
-    void roundTowardNearestIntFloat(FPRegisterID src, FPRegisterID dest) { m_assembler.frin(dest, src); }
+    void roundTowardNearestIntFloat(FPRegisterID src, FPRegisterID dest) { m_assembler.xsrdpic(dest, src); }
     // Bitwise float ops act on the 32-bit single-format pattern: shuttle
     // through the GPR scratches via the single<->double converting bit moves.
     void andFloat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)

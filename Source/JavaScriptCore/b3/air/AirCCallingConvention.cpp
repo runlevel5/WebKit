@@ -85,7 +85,18 @@ void marshallCCallArgument(Vector<Arg> &result, unsigned& gpArgumentCount, unsig
 {
     switch (bankForType(childType)) {
     case GP:
+#if CPU(PPC64LE)
+        // ELFv2: every argument consumes a GPR slot, so an integer/pointer
+        // argument's register is chosen by total argument position (FP
+        // arguments skip theirs). Mirrors ArgCollection::argCount(GPRReg).
+        {
+            unsigned positionCount = gpArgumentCount + fpArgumentCount;
+            marshallCCallArgumentImpl<GPRInfo>(result, positionCount, stackOffset, childType);
+            gpArgumentCount = positionCount - fpArgumentCount;
+        }
+#else
         marshallCCallArgumentImpl<GPRInfo>(result, gpArgumentCount, stackOffset, childType);
+#endif
         return;
     case FP:
         marshallCCallArgumentImpl<FPRInfo>(result, fpArgumentCount, stackOffset, childType);
@@ -102,7 +113,11 @@ Vector<Arg> computeCCallingConvention(Code& code, CCallValue* value)
     result.append(Tmp(CCallSpecial::scratchRegister)); // For callee
     unsigned gpArgumentCount = 0;
     unsigned fpArgumentCount = 0;
-    Value::OffsetType stackOffset = 0;
+    // ELFv2: the parameter save area begins after the 32-byte linkage area,
+    // which the callee's prologue writes (CR/LR/TOC saves). Stack-passed
+    // arguments must not overlap it. (Beyond-register args are rare in B3
+    // CCalls; a fully position-based save-area layout can come later.)
+    Value::OffsetType stackOffset = isPPC64LE() ? 32 : 0;
     for (unsigned i = 1; i < value->numChildren(); ++i)
         marshallCCallArgument(result, gpArgumentCount, fpArgumentCount, stackOffset, value->child(i)->type());
     code.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(stackOffset));

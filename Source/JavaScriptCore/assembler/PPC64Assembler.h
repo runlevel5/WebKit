@@ -697,6 +697,12 @@ public:
     // Round-to-integer family (X-form, op 63): frin=392 nearest, friz=424
     // toward zero, frip=456 ceil, frim=488 floor. Power ISA v2.07B §4.6.7.
     void frin(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 392, 0)); }
+    // xsrdpic: VSX scalar round-to-integral using the current rounding mode
+    // (default = ties-to-even, matching ARM64 frintn). XX2 form, XO=107;
+    // FPRs f0-f31 map to vs0-vs31 (TX=BX=0). Verified:
+    //   xsrdpic 1,2   -> 0xf02011ac
+    //   xsrdpic 30,31 -> 0xf3c0f9ac
+    void xsrdpic(FPRegisterID frt, FPRegisterID frb) { insn(0xF00001ACu | (uint32_t(frt) & 31) << 21 | (uint32_t(frb) & 31) << 11); }
     void friz(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 424, 0)); }
     void frip(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 456, 0)); }
     void frim(FPRegisterID frt, FPRegisterID frb)    { insn(xFormFp(63, frt, PPC64Registers::f0, frb, 488, 0)); }
