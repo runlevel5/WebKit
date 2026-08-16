@@ -1778,6 +1778,7 @@ public:
         zeroExtend32ToWordInternal(dest);
     }
     void absDouble(FPRegisterID src, FPRegisterID dest)               { m_assembler.fabs(dest, src); }
+    void absFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fabs(dest, src); }
 
     // FP bitwise ops treat the doubles as bit patterns (used for sign-bit
     // masking, NaN canonicalization, SIMD-lane logic). FPR f_n aliases

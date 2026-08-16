@@ -192,7 +192,7 @@ Sub32 U:G:32, UZD:G:32
     x86: Tmp, Addr
     x86: Tmp, Index
 
-arm: Sub32 U:G:32, U:G:32, ZD:G:32
+arm ppc64le: Sub32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -215,7 +215,7 @@ arm64: Sub64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp, Tmp, Tmp, Tmp
 
 SubDouble U:F:64, U:F:64, D:F:64
-    arm x86_64_avx: Tmp, Tmp, Tmp
+    arm x86_64_avx ppc64le: Tmp, Tmp, Tmp
     x86: Tmp, Addr, Tmp
     x86: Tmp, Index, Tmp
 
@@ -224,7 +224,7 @@ x86: SubDouble U:F:64, UD:F:64
     Addr, Tmp
 
 SubFloat U:F:32, U:F:32, D:F:32
-    arm x86_64_avx: Tmp, Tmp, Tmp
+    arm x86_64_avx ppc64le: Tmp, Tmp, Tmp
     x86: Tmp, Addr, Tmp
     x86: Tmp, Index, Tmp
 
@@ -242,10 +242,10 @@ Neg32 UZD:G:32
     x86: Addr
     x86: Index
 
-arm: NegateDouble U:F:64, D:F:64
+arm ppc64le: NegateDouble U:F:64, D:F:64
     Tmp, Tmp
 
-arm: NegateFloat U:F:32, D:F:32
+arm ppc64le: NegateFloat U:F:32, D:F:32
     Tmp, Tmp
 
 Mul32 U:G:32, UZD:G:32
@@ -371,14 +371,14 @@ arm64: MultiplyNegDouble U:F:64, U:F:64, D:F:64
 arm64: MultiplyNegFloat U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 
-arm x86_64_avx: DivDouble U:F:64, U:F:64, D:F:64
+arm x86_64_avx ppc64le: DivDouble U:F:64, U:F:64, D:F:64
     Tmp, Tmp, Tmp
 
 x86: DivDouble U:F:64, UD:F:64
     Tmp, Tmp
     Addr, Tmp
 
-arm x86_64_avx: DivFloat U:F:32, U:F:32, D:F:32
+arm x86_64_avx ppc64le: DivFloat U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 
 x86: DivFloat U:F:32, UD:F:32
@@ -469,13 +469,13 @@ OrFloat U:F:32, U:F:32, D:F:32
 x86: OrFloat U:F:32, UD:F:32
     Tmp, Tmp
 
-x86: XorDouble U:F:64, U:F:64, D:F:64
+x86 ppc64le: XorDouble U:F:64, U:F:64, D:F:64
     Tmp, Tmp, Tmp
 
 x86: XorDouble U:F:64, UD:F:64
     Tmp, Tmp
 
-x86: XorFloat U:F:32, U:F:32, D:F:32
+x86 ppc64le: XorFloat U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 
 x86: XorFloat U:F:32, UD:F:32
@@ -618,7 +618,7 @@ Xor32 U:G:32, UZD:G:32
     x86: Imm, Index
     x86: Imm, Tmp
 
-arm: Not32 U:G:32, ZD:G:32
+arm ppc64le: Not32 U:G:32, ZD:G:32
     Tmp, Tmp
 
 x86: Not32 UZD:G:32
@@ -634,10 +634,10 @@ x86_64: Not64 UD:G:64
     Addr
     Index
 
-arm: AbsDouble U:F:64, D:F:64
+arm ppc64le: AbsDouble U:F:64, D:F:64
     Tmp, Tmp
 
-arm: AbsFloat U:F:32, D:F:32
+arm ppc64le: AbsFloat U:F:32, D:F:32
     Tmp, Tmp
 
 CeilDouble U:F:64, D:F:64
