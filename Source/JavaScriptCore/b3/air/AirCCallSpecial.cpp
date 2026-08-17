@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "AirCCallSpecial.h"
+#include "AirCCallingConvention.h"
+#include "B3CCallValue.h"
 
 #if ENABLE(B3_JIT)
 
@@ -131,6 +133,27 @@ void CCallSpecial::reportUsedRegisters(Inst&, const RegisterSet&)
 
 CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext&)
 {
+#if CPU(PPC64LE)
+    // ELFv2 requires the caller to extend 32-bit integer arguments to 64
+    // bits; callees may read the full register. JSC's JIT convention keeps
+    // int32 values zero-extended, so a negative argument (e.g. a
+    // VirtualRegister offset constant, as in operationLoadVarargs'
+    // firstElementDest) would otherwise arrive as a huge positive value.
+    // Sign-extend every Int32 GP argument in place before the call (JSC
+    // operation int32 parameters are signed).
+    if (B3::CCallValue* cCall = inst.origin->as<B3::CCallValue>()) {
+        unsigned argIndex = argArgOffset;
+        for (unsigned i = 1; i < cCall->numChildren(); ++i) {
+            B3::Value* child = cCall->child(i);
+            if (argIndex >= inst.args().size())
+                break;
+            Arg& arg = inst.args()[argIndex];
+            if (child->type() == B3::Int32 && arg.isTmp() && arg.tmp().isGP() && arg.tmp().isReg())
+                jit.signExtend32ToPtr(arg.tmp().gpr(), arg.tmp().gpr());
+            argIndex += cCallArgumentRegisterCount(child->type());
+        }
+    }
+#endif
     switch (inst.args()[calleeArgOffset].kind()) {
     case Arg::Imm:
     case Arg::BigImm:
