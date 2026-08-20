@@ -104,6 +104,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "JSWrapForValidIterator.h"
 #include "LLIntThunks.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "OperandsInlines.h"
 #include "PCToCodeOriginMap.h"
@@ -14937,7 +14938,19 @@ IGNORE_CLANG_WARNINGS_END
                 // - The caller frame and PC for a call to operationCallDirectEvalSloppy/operationCallDirectEvalStrict.
                 // - Potentially two arguments on the stack.
                 CodeBlock* baselineCodeBlock = state->graph.baselineCodeBlockFor(semanticNodeOrigin);
+#if CPU(PPC64LE)
+                // ELFv2: a C callee clobbers its caller's linkage + parameter save
+                // area, i.e. [sp, sp + maxFrameExtentForSlowPathCall). The
+                // prototypical eval callee frame sits just below the current sp
+                // (its CallerFrameAndPC at sp-16), so the C-call scratch area must
+                // be reserved entirely below that frame; otherwise the callee's LR
+                // save at [sp+16] lands on the callerFrame slot and the operation
+                // dereferences a return address as a CallFrame*. Same fix as the
+                // DFG twin in DFGSpeculativeJIT64.
+                unsigned requiredBytes = sizeof(CallerFrameAndPC) + maxFrameExtentForSlowPathCall;
+#else
                 unsigned requiredBytes = sizeof(CallerFrameAndPC) + sizeof(CallFrame*) * 2;
+#endif
                 requiredBytes = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(requiredBytes);
                 jit.subPtr(CCallHelpers::TrustedImm32(requiredBytes), CCallHelpers::stackPointerRegister);
                 jit.setupArguments<decltype(operationCallDirectEvalSloppy)>(GPRInfo::regT1, GPRInfo::regT2, GPRInfo::regT3, CCallHelpers::TrustedImmPtr(baselineCodeBlock), CCallHelpers::TrustedImm32(semanticNodeOrigin.bytecodeIndex().asBits()));
