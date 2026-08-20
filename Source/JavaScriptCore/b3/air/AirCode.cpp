@@ -120,6 +120,20 @@ Code::Code(Procedure& proc)
                 for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
                     all.remove(reg);
             }
+            // The MacroAssembler folds out-of-range immediates, wide offsets and
+            // scaled indices through its scratch registers, so anything Air holds
+            // in one of them is destroyed by the very next instruction that needs
+            // to fold. They are not in reservedHardwareRegisters (which must stay
+            // free of FPRs), so remove them here, as the ARM ports do. Only
+            // register pressure high enough to reach them exposes this, which
+            // made it look like sporadic miscompiles.
+            if (bank == GP) {
+                all.remove(MacroAssembler::dataTempRegister);
+                all.remove(MacroAssembler::memoryTempRegister);
+            } else {
+                all.remove(MacroAssembler::fpTempRegister);
+                all.remove(MacroAssembler::fpTempRegister2);
+            }
 #endif
             auto calleeSave = RegisterSet::calleeSaveRegisters();
             all.forEach(
