@@ -14024,6 +14024,21 @@ IGNORE_CLANG_WARNINGS_END
                         jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR2, JSCallee::offsetOfScopeChain()), GPRInfo::argumentGPR0);
                     }
                     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
+#if CPU(PPC64LE)
+                    // ELFv2: the C callee writes its linkage area into the
+                    // CALLER's frame — CR save at [sp+8], LR at [sp+16], TOC at
+                    // [sp+24]. After emitFunctionPrologue sp == cfr here, so
+                    // those writes land on this JS frame's header, destroying
+                    // the returnPC, codeBlock and callee slots; a host function
+                    // that then throws made getStackTrace read the saved LR as
+                    // the callee cell. Same fix as the DFG twin in
+                    // DFGSpeculativeJIT64; sp deliberately stays lowered through
+                    // the exception check, since the HandleException thunk makes
+                    // its own C call whose linkage writes would stomp the callee
+                    // slot that genericUnwind reads. The normal path's
+                    // emitFunctionEpilogue restores sp from the frame pointer.
+                    jit.makeSpaceOnStackForCCall();
+#endif
                     if (Options::useJITCage()) {
                         jit.move(CCallHelpers::TrustedImmPtr(nativeFunction.taggedPtr()), GPRInfo::argumentGPR2);
                         jit.CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
