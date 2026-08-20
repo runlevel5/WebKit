@@ -1259,18 +1259,27 @@ public:
     Jump branchAdd32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
     {
         if (cond == Overflow) {
-            // Seed XER.CA with the 32-bit carry-out (both inputs are
-            // zero-extended by convention, so the raw 64-bit sum's bit 32 is
-            // the carry); the B3 CheckAdd recovery reads it via setCarry.
-            m_assembler.add(dataTempRegister, a, b);
+            // Read both inputs into the scratches before anything else: the
+            // Address and TrustedImm32 overloads materialise their operand
+            // into a scratch and pass it in as a or b, so any sequence that
+            // clobbers a scratch and then re-reads a or b computes garbage.
+            m_assembler.extsw(dataTempRegister, a);      // sign-extended a
+            m_assembler.extsw(memoryTempRegister, b);    // sign-extended b
+            // Exact 64-bit sum. dest is safe to write now that a and b have
+            // been consumed, even when it aliases one of them.
+            m_assembler.add(dest, dataTempRegister, memoryTempRegister);
+            // Seed XER.CA with the unsigned 32-bit carry-out; the B3 CheckAdd
+            // recovery reads it via setCarry. Derived from the zero-extended
+            // halves rather than assuming the inputs arrive zero-extended.
+            m_assembler.rldicl(dataTempRegister, dataTempRegister, 0, 32);
+            m_assembler.rldicl(memoryTempRegister, memoryTempRegister, 0, 32);
+            m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
             m_assembler.rldicl(dataTempRegister, dataTempRegister, 32, 63); // (sum >> 32) & 1
             m_assembler.addic(dataTempRegister, dataTempRegister, -1);      // CA := carry
-            m_assembler.extsw(dataTempRegister, a);
-            m_assembler.extsw(memoryTempRegister, b);
-            m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
-            m_assembler.rldicl(dest, dataTempRegister, 0, 32);           // wrapped result, zero-extended
-            m_assembler.extsw(memoryTempRegister, dataTempRegister);
-            m_assembler.cmpd(0, memoryTempRegister, dataTempRegister);
+            // Overflow iff the wrapped 32-bit result differs from the exact sum.
+            m_assembler.extsw(memoryTempRegister, dest);
+            m_assembler.cmpd(0, memoryTempRegister, dest);
+            m_assembler.rldicl(dest, dest, 0, 32);       // wrapped result, zero-extended
             return Jump(m_assembler.emitUnlinkedBranch(4, 2));           // != → overflow
         }
         add32(a, b, dest);
