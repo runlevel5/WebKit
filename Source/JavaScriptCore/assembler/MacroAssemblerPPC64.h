@@ -324,6 +324,25 @@ public:
     // Integer division (Air Div32/UDiv32/Div64/UDiv64). divw/divwu operate on
     // the low 32 bits and leave the upper half undefined, so re-establish the
     // zero-extended-32 convention on the result.
+    // High half of the full-width product. mulhw/mulhwu leave the top 32 bits
+    // of the target undefined, so the 32-bit forms re-extend (UMulHigh32's Air
+    // form declares a zero-extended destination).
+    void mulHigh32(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.mulhw(dest, left, right);
+        signExtend32ToPtr(dest, dest);
+    }
+    void uMulHigh32(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.mulhwu(dest, left, right);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void mulHigh64(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.mulhd(dest, left, right);
+    }
+    // uMulHigh64 is defined with the other 64-bit multiplies below.
+
     void div32(RegisterID dividend, RegisterID divisor, RegisterID dest)
     {
         m_assembler.divw(dest, dividend, divisor);
