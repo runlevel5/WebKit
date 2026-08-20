@@ -183,6 +183,22 @@ void lowerAfterRegAlloc(Code& code)
                 ScalarRegisterSet preUsed = liveRegs.toScalarRegisterSet();
                 ScalarRegisterSet postUsed = preUsed;
                 Vector<Arg> destinations = computeCCallingConvention(code, value);
+#if CPU(PPC64LE)
+                // computeCCallingConvention() parks the callee in
+                // CCallSpecial::scratchRegister, which on PPC64 is
+                // GPRInfo::nonPreservedNonArgumentGPR0 == MacroAssembler::dataTempRegister:
+                // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and
+                // the two assembler scratches r11/r12, so there is no safe register to
+                // hold the callee in. The argument shuffle emitted below runs *after* the
+                // move that puts the callee there, and any of its instructions -- or any
+                // rewrite fixObviousSpills() later performs on them, e.g. turning
+                // "Move $13, %tmp" into "Add64 $-405050779, %reg, %tmp" -- folds its
+                // out-of-range immediate through dataTempRegister and silently destroys
+                // the callee. CCallSpecial::generate() then branches to garbage.
+                // Park the callee in a spill slot instead: generate() reloads it via
+                // call(Address) with nothing in between.
+                destinations[0] = Arg::stack(code.addStackSlot(sizeof(void*), StackSlotKind::Spill));
+#endif
                 Vector<Tmp, 2> results;
                 Vector<Arg, 2> originalResults;
                 for (unsigned i = 0; i < cCallResultCount(code, value); ++i) {
