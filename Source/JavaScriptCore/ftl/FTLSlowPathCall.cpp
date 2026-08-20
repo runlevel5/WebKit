@@ -58,7 +58,17 @@ SlowPathCallContext::SlowPathCallContext(
         
     m_offsetToSavingArea =
         (std::max(m_numArgs, NUMBER_OF_ARGUMENT_REGISTERS) - NUMBER_OF_ARGUMENT_REGISTERS) * wordSize;
-    
+#if CPU(PPC64LE)
+    // ELFv2: sp+0..32 is the linkage area. The C callee saves CR/LR into the
+    // caller's frame at sp+8/sp+16, and our C-call sequence saves the TOC at
+    // sp+24. Everything this context stores across the call — the calling
+    // convention registers, the return-address slot the thunk uses
+    // (key.offset()), and the thunk's register saves — must therefore live
+    // above it, or the callee silently corrupts the saved state (observed as
+    // a return through the saved-TOC slot).
+    m_offsetToSavingArea += 32;
+#endif
+
     RegisterSet callingConventionRegisters = m_callingConventionRegisters.toRegisterSet();
     for (unsigned i = std::min(NUMBER_OF_ARGUMENT_REGISTERS, numArgs); i--;)
         callingConventionRegisters.add(GPRInfo::toArgumentRegister(i), IgnoreVectors);
