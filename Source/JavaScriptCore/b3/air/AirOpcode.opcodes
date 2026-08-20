@@ -309,16 +309,16 @@ arm64: MultiplySignExtend32 U:G:32, U:G:32, D:G:64
 arm64: MultiplyZeroExtend32 U:G:32, U:G:32, D:G:64
     Tmp, Tmp, Tmp
 
-arm64: MulHigh32 U:G:32, U:G:32, D:G:32
+arm64 ppc64le: MulHigh32 U:G:32, U:G:32, D:G:32
     Tmp, Tmp, Tmp
 
-arm64: UMulHigh32 U:G:32, U:G:32, ZD:G:32
+arm64 ppc64le: UMulHigh32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
 
-arm64: MulHigh64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: MulHigh64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
-arm64: UMulHigh64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: UMulHigh64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
 x86: X86MulHigh32 U:G:32, UD:G:32, D:G:32
