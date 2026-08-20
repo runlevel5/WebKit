@@ -104,6 +104,23 @@ Code::Code(Procedure& proc)
             // ARM-only.
             all.remove(MacroAssembler::addressTempRegister);
 #endif // CPU(ARM)
+#if CPU(PPC64LE)
+            // ELFv2 makes r14-r31 and f14-f31 callee-saved, but JSC only models
+            // r14-r23 (regCS0-9) and f14-f21 (fpRegCS0-7) as VM callee-saves, so
+            // only those have a slot in the VMEntryRecord buffer. If Air spilled
+            // into one of the unmodelled registers, it would record it in the
+            // frame's callee-save list and unwinding through that frame would
+            // hit the "no buffer slot for this register" assertion in
+            // UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer.
+            // Keep Air's pool inside the set the VM knows how to restore.
+            if (bank == GP) {
+                for (auto reg = PPC64Registers::r24; reg <= PPC64Registers::r31; reg = static_cast<PPC64Registers::RegisterID>(reg + 1))
+                    all.remove(reg);
+            } else {
+                for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
+                    all.remove(reg);
+            }
+#endif
             auto calleeSave = RegisterSet::calleeSaveRegisters();
             all.forEach(
                 [&] (Reg reg) {
