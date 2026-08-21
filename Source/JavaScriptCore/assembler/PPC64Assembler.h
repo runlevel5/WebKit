@@ -32,6 +32,10 @@
 #include "AssemblerBuffer.h"
 #include "AssemblerCommon.h"
 #include "PPC64Registers.h"
+#include <algorithm>
+#if OS(LINUX)
+#include <sys/auxv.h>
+#endif
 
 // Power ISA v2.07B (POWER8) is the baseline for every instruction encoded by
 // this assembler. Instructions are 32 bits wide and stored in memory as
@@ -3404,12 +3408,56 @@ public:
         cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
     }
 
+    // Smallest of the D- and I-cache block sizes, from the kernel's auxv.
+    // A step smaller than the real block size is always safe (it only issues
+    // redundant dcbst/icbi); a larger one would skip blocks, so fall back low.
+    static size_t cacheBlockSize()
+    {
+        static const size_t blockSize = [] () -> size_t {
+            unsigned long dcache = 0;
+            unsigned long icache = 0;
+#if OS(LINUX)
+            dcache = getauxval(AT_DCACHEBSIZE);
+            icache = getauxval(AT_ICACHEBSIZE);
+#endif
+            return std::min(dcache ? static_cast<size_t>(dcache) : 32,
+                icache ? static_cast<size_t>(icache) : 32);
+        }();
+        return blockSize;
+    }
+
     static void cacheFlush(void* code, size_t size)
     {
-        // GCC's __builtin___clear_cache emits the dcbst/sync/icbi/isync
-        // sequence (or a syscall) appropriate for the host kernel.
-        char* begin = static_cast<char*>(code);
-        __builtin___clear_cache(begin, begin + size);
+        // Do NOT use __builtin___clear_cache here: on powerpc64le GCC expands
+        // it to nothing at all (verified with GCC 16 — the builtin compiles to
+        // a bare blr), so every repatched call, repatched pointer and freshly
+        // finalized LinkBuffer would be left to the mercy of whatever the
+        // instruction cache happened to be holding. Because executable memory
+        // is recycled by the ExecutableAllocator, a stale block is a real
+        // possibility, and executing one shows up as the processor running the
+        // *previous* contents of a patched instruction sequence.
+        //
+        // Power's instruction cache is not coherent with the data cache, so
+        // issue the sequence from Power ISA v2.07B Book II ("Instruction
+        // Storage") by hand: push the modified data out of the D-cache, order
+        // that against the invalidates, invalidate the I-cache blocks, order
+        // those against the isync, then discard anything already prefetched.
+        // Other processors that may run this code need their own isync; that
+        // is WTF::crossModifyingCodeFence().
+        if (!size)
+            return;
+
+        const size_t blockSize = cacheBlockSize();
+        uintptr_t begin = reinterpret_cast<uintptr_t>(code) & ~(uintptr_t(blockSize) - 1);
+        uintptr_t end = reinterpret_cast<uintptr_t>(code) + size;
+
+        for (uintptr_t address = begin; address < end; address += blockSize)
+            asm volatile("dcbst 0,%0" :: "r"(address) : "memory");
+        asm volatile("sync" ::: "memory");
+        for (uintptr_t address = begin; address < end; address += blockSize)
+            asm volatile("icbi 0,%0" :: "r"(address) : "memory");
+        asm volatile("sync" ::: "memory");
+        asm volatile("isync" ::: "memory");
     }
 
 private:
