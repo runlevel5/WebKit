@@ -273,6 +273,16 @@ void compile(State& state, Safepoint::Result& safepointResult)
 
 #if CPU(X86_64)
             jit.pop(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+            // linkRegister is an r0 placeholder on PPC; the real return address is
+            // in the LR SPR, so a plain move(linkRegister, ...) would spill r0, not
+            // LR. nearCallThunk (bl) clobbers the real LR, so the main path's
+            // prologue would then mflr the arity check's own return address into
+            // the frame's ReturnPC slot, and this function would "return" into its
+            // own arity stub with an unfixed frame. Spill and restore the real LR
+            // with mflr/mtlr, matching the baseline (JIT.cpp) and DFG
+            // (DFGSpeculativeJIT.cpp) arity checks.
+            jit.moveFromLR(GPRInfo::argumentGPR1);
 #else
             jit.tagPtr(NoPtrTag, CCallHelpers::linkRegister);
             jit.move(CCallHelpers::linkRegister, GPRInfo::argumentGPR1);
@@ -280,6 +290,8 @@ void compile(State& state, Safepoint::Result& safepointResult)
             jit.nearCallThunk(CodeLocationLabel { LLInt::arityFixup() });
 #if CPU(X86_64)
             jit.push(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+            jit.moveToLR(GPRInfo::argumentGPR1);
 #else
             jit.move(GPRInfo::argumentGPR1, CCallHelpers::linkRegister);
             jit.untagPtr(NoPtrTag, CCallHelpers::linkRegister);

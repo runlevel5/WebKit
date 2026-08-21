@@ -206,6 +206,11 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
 
 #if CPU(X86_64)
         pop(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        // linkRegister is an r0 placeholder on PPC; the real return address lives
+        // in the LR SPR, and nearCallThunk (bl) clobbers it. See the matching
+        // comment in DFGSpeculativeJIT.cpp / FTLCompile.cpp.
+        moveFromLR(GPRInfo::argumentGPR1);
 #else
         tagPtr(NoPtrTag, linkRegister);
         move(linkRegister, GPRInfo::argumentGPR1);
@@ -213,6 +218,8 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
         nearCallThunk(CodeLocationLabel { LLInt::arityFixup() });
 #if CPU(X86_64)
         push(GPRInfo::argumentGPR1);
+#elif CPU(PPC64LE)
+        moveToLR(GPRInfo::argumentGPR1);
 #else
         move(GPRInfo::argumentGPR1, linkRegister);
         untagPtr(NoPtrTag, linkRegister);
