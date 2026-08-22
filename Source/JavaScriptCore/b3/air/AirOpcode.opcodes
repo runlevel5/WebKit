@@ -1692,13 +1692,18 @@ x86: BranchMul32 U:G:32, U:G:32, UZD:G:32 /branch
 
 BranchMul32 U:G:32, U:G:32, U:G:32, ZD:G:32 /branch
     x86: ResCond, Tmp, Imm, Tmp
-    arm64: ResCond, Tmp, Tmp, Tmp
+    arm64 ppc64le: ResCond, Tmp, Tmp, Tmp
 
 x86_64: BranchMul64 U:G:32, U:G:64, UZD:G:64 /branch
     ResCond, Tmp, Tmp
 
 arm64: BranchMul64 U:G:32, U:G:64, U:G:64, S:G:64, ZD:G:64 /branch
     ResCond, Tmp, Tmp, Tmp, Tmp
+
+# PPC64 detects the overflow with mulhd against the sign of the low word and
+# needs no caller-provided scratch: mulld/mulhd land in the assembler temps.
+ppc64le: BranchMul64 U:G:32, U:G:64, U:G:64, ZD:G:64 /branch
+    ResCond, Tmp, Tmp, Tmp
 
 BranchSub32 U:G:32, U:G:32, UZD:G:32 /branch
     ResCond, Tmp, Tmp
