@@ -48,8 +48,13 @@ concept canMakeExceptionOperationResult =
     std::is_standard_layout_v<T>
     && std::is_trivially_copyable_v<T>
     && std::is_trivially_default_constructible_v<T>
-#if CPU(ARM64) || CPU(ARM_THUMB2)
-    && !std::is_floating_point_v<T> // The ARM64 ABI says that this should be returned in x0 instead of d0. Seems unlikely it's worth it to do the extra fmov.
+#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+    // The ARM64 ABI says that this should be returned in x0 instead of d0. Seems unlikely it's worth it to do the extra fmov.
+    // The PPC64 ELFv2 ABI is worse than merely inconvenient here: { double; Exception*; } is not a homogeneous
+    // float aggregate, so the whole 16-byte struct comes back in r3/r4 with the double's bit pattern in r3.
+    // CCallHelpers expects the double in f1 and the exception in r3, so it would read the result as the
+    // exception pointer and take the exception path on every non-zero result.
+    && !std::is_floating_point_v<T>
 #endif
     && sizeof(T) <= sizeof(CPURegister);
 
