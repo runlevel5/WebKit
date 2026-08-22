@@ -6200,7 +6200,7 @@ void SpeculativeJIT::compileArithDiv(Node* node)
         
         done.link(this);
         strictInt32Result(eax.gpr(), node);
-#elif HAVE(ARM_IDIV_INSTRUCTIONS) || CPU(ARM64)
+#elif HAVE(ARM_IDIV_INSTRUCTIONS) || CPU(ARM64) || CPU(PPC64LE)
         SpeculateInt32Operand op1(this, node->child1());
         SpeculateInt32Operand op2(this, node->child2());
         GPRReg op1GPR = op1.gpr();
@@ -6220,7 +6220,27 @@ void SpeculativeJIT::compileArithDiv(Node* node)
             speculationCheck(ExitKind::Overflow, JSValueRegs(), nullptr, branchTest32(Zero, op2GPR));
 
         // Note that it is fine that sdiv with 0-divisor. The resulted value is zero (no trap).
+#if CPU(PPC64LE)
+        // divw leaves the target undefined for a zero divisor and for
+        // INT32_MIN / -1, where sdiv is defined (0 and INT32_MIN respectively)
+        // and the code around here relies on that. Materialise both explicitly.
+        // x / -1 is -x, which wraps to INT32_MIN for INT32_MIN exactly as sdiv does.
+        {
+            JumpList divisionDone;
+            Jump divisorNonZero = branchTest32(NonZero, op2GPR);
+            move(TrustedImm32(0), quotient.gpr());
+            divisionDone.append(jump());
+            divisorNonZero.link(this);
+            Jump divisorNotMinusOne = branch32(NotEqual, op2GPR, TrustedImm32(-1));
+            neg32(op1GPR, quotient.gpr());
+            divisionDone.append(jump());
+            divisorNotMinusOne.link(this);
+            div32(op1GPR, op2GPR, quotient.gpr());
+            divisionDone.link(this);
+        }
+#else
         assembler().sdiv<32>(quotient.gpr(), op1GPR, op2GPR);
+#endif
 
         // Check that there was no remainder. If there had been, then we'd be obligated to
         // produce a double result instead.
@@ -6534,7 +6554,7 @@ void SpeculativeJIT::compileArithMod(Node* node)
         done.link(this);
         strictInt32Result(edx.gpr(), node);
 
-#elif HAVE(ARM_IDIV_INSTRUCTIONS) || CPU(ARM64)
+#elif HAVE(ARM_IDIV_INSTRUCTIONS) || CPU(ARM64) || CPU(PPC64LE)
         GPRTemporary quotientThenRemainder(this);
         GPRReg dividendGPR = op1.gpr();
         GPRReg divisorGPR = op2.gpr();
@@ -6555,6 +6575,18 @@ void SpeculativeJIT::compileArithMod(Node* node)
         }
 
         // This is doing: x - ((x / y) * y)
+#if CPU(PPC64LE)
+        // divw leaves the target undefined for INT32_MIN / -1, so the identity
+        // below would compute a garbage remainder. x % -1 is always zero, so
+        // handle that divisor separately; the negative-zero check further down
+        // still sees the zero result and exits when the numerator was negative,
+        // which is what makes INT32_MIN % -1 produce -0.
+        JumpList afterDivision;
+        Jump divisorNotMinusOne = branch32(NotEqual, divisorGPR, TrustedImm32(-1));
+        move(TrustedImm32(0), quotientThenRemainderGPR);
+        afterDivision.append(jump());
+        divisorNotMinusOne.link(this);
+#endif
         div32(dividendGPR, divisorGPR, quotientThenRemainderGPR);
         // This should only overflow for INT32_MIN % -1 but that will end up with quotientThenRemainderGPR == 0, which will be handled as needed in the negative zero check.
 #if CPU(ARM64)
@@ -6562,6 +6594,9 @@ void SpeculativeJIT::compileArithMod(Node* node)
 #else
         mul32(quotientThenRemainderGPR, divisorGPR, quotientThenRemainderGPR);
         sub32(dividendGPR, quotientThenRemainderGPR, quotientThenRemainderGPR);
+#endif
+#if CPU(PPC64LE)
+        afterDivision.link(this);
 #endif
 
         // If the user cares about negative zero, then speculate that we're not about
@@ -6639,7 +6674,7 @@ void SpeculativeJIT::compileArithMod(Node* node)
             unlock(op2TempGPR);
 
         strictInt52Result(X86Registers::edx, node);
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
         GPRTemporary quotient(this);
         GPRTemporary result(this);
 
