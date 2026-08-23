@@ -682,8 +682,12 @@ void Options::setAllJITCodeValidations(bool value)
 static inline void NODELETE disableAllWasmJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
-    // This really only makes sense if could use wasm, otherwise we should not override this.
-    Options::useLLInt() = true;
+    // The LLInt is wasm's fallback execution engine, so it has to stay on when
+    // the wasm JITs are taken away -- but only if wasm can actually run. This is
+    // also reached from the !useWasm() path, where forcing it back on would
+    // silently override an explicit --useLLInt=0.
+    if (Options::useWasm())
+        Options::useLLInt() = true;
 #endif
     Options::useBBQJIT() = false;
     Options::useOMGJIT() = false;
