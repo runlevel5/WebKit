@@ -173,10 +173,7 @@ private:
     static unsigned computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers);
     static unsigned computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum = 1);
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);
-    // PPC64LE: the MacroAssembler is still stubs (port phase 2 — LLInt only);
-    // tiering up would hit UNREACHABLE_FOR_PLATFORM. Flip when the baseline
-    // JIT lands. Still overridable with --useJIT=1 for JIT bring-up work.
-    static constexpr bool jitEnabledByDefault() { return isAddress64Bit() && !isPPC64LE(); }
+    static constexpr bool jitEnabledByDefault() { return isAddress64Bit(); }
     static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64(); }
     static double defaultQuickDFGTierUpThresholdFactor()
     {
