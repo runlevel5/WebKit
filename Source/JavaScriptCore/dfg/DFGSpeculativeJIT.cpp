@@ -16699,7 +16699,16 @@ void SpeculativeJIT::compileLogShadowChickenPrologue(Node* node)
     prepareForExternalCall();
     emitStoreCodeOrigin(node->origin.semantic);
 
+#if CPU(PPC64LE)
+    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
+    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister, which
+    // the register allocator does not own -- asking GPRTemporary for it looks up
+    // an invalid index. ensureShadowChickenPacket only needs a register that is
+    // not an argument register, so use an allocatable callee-saved one.
+    GPRTemporary scratch1(this, GPRInfo::regCS0);
+#else
     GPRTemporary scratch1(this, GPRInfo::nonArgGPR0); // This must be a non-argument GPR.
+#endif
     GPRReg scratch1Reg = scratch1.gpr();
     GPRTemporary scratch2(this);
     GPRReg scratch2Reg = scratch2.gpr();
@@ -16721,7 +16730,16 @@ void SpeculativeJIT::compileLogShadowChickenTail(Node* node)
     prepareForExternalCall();
     CallSiteIndex callSiteIndex = emitStoreCodeOrigin(node->origin.semantic);
 
+#if CPU(PPC64LE)
+    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
+    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister, which
+    // the register allocator does not own -- asking GPRTemporary for it looks up
+    // an invalid index. ensureShadowChickenPacket only needs a register that is
+    // not an argument register, so use an allocatable callee-saved one.
+    GPRTemporary scratch1(this, GPRInfo::regCS0);
+#else
     GPRTemporary scratch1(this, GPRInfo::nonArgGPR0); // This must be a non-argument GPR.
+#endif
     GPRReg scratch1Reg = scratch1.gpr();
     GPRTemporary scratch2(this);
     GPRReg scratch2Reg = scratch2.gpr();
