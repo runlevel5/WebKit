@@ -1443,6 +1443,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationThrowStackOverflowErrorFromThunk)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
 
@@ -1555,6 +1560,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
 
@@ -1614,6 +1624,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationThrowStackOverflowErrorFromThunk)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
 
@@ -1665,7 +1680,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
         jit.prepareCallOperation(vm);
         jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationGetWrappedValueForTarget)), GPRInfo::nonArgGPR0);
         emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+        // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+        // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+        // Reserve the linkage+parameter area first. No-op where
+        // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+        jit.makeSpaceOnStackForCCall();
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+        jit.reclaimSpaceOnStackForCCall();
         exceptionChecks.append(jit.emitJumpIfException(vm));
 
         jit.setupResults(valueRegs);
@@ -1703,7 +1724,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeRemoteFunctionTargetCode)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.reclaimSpaceOnStackForCCall();
     exceptionChecks.append(jit.emitJumpIfException(vm));
     jit.storePtr(GPRInfo::returnValueGPR2, CCallHelpers::calleeFrameCodeBlockBeforeCall());
     jit.move(GPRInfo::returnValueGPR, GPRInfo::regT2);
@@ -1743,7 +1770,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationGetWrappedValueForCaller)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.reclaimSpaceOnStackForCCall();
     exceptionChecks.append(jit.emitJumpIfException(vm));
 
     resultIsPrimitive.link(&jit);
@@ -1756,7 +1789,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
+    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
+    // Reserve the linkage+parameter area first. No-op where
+    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.reclaimSpaceOnStackForCCall();
 
     jit.jumpToExceptionHandler(vm);
 
