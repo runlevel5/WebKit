@@ -31,6 +31,7 @@
 
 #include "AbstractMacroAssembler.h"
 #include "PPC64Assembler.h"
+#include <limits>
 #include "SIMDInfo.h"
 
 // MacroAssemblerPPC64 — Phase 1 skeleton.
@@ -63,12 +64,17 @@ public:
     static constexpr unsigned numGPRs = 32;
     static constexpr unsigned numFPRs = 32;
 
-    // PPC64 I-form unconditional branch has ±32 MB reach (24-bit signed
-    // word displacement); bclr/bcctr require setting up LR/CTR first and
-    // have no displacement at all. For MacroAssembler purposes the
-    // "near-jump" bound is the cheap-form reach — we will revisit when
-    // the real Jump machinery lands.
-    static constexpr size_t nearJumpRange = 32 * MB;
+    // Every patchable jump, branch and call on PPC64 is emitted as a full
+    // 8-instruction slot. The linker writes a plain b/bl (±32 MB) or bc
+    // (±32 KB) when the displacement happens to fit, and otherwise
+    // materialises the whole 64-bit target and branches through CTR -- see
+    // applyJumpSlot, applyBranchSlot and applyCallSlot. A patched branch can
+    // therefore reach anywhere, and nearCallThunk/jumpThunk go through those
+    // same slots. This bound describes the reach of the slot, not of the
+    // cheap form, so it is unlimited; it is what caps the executable pool
+    // size while JUMP_ISLANDS is off, and 32 MB was an unnecessary cap that
+    // aborted startup for any larger --jitMemoryReservationSize.
+    static constexpr size_t nearJumpRange = std::numeric_limits<size_t>::max();
 
     // Scratch pool per ELFv2: r11 is the environment / PLT-call scratch,
     // r12 is the function-entry / static-chain scratch. Both are volatile
