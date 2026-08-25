@@ -63,6 +63,15 @@ void CCallHelpers::ensureShadowChickenPacket(VM& vm, GPRReg shadowPacket, GPRReg
     move(TrustedImmPtr(shadowChicken->addressOfLogCursor()), scratch1NonArgGPR);
     loadPtr(Address(scratch1NonArgGPR), shadowPacket);
     ok.link(this);
+#if CPU(PPC64LE)
+    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
+    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister. The
+    // branchPtr above compares against a full 64-bit pointer, and materialising
+    // that immediate goes through dataTempRegister -- so on the fast path
+    // scratch1NonArgGPR no longer holds addressOfLogCursor by the time we store
+    // the bumped cursor back. Re-establish it here.
+    move(TrustedImmPtr(shadowChicken->addressOfLogCursor()), scratch1NonArgGPR);
+#endif
     addPtr(TrustedImm32(sizeof(ShadowChicken::Packet)), shadowPacket, scratch2);
     storePtr(scratch2, Address(scratch1NonArgGPR));
 }
