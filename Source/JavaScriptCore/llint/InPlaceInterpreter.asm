@@ -443,7 +443,7 @@ end
 macro ipintReloadMemory(scratch)
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64
+    elsif X86_64 or PPC64LE
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -967,7 +967,7 @@ end
     # Memory
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64
+    elsif X86_64 or PPC64LE
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -1122,7 +1122,7 @@ end
     # Memory
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64
+    elsif X86_64 or PPC64LE
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -2108,6 +2108,7 @@ else
 macro nextIPIntInstruction()
     break
 end
+
 
 # For unimplemented architectures: make sure that the assertions can still find the labels
 # See https://webassembly.github.io/spec/core/appendix/index-instructions.html for the list of instructions.
