@@ -894,6 +894,16 @@ static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context,
     context.gpr(ARMRegisters::lr) = std::bit_cast<UCPURegister>(*(framePointer + 1));
     context.sp() = framePointer + 2;
     static_assert(prologueStackPointerDelta() == sizeof(void*) * 2);
+#elif CPU(PPC64LE)
+    // Mirrors the ppc64le emitFunctionPrologue in AssemblyHelpers.h, which
+    // stores the caller fp at [sp] and the return address at [sp+8], giving
+    // the same two-word header as ARM64/RISCV64. The return address lives in
+    // LR, which on PPC64 is a special-purpose register rather than a GPR, so
+    // it is restored through spr() instead of gpr().
+    context.fp() = std::bit_cast<UCPURegister*>(*framePointer);
+    context.spr(PPC64Registers::lr) = std::bit_cast<UCPURegister>(*(framePointer + 1));
+    context.sp() = framePointer + 2;
+    static_assert(prologueStackPointerDelta() == sizeof(void*) * 2);
 #else
 #error Unsupported architecture.
 #endif
