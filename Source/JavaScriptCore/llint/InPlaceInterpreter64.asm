@@ -51,7 +51,7 @@ end
 
 # Dispatch target bases
 
-if ARM64 or ARM64E or X86_64
+if ARM64 or ARM64E or X86_64 or PPC64LE
 const ipint_dispatch_base = _ipint_unreachable
 end
 
@@ -71,7 +71,7 @@ if ARM64 or ARM64E
     pcrtoaddr ipint_dispatch_base, t7
     addlshiftp t7, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
     jmp t0
-elsif X86_64
+elsif X86_64 or PPC64LE
     pcrtoaddr ipint_dispatch_base, t1
     lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
     addq t1, t0
