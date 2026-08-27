@@ -1649,8 +1649,10 @@ auto OMGIRGenerator::addArguments(const RTT& signature) -> PartialResult
                         dataLog(context.gpr(src.jsr().payloadGPR()), " / ", (int) context.gpr(src.jsr().payloadGPR()));
                     else if (src.isFPR() && width <= Width::Width64)
                         dataLog(context.fpr(src.fpr()));
+#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
                     else if (src.isFPR())
                         dataLog(context.vector(src.fpr()));
+#endif
                     else
                         dataLog(fpl[src.offsetFromFP() / sizeof(uint64_t)], " / ", fpi[src.offsetFromFP() / sizeof(uint32_t)],  " / ", RawHex(fpi[src.offsetFromFP() / sizeof(uint32_t)]), " / ", std::bit_cast<double>(fpl[src.offsetFromFP() / sizeof(uint64_t)]), " at ", RawPointer(&fpi[src.offsetFromFP() / sizeof(uint32_t)]));
                     dataLogLn();
@@ -5454,8 +5456,10 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                     dataLog(context.gpr(src.gpr()), " / ", (int) context.gpr(src.gpr()));
                 else if (src.isFPR() && width <= Width64)
                     dataLog(context.fpr(src.fpr()));
+#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
                 else if (src.isFPR())
                     dataLog(context.vector(src.fpr()));
+#endif
                 else if (src.isConstant())
                     dataLog(src.value(), " / ", src.doubleValue());
                 else
@@ -5884,8 +5888,10 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                         dataLog(context.gpr(arg.location.jsr().payloadGPR()), " / ", (int) context.gpr(arg.location.jsr().payloadGPR()));
                     else if (arg.location.isFPR() && arg.width <= Width::Width64)
                         dataLog(context.fpr(arg.location.fpr()));
+#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
                     else if (arg.location.isFPR())
                         dataLog(context.vector(arg.location.fpr()));
+#endif
                     else
                         dataLog(fpl[src.offsetFromFP() / sizeof(*fpl)], " / ", fpi[src.offsetFromFP() / sizeof(*fpi)],  " / ", RawHex(fpi[src.offsetFromFP() / sizeof(*fpi)]), " / ", std::bit_cast<double>(fpl[src.offsetFromFP() / sizeof(*fpl)]), " at ", RawPointer(&fpi[src.offsetFromFP() / sizeof(*fpi)]));
                     dataLogLn();
