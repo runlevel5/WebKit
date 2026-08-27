@@ -565,28 +565,28 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
     auto reloopLabel = m_jit.label();
     switch (accessWidth) {
     case Width8:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         m_jit.loadLinkAcq8(address, oldGPR);
 #else
         m_jit.load8SignedExtendTo32(address, oldGPR);
 #endif
         break;
     case Width16:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         m_jit.loadLinkAcq16(address, oldGPR);
 #else
         m_jit.load16SignedExtendTo32(address, oldGPR);
 #endif
         break;
     case Width32:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         m_jit.loadLinkAcq32(address, oldGPR);
 #else
         m_jit.load32(address, oldGPR);
 #endif
         break;
     case Width64:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         m_jit.loadLinkAcq64(address, oldGPR);
 #else
         m_jit.load64(address, oldGPR);
@@ -616,7 +616,7 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
     case Width128:
         RELEASE_ASSERT_NOT_REACHED();
     }
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
     switch (accessWidth) {
     case Width8:
         m_jit.storeCondRel8(scratchGPR, address, scratchGPR);
@@ -634,6 +634,8 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
         RELEASE_ASSERT_NOT_REACHED();
     }
     m_jit.branchTest32(ResultCondition::NonZero, scratchGPR).linkTo(reloopLabel, &m_jit);
+#else
+#error "emitAtomicOpGeneric has no store phase for this architecture: it would emit a load and a computation with no store, silently turning every wasm atomic into a no-op. Add a CAS or LL/SC case above."
 #endif
 }
 
@@ -3652,6 +3654,12 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     clobber(ARM64Registers::q28);
     clobber(ARM64Registers::q29);
     ScratchScope<0, 0> scratches(*this, Location::fromFPR(ARM64Registers::q28), Location::fromFPR(ARM64Registers::q29));
+#else
+    // Neither shuffle strategy below applies, but both are still name-looked-up
+    // (an `if constexpr` in a non-template function still analyses the
+    // discarded branch), so `scratches` has to exist. PPC64LE keeps SIMD off,
+    // so this is only ever a compile-time placeholder.
+    ScratchScope<0, 1> scratches(*this);
 #endif
     Location aLocation = loadIfNecessary(a);
     Location bLocation = loadIfNecessary(b);
@@ -3727,7 +3735,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
 
     LOG_INSTRUCTION("Vector", op, src, srcLocation, shift, shiftLocation, RESULT(result));
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
     if (shift.isConst()) {
         int32_t shiftImm = shift.asI32() & mask;
         if (!shiftImm)
@@ -4112,7 +4120,7 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
 
     switch (op) {
     case SIMDLaneOperation::Bitmask:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         if (info.lane == SIMDLane::i64x2) {
             // This might look bad, but remember: every bit of information we destroy contributes to the heat death of the universe.
             m_jit.vectorSshr8(SIMDInfo { SIMDLane::i64x2, SIMDSignMode::None }, valueLocation.asFPR(), TrustedImm32(63), wasmScratchFPR);
@@ -4178,7 +4186,7 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
 #endif
         return { };
     case JSC::SIMDLaneOperation::AllTrue:
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         ASSERT(scalarTypeIsIntegral(info.lane));
         switch (info.lane) {
         case SIMDLane::i64x2:
