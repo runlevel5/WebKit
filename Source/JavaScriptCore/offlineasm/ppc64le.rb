@@ -1286,6 +1286,56 @@ class Instruction
             ppc64leZeroExtend32(dst)
 
         # ------------------------------------------------------------------
+        # Arithmetic — divide
+        #
+        # Operand order is fixed by offlineasm/arm64.rb emitARM64Div (the
+        # reference lowering; x86 has no div* opcode, it uses cdqi/idivi):
+        #   2-operand `div src, dst`        →  dst = dst / src
+        #   3-operand `div src2, src1, dst` →  dst = src1 / src2
+        # divi/divq are UNSIGNED (arm64 udiv), divis/divqs are SIGNED (sdiv).
+        # PPC's form is `div* RT, RA, RB` with RA = dividend, RB = divisor.
+        # IPInt only ever emits the 2-operand form on PPC64LE (see the
+        # i32/i64 div_s/div_u/rem_s/rem_u handlers in
+        # llint/InPlaceInterpreter64.asm), which is also the unambiguous one.
+        #
+        # divw/divwu define only bits 32:63 of RT — bits 0:31 are
+        # ARCHITECTURALLY UNDEFINED (Power ISA v2.07B Book I §3.3.9), even
+        # though the POWER9 part observed here happens to leave them zero.
+        # This port keeps int32 values zero-extended in the 64-bit register,
+        # so the 32-bit forms re-establish that, exactly like div32/uDiv32 in
+        # assembler/MacroAssemblerPPC64.h (which call zeroExtend32ToWordInternal
+        # for the same reason).  divd/divdu are full-width; no fixup needed.
+        #
+        # Encodings verified with `as -mpower8 -a64`:
+        #   divw  3,4,5 → 7c642bd6    divwu 3,4,5 → 7c642b96
+        #   divd  3,4,5 → 7c642bd2    divdu 3,4,5 → 7c642b92
+        # Behaviour verified on the POWER9 box against the C operators for
+        # 7/2, -7/2, 7/-2, -7/-2, 0/5, INT32_MIN/1, INT32_MIN/3, INT32_MAX/-1.
+        #
+        # PPC has no divide-immediate; an Immediate operand has no encoding.
+        # Division by zero and the INT_MIN/-1 overflow are guarded by the
+        # caller (btiz / bineq -1) — PPC leaves RT undefined for both and
+        # only traps if the OE form is used, which we do not emit.
+        # ------------------------------------------------------------------
+        when "divi", "divis", "divq", "divqs"
+            insn = { "divi"  => "divwu", "divis" => "divw",
+                     "divq"  => "divdu", "divqs" => "divd" }[opcode]
+            ops = operands
+            case ops.length
+            when 2
+                divisor, dividend, dst = ops[0], ops[1], ops[1]
+            when 3
+                divisor, dividend, dst = ops[0], ops[1], ops[2]
+            else
+                raise "ppc64le: unexpected operand count for #{opcode} at #{codeOriginString}"
+            end
+            [divisor, dividend].each { | op |
+                raise "ppc64le: #{opcode} has no immediate form at #{codeOriginString}" if op.is_a?(Immediate)
+            }
+            $asm.puts "#{insn} #{dst.ppc64leOperand}, #{dividend.ppc64leOperand}, #{divisor.ppc64leOperand}"
+            ppc64leZeroExtend32(dst.ppc64leOperand) if opcode == "divi" or opcode == "divis"
+
+        # ------------------------------------------------------------------
         # Arithmetic — negate
         # ------------------------------------------------------------------
         when "negp", "negq"
@@ -1492,14 +1542,88 @@ class Instruction
             end
 
         # ------------------------------------------------------------------
-        # Bit-count
+        # Rotates
+        #
+        # Operand order matches x86 handleX86Shift / arm64 emitARM64TAC:
+        #   2-operand `Xrotate amount, dst`      →  dst = rot(dst, amount)
+        #   3-operand `Xrotate src, amount, dst` →  dst = rot(src, amount)
+        # IPInt only emits the 2-operand form (i32/i64 rotl/rotr in
+        # llint/InPlaceInterpreter64.asm); the 3-operand form follows arm64.
+        #
+        # 32-bit: rlwnm/rlwinm rotate RS{32:63} left and mask with
+        # MB..ME = 0..31, i.e. the whole low word, AND clear RA{0:31} — so
+        # they re-establish the zero-extended-int32 invariant for free (no
+        # ppc64leZeroExtend32 needed).  Same trick as rotateRight32 in
+        # assembler/MacroAssemblerPPC64.h.
+        # 64-bit: rldcl/rldicl with MB = 0 is a plain 64-bit rotate.
+        #
+        # Rotate-right is expressed as rotate-left by (width - n).  rlwnm
+        # reads only RB{59:63} (5 bits) and rldcl only RB{58:63} (6 bits),
+        # so `subfic 0, amount, width` wraps correctly for amount == 0
+        # (width → 0) and for amount >= width.  x86 rol/ror and arm64 ror
+        # mask the count the same way, and Wasm i32.rotl requires it.
+        # r0 is a pure data scratch here (never a load/store base).
+        #
+        # Encodings verified with `as -mpower8 -a64`:
+        #   rlwnm  3,4,5,0,31 → 5c83283e   rlwinm 3,4,7,0,31 → 5483383e
+        #   rldcl  3,4,5,0    → 78832810   rldicl 3,4,7,0    → 78833800
+        #   subfic 0,5,64     → 20050040   subfic 0,5,32     → 20050020
+        # Behaviour verified on the POWER9 box against C rotates for rotate
+        # counts 0..79 over a spread of 32- and 64-bit patterns.
         # ------------------------------------------------------------------
-        when "countLeadingZerosp", "countLeadingZerosq"
+        when "lrotatei", "rrotatei", "lrotateq", "rrotateq"
+            quad = (opcode == "lrotateq" or opcode == "rrotateq")
+            right = (opcode == "rrotatei" or opcode == "rrotateq")
+            width = quad ? 64 : 32
+            ops = operands
+            case ops.length
+            when 2
+                amount, src, dst = ops[0], ops[1].ppc64leOperand, ops[1].ppc64leOperand
+            when 3
+                amount, src, dst = ops[1], ops[0].ppc64leOperand, ops[2].ppc64leOperand
+            else
+                raise "ppc64le: unexpected operand count for #{opcode} at #{codeOriginString}"
+            end
+            if amount.is_a?(Immediate)
+                n = amount.value & (width - 1)
+                n = (width - n) & (width - 1) if right
+                if quad
+                    $asm.puts "rldicl #{dst}, #{src}, #{n}, 0"
+                else
+                    $asm.puts "rlwinm #{dst}, #{src}, #{n}, 0, 31"
+                end
+            else
+                shift = amount.ppc64leOperand
+                if right
+                    $asm.puts "subfic 0, #{shift}, #{width}"
+                    shift = "0"
+                end
+                if quad
+                    $asm.puts "rldcl #{dst}, #{src}, #{shift}, 0"
+                else
+                    $asm.puts "rlwnm #{dst}, #{src}, #{shift}, 0, 31"
+                end
+            end
+
+        # ------------------------------------------------------------------
+        # Bit-count
+        #
+        # lzcnt*/tzcnt* are the Wasm-facing spellings of the same operation
+        # (arm64 lowers lzcnti to plain `clz`, x86 to bsr + fixup); both
+        # families take [src, dst] in that order, so they share the cases
+        # below.  ctz(0) and clz(0) must return the type width — Wasm
+        # i32.clz/i32.ctz are total functions.
+        # cntlzw/cntlzd write the full 64-bit RA (result is 0..width, so the
+        # upper word is naturally zero) — no ppc64leZeroExtend32 needed.
+        # Encodings verified with `as -mpower8 -a64`:
+        #   cntlzw 3,4 → 7c830034    cntlzd 3,4 → 7c830074
+        # ------------------------------------------------------------------
+        when "countLeadingZerosp", "countLeadingZerosq", "lzcntq"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "cntlzd #{dst}, #{src}"
 
-        when "countLeadingZerosi"
+        when "countLeadingZerosi", "lzcnti"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "cntlzw #{dst}, #{src}"
@@ -1514,7 +1638,14 @@ class Instruction
         # reads r0 as literal zero (the (RA|0) ISA rule); addic reads the
         # register.  Caught by the empirical harness: the addi version
         # returned width for every input.
-        when "countTrailingZerosp", "countTrailingZerosq"
+        # This is the same operation MacroAssemblerPPC64.h's
+        # countTrailingZeros32/64 synthesise as 32 - clz(~x & (x - 1)); both
+        # forms are 4 instructions, both give ctz(0) == width, and both were
+        # re-checked against __builtin_ctz{,ll} on the POWER9 box (values 0,
+        # 1, 2, 5, 8, 0x10000, 0x80000000, 0xFFFFFFFF, 0x100000000,
+        # 0x8000000000000000, 0xFFFFFFFFFFFFFFFF and mixed patterns).  Keep
+        # the popcnt form so the backend has exactly one ctz sequence.
+        when "countTrailingZerosp", "countTrailingZerosq", "tzcntq"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "neg 0, #{src}"
@@ -1522,7 +1653,7 @@ class Instruction
             $asm.puts "addic 0, 0, -1"
             $asm.puts "popcntd #{dst}, 0"
 
-        when "countTrailingZerosi"
+        when "countTrailingZerosi", "tzcnti"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "neg 0, #{src}"
@@ -1869,6 +2000,46 @@ class Instruction
             else
                 raise "ppc64le: pop with #{operands.length} operands not supported"
             end
+
+        # ------------------------------------------------------------------
+        # Stack: 128-bit vector push and pop
+        #
+        # `pushv f` / `popv f` move a whole 16-byte slot, matching x86
+        # (sub $16,%rsp ; movdqu %xmm,(%rsp)) and arm64 (str q, [sp,#-16]!).
+        # Both backends place the scalar half of the register at sp+0, and
+        # IPInt's pushFloat32/pushFloat64/pushVec all feed this slot, so the
+        # PPC form must land the FPR-visible doubleword at sp+0 too.
+        #
+        # VSR n aliases FPR n (VSX: the FPR is doubleword 0 of the VSR), and
+        # lxvd2x/stxvd2x transfer doubleword 0 to/from EA+0 with only
+        # per-doubleword byte reversal under LE — so `stxvd2x n, 0, 1` after
+        # `addi 1, 1, -16` writes the FPR value at sp+0 and preserves the
+        # other 8 bytes.  Hardware-checked on the POWER9 box: after
+        # `lfd 1, x ; addi 1,1,-16 ; stxvd2x 1,0,1`, the doubleword at 0(sp)
+        # equalled the raw bits of x, and the lxvd2x/stfd round trip returned
+        # the original double bit-for-bit.
+        #
+        # stxvd2x/lxvd2x are VSX (Power ISA v2.06), inside the POWER8
+        # baseline, and are unaligned-tolerant (sp stays 16-byte aligned
+        # here regardless).  RA is written as literal 0 — the (RA|0) rule
+        # makes that "no base register", not r0.
+        # Encodings verified with `as -mpower8 -a64`:
+        #   stxvd2x 1,0,1 → 7c200f98    lxvd2x 1,0,1 → 7c200e98
+        #   addi 1,1,-16  → 3821fff0    addi 1,1,16  → 38210010
+        # ------------------------------------------------------------------
+        when "pushv"
+            operands.each { | op |
+                raise "ppc64le: pushv expects an FPR/vector register at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(SpecialRegister)
+                $asm.puts "addi 1, 1, -16"
+                $asm.puts "stxvd2x #{op.ppc64leOperand}, 0, 1"
+            }
+
+        when "popv"
+            operands.each { | op |
+                raise "ppc64le: popv expects an FPR/vector register at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(SpecialRegister)
+                $asm.puts "lxvd2x #{op.ppc64leOperand}, 0, 1"
+                $asm.puts "addi 1, 1, 16"
+            }
 
         # ------------------------------------------------------------------
         # Control flow
