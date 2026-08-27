@@ -52,13 +52,35 @@ namespace JSC {
 
 using Assembler = TARGET_ASSEMBLER;
 
-// Unimplemented-method trap: names the missing method on the way down so
-// each testmasm/bring-up iteration identifies its next target directly.
+// Two traps, so a crash reports which kind of gap it hit. Both abort; they
+// differ in what the reader should do about it, and they are separately
+// greppable when auditing what is left to port.
+//
+// PPC64_UNIMPLEMENTED -- a hole in the port. The operation does belong on this
+// platform and should eventually be written; reaching it just means bring-up
+// has not got there yet. These are the port's TODO list. Names the missing
+// method on the way down so each testmasm/bring-up iteration identifies its
+// next target directly.
 #define PPC64_UNIMPLEMENTED() do { \
         WTFLogAlways("PPC64 MacroAssembler unimplemented: %s", __PRETTY_FUNCTION__); \
         RELEASE_ASSERT_NOT_REACHED(); \
     } while (0)
 
+// PPC64_UNSUPPORTED -- deliberately not provided here. The feature is switched
+// off for this platform by configuration, and the method exists only so that
+// shared code which references it still compiles. Reaching one is therefore
+// NOT a missing implementation: it means a gate that was supposed to keep us
+// out has leaked, and that gate is the bug to go and fix.
+//
+// Every current user is wasm SIMD, which is off on two independent levels:
+// Options::notifyOptionsChanged() forces useWasmSIMD() false for every target
+// that is not x86_64 or arm64, and run-jsc-stress-tests skips the SIMD test
+// variants because $isSIMDPlatform excludes ppc64le. Implementing these for
+// real means writing VSX sequences and then removing both gates.
+#define PPC64_UNSUPPORTED() do { \
+        WTFLogAlways("PPC64 MacroAssembler unsupported on this platform (feature should have been gated off): %s", __PRETTY_FUNCTION__); \
+        RELEASE_ASSERT_NOT_REACHED(); \
+    } while (0)
 
 class MacroAssemblerPPC64 : public AbstractMacroAssembler<Assembler> {
 public:
@@ -2166,86 +2188,86 @@ public:
     }
 
     // --- SIMD vector surface: unimplemented stubs ------------------------
-    void vectorDupElementFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorDupElementFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorDupElementInt32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorDupElementInt64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneInt32(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneInt64(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneSignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneSignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneUnsignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLaneUnsignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneInt16(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneInt32(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneInt64(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLaneInt8(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
+    void vectorDupElementFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorDupElementFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorDupElementInt32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorDupElementInt64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneInt32(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneInt64(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneSignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneSignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneUnsignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLaneUnsignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneInt16(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneInt32(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneInt64(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLaneInt8(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
     // ENABLE_WEBASSEMBLY_SIMD is off for this port; these exist so the
     // unguarded Air opcode forms compile. Signatures scraped from ARM64.
-    void compareFloatingPointVector(DoubleCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAndnot(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAnyTrue(FPRegisterID, RegisterID) { PPC64_UNIMPLEMENTED(); }
-    void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorBitwiseSelect(FPRegisterID left, FPRegisterID right, FPRegisterID inputBitsAndDest) { PPC64_UNIMPLEMENTED(); }
-    void vectorCeil(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorConvert(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorDemote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtendHigh(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtendLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractPair(SIMDInfo simdInfo, TrustedImm32 firstLane, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorFloor(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorFusedNegMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad16Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad16Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad32Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad32Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad64Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad64Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad8Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorNarrow(SIMDInfo simdInfo, FPRegisterID lower, FPRegisterID upper, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorNearest(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorPromote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorRelaxedDotI8x16I7x16(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID a, FPRegisterID b, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch1, FPRegisterID scratch2) { PPC64_UNIMPLEMENTED(); }
-    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorRelaxedQ15Mulr(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorStore16Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
-    void vectorStore32Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
-    void vectorStore64Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
-    void vectorStore8Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNIMPLEMENTED(); }
-    void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSwizzle(FPRegisterID a, FPRegisterID control, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorTrunc(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void compareFloatingPointVector(DoubleCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAndnot(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAnyTrue(FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorBitwiseSelect(FPRegisterID left, FPRegisterID right, FPRegisterID inputBitsAndDest) { PPC64_UNSUPPORTED(); }
+    void vectorCeil(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorConvert(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorDemote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtendHigh(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtendLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtractPair(SIMDInfo simdInfo, TrustedImm32 firstLane, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorFloor(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorFusedNegMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorLoad16Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad16Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad32Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad32Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad64Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad64Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorLoad8Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorNarrow(SIMDInfo simdInfo, FPRegisterID lower, FPRegisterID upper, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorNearest(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorPromote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorRelaxedDotI8x16I7x16(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID a, FPRegisterID b, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch1, FPRegisterID scratch2) { PPC64_UNSUPPORTED(); }
+    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorRelaxedQ15Mulr(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorStore16Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
+    void vectorStore32Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
+    void vectorStore64Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
+    void vectorStore8Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
+    void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSwizzle(FPRegisterID a, FPRegisterID control, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorTrunc(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
 
     // Remaining SIMD surface required by the wasm BBQ JIT. PPC64LE keeps
     // Options::useWasmSIMD() off (notifyOptionsChanged forces it false for
@@ -2253,52 +2275,52 @@ public:
     // variants because $isSIMDPlatform excludes ppc64le, so none of these are
     // reachable today -- but BBQ still has to compile. They trap loudly rather
     // than silently doing nothing if a future change ever routes here.
-    void moveZeroToVector(FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplat(SIMDLane lane, RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSplat(SIMDLane lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUshl8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
-    void vectorSshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
-    void vectorUshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
-    void vectorSshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorUshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNIMPLEMENTED(); }
-    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNIMPLEMENTED(); }
-    void vectorLoad8Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLane(SIMDLane simdLane, SIMDSignMode signMode, TrustedImm32 lane, FPRegisterID src, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtractLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID tmp) { PPC64_UNIMPLEMENTED(); }
-    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorPopcnt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
-    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNIMPLEMENTED(); }
-    void vectorConvertLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR1, FPRegisterID scratchFPR2) { PPC64_UNIMPLEMENTED(); }
-    void vectorNot(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorNeg(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNIMPLEMENTED(); }
-    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorSshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest, RegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorHorizontalAdd(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
-    void vectorUnsignedMin(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
-    void vectorUnsignedMax(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
-    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
-    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void moveZeroToVector(FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorSplat(SIMDLane lane, RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSplat(SIMDLane lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUshl8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
+    void vectorSshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
+    void vectorUshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
+    void vectorSshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorUshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNSUPPORTED(); }
+    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNSUPPORTED(); }
+    void vectorLoad8Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLane(SIMDLane simdLane, SIMDSignMode signMode, TrustedImm32 lane, FPRegisterID src, RegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtractLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID tmp) { PPC64_UNSUPPORTED(); }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorPopcnt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNSUPPORTED(); }
+    void vectorConvertLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR1, FPRegisterID scratchFPR2) { PPC64_UNSUPPORTED(); }
+    void vectorNot(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorNeg(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNSUPPORTED(); }
+    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorSshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest, RegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorHorizontalAdd(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
+    void vectorUnsignedMin(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
+    void vectorUnsignedMax(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
+    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
 
 
     Jump branchTruncateDoubleToInt32(FPRegisterID src, RegisterID dest, BranchTruncateType branchType = BranchIfTruncateFailed)
