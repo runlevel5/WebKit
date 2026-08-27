@@ -345,6 +345,23 @@ class BaseIndex
     end
 end
 
+# The load-reserve/store-conditional primitives (l{b,h,w,d}arx, st{b,h,w,d}cx.)
+# are X-form indexed only: there is no displacement field.  Accept `[reg]`
+# (an Address with a zero offset) or a bare register and return the base
+# register operand; anything else has no encoding on PPC.
+def ppc64leReservationAddress(operand, opcode, origin)
+    if operand.is_a?(Address)
+        unless operand.offset.value.zero?
+            raise "ppc64le: #{opcode} needs a zero displacement (l*arx/st*cx. are indexed-only), got #{operand.offset.value} at #{origin}"
+        end
+        operand.base.ppc64leOperand
+    elsif operand.is_a?(RegisterID) || operand.is_a?(SpecialRegister)
+        operand.ppc64leOperand
+    else
+        raise "ppc64le: #{opcode} requires a register address operand at #{origin}"
+    end
+end
+
 # -------------------------------------------------------------------------
 # Preprocessing pass — normalise forms that PPC64LE cannot encode directly.
 # -------------------------------------------------------------------------
@@ -1093,6 +1110,7 @@ class Instruction
              "nop", "breakpoint"
             $asm.puts "nop"
 
+
         when "checkStackPointerAlignment"
             # Alignment check: NOP in optimised builds, crash on misalign.
             # For now always NOP; add assertion probe later if needed.
@@ -1642,24 +1660,70 @@ class Instruction
             $asm.puts "sth #{src}, #{addr.ppc64leOperand}"
 
         # ------------------------------------------------------------------
-        # Atomic loads/stores (for now: treated as regular loads/stores,
-        # no lwsync/isync barriers added — revisit for full correctness)
+        # Load-linked / store-conditional (LL/SC), used by the IPInt/LLInt
+        # weakCASExchange* macros.  Mirrors MacroAssemblerPPC64.h
+        # loadLinkAcq{8,16,32,64} / storeCondRel{8,16,32,64}, which are the
+        # same operations in C++ and are already validated.
+        #
+        # offlineasm operand contract (must match arm64.rb, which is the
+        # reference lowering — see arm64.rb "loadlinkacq*"/"storecondrel*"):
+        #   loadlinkacq<w>  [mem], dest          → ldaxr{b,h,,} dest, [mem]
+        #   storecondrel<w> result, value, [mem] → stlxr{b,h,,} result, value, [mem]
+        # i.e. the result register comes FIRST on the store, and `result` is
+        # 0 on SUCCESS, non-zero when the reservation was lost.
+        #
+        # PPC has no offset form of the reserve/conditional-store primitives:
+        # they are X-form indexed (RA|0, RB), so we emit rA=0 (literal zero,
+        # not r0's contents) and put the address in rB.  The .asm callers all
+        # use `[reg]` with a zero displacement; a non-zero displacement would
+        # need a scratch register we do not have at lowering time, so reject
+        # it loudly (arm64.rb's arm64SimpleAddressOperand does the same).
+        #
+        # Ordering: lwsync after the load-reserve gives acquire, lwsync before
+        # the store-conditional gives release (Power ISA v2.07B B.2.1.1).
+        # POWER8-safe: lbarx/lharx/stbcx./sthcx. are v2.06; the rest are older.
+        #
+        # Encodings verified with `as -mpower8 -a64` on the POWER9 box:
+        #   lbarx  3,0,4 → 0x7c602068   stbcx. 3,0,4 → 0x7c60256d
+        #   lharx  3,0,4 → 0x7c6020e8   sthcx. 3,0,4 → 0x7c6025ad
+        #   lwarx  3,0,4 → 0x7c602028   stwcx. 3,0,4 → 0x7c60212d
+        #   ldarx  3,0,4 → 0x7c6020a8   stdcx. 3,0,4 → 0x7c6021ad
+        #   lwsync       → 0x7c2004ac   mfcr 3       → 0x7c600026
+        #   rlwinm 3,3,3,31,31 → 0x54631ffe   xori 3,3,1 → 0x68630001
         # ------------------------------------------------------------------
-        when "loadLinkAcqp", "loadLinkAcqq"
-            addr = operands[0]
+        when "loadlinkacqb", "loadlinkacqh", "loadlinkacqi", "loadlinkacqq"
+            addr = ppc64leReservationAddress(operands[0], opcode, codeOriginString)
             dst  = operands[1].ppc64leOperand
-            ppc64leValidateDSOffset(addr.offset.value, codeOriginString)
-            $asm.puts "ldarx #{dst}, 0, #{addr.base.ppc64leOperand}"
+            larx = case opcode
+                   when "loadlinkacqb" then "lbarx"
+                   when "loadlinkacqh" then "lharx"
+                   when "loadlinkacqi" then "lwarx"
+                   else                     "ldarx"
+                   end
+            # l{b,h,w}arx zero-extend into the full 64-bit register, matching
+            # ARM64's ldaxr{b,h} Wt writes — the callers compare the result
+            # against a 64-bit `expected` with bqneq, so this matters.
+            $asm.puts "#{larx} #{dst}, 0, #{addr}"
+            $asm.puts "lwsync"                            # acquire
 
-        when "storeCondRelp", "storeCondRelq"
-            src  = operands[0].ppc64leOperand
-            addr = operands[1]
-            dst  = operands[2].ppc64leOperand
-            $asm.puts "stdcx. #{src}, 0, #{addr.base.ppc64leOperand}"
-            # dst receives 0 on success, 1 on failure: use mfcr + extract EQ bit
+        when "storecondrelb", "storecondrelh", "storecondreli", "storecondrelq"
+            dst  = operands[0].ppc64leOperand             # result: 0 = success
+            src  = operands[1].ppc64leOperand             # value to store
+            addr = ppc64leReservationAddress(operands[2], opcode, codeOriginString)
+            stcx = case opcode
+                   when "storecondrelb" then "stbcx."
+                   when "storecondrelh" then "sthcx."
+                   when "storecondreli" then "stwcx."
+                   else                      "stdcx."
+                   end
+            $asm.puts "lwsync"                            # release
+            $asm.puts "#{stcx} #{src}, 0, #{addr}"
+            # st*cx. sets CR0[EQ]=1 on success; the offlineasm contract is
+            # 0 on success.  mfcr zeroes the upper word and rlwinm clears
+            # bits 0:31, so the result is already properly zero-extended.
             $asm.puts "mfcr #{dst}"
-            $asm.puts "rlwinm #{dst}, #{dst}, 3, 31, 31"  # EQ bit = CR0[EQ] = bit 2, shift to bit 31
-            $asm.puts "xori #{dst}, #{dst}, 1"            # 0 = success, 1 = failure
+            $asm.puts "rlwinm #{dst}, #{dst}, 3, 31, 31"  # CR0[EQ] (bit 29) → bit 31
+            $asm.puts "xori #{dst}, #{dst}, 1"            # 0 = success, 1 = reservation lost
 
         # ------------------------------------------------------------------
         # Load effective address
