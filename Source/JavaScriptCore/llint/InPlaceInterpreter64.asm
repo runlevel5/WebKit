@@ -12916,26 +12916,5 @@ if ARM64E
         jmp ws0, WasmEntryPtrTag
 end
 
-# Restore frame return stub: only used when JIT cage is disabled.
-# When JIT cage is enabled, the wasmRestoreFrame gate thunk handles this.
-# At entry: return values in wa/wfa registers and at sp (don't change these)
-global _wasm_restore_frame_return
-_wasm_restore_frame_return:
-    loadp CodeBlock[cfr], wasmInstance
-    ipintReloadMemory(ws0)
-
-if ARM64E
-    loadp ReturnPC[cfr], lr
-    addp CallerFrameAndPCSize, cfr, ws0
-    untagReturnAddress ws0
-    loadp [cfr], cfr
-    tagReturnAddress sp
-    ret
-elsif ARM64
-    loadpairq [cfr], cfr, lr
-    ret
-elsif X86_64
-    loadp ReturnPC[cfr], ws1
-    loadp [cfr], cfr
-    jmp ws1
-end
+# _wasm_restore_frame_return has moved to InPlaceInterpreter.asm: it is used by
+# BBQ/OMG, which exist on architectures that do not include this file.
