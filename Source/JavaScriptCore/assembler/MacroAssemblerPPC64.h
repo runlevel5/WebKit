@@ -59,6 +59,7 @@ using Assembler = TARGET_ASSEMBLER;
         RELEASE_ASSERT_NOT_REACHED(); \
     } while (0)
 
+
 class MacroAssemblerPPC64 : public AbstractMacroAssembler<Assembler> {
 public:
     static constexpr unsigned numGPRs = 32;
@@ -1562,6 +1563,16 @@ public:
         ResolvedAddress r = resolveAddress(address, memoryTempRegister);
         m_assembler.sth(src, r.offset, r.base);
     }
+    void store16(TrustedImm32 imm, Address address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store16(dataTempRegister, address);
+    }
+    void store16(TrustedImm32 imm, BaseIndex address)
+    {
+        moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
+        store16(dataTempRegister, address);
+    }
 
     void store8(RegisterID src, Address address)
     {
@@ -1607,22 +1618,31 @@ public:
     // (dataTempRegister holds the value; memoryTempRegister resolves each
     // address in turn — the load's address is fully consumed before the
     // store resolves its own.)
-    void transfer32(Address src, Address dest)
+    // Memory-to-memory transfers, templated over the address forms as on
+    // ARM64 so that mixed pairs work: BBQ's wasm GC struct/array field copies
+    // pass an Address source with a BaseIndex destination. The value travels
+    // through dataTempRegister while address resolution uses
+    // memoryTempRegister, so the two never collide.
+    template<typename SrcType, typename DestType>
+    void transfer8(SrcType src, DestType dest)
+    {
+        load8(src, dataTempRegister);
+        store8(dataTempRegister, dest);
+    }
+    template<typename SrcType, typename DestType>
+    void transfer16(SrcType src, DestType dest)
+    {
+        load16(src, dataTempRegister);
+        store16(dataTempRegister, dest);
+    }
+    template<typename SrcType, typename DestType>
+    void transfer32(SrcType src, DestType dest)
     {
         load32(src, dataTempRegister);
         store32(dataTempRegister, dest);
     }
-    void transfer32(BaseIndex src, BaseIndex dest)
-    {
-        load32(src, dataTempRegister);
-        store32(dataTempRegister, dest);
-    }
-    void transfer64(Address src, Address dest)
-    {
-        load64(src, dataTempRegister);
-        store64(dataTempRegister, dest);
-    }
-    void transfer64(BaseIndex src, BaseIndex dest)
+    template<typename SrcType, typename DestType>
+    void transfer64(SrcType src, DestType dest)
     {
         load64(src, dataTempRegister);
         store64(dataTempRegister, dest);
@@ -1873,6 +1893,24 @@ public:
         m_assembler.mfvsrd(dest, fpTempRegister);
         zeroExtend32ToWordInternal(dest);
     }
+    void truncateDoubleToUint64(FPRegisterID src, RegisterID dest)
+    {
+        m_assembler.fctiduz(fpTempRegister, src);
+        m_assembler.mfvsrd(dest, fpTempRegister);
+    }
+    // The four-operand form exists for backends that need scratch FPRs to
+    // synthesise the unsigned conversion; fctiduz does it directly.
+    void truncateDoubleToUint64(FPRegisterID src, RegisterID dest, FPRegisterID, FPRegisterID) { truncateDoubleToUint64(src, dest); }
+
+    // A single-precision value in a PPC64 FPR is held in double format (see
+    // convertFloatToDouble, which is a plain move), and every float is exactly
+    // representable as a double, so truncating a float uses the same
+    // instructions as truncating the equivalent double.
+    void truncateFloatToInt32(FPRegisterID src, RegisterID dest)  { truncateDoubleToInt32(src, dest); }
+    void truncateFloatToUint32(FPRegisterID src, RegisterID dest) { truncateDoubleToUint32(src, dest); }
+    void truncateFloatToInt64(FPRegisterID src, RegisterID dest)  { truncateDoubleToInt64(src, dest); }
+    void truncateFloatToUint64(FPRegisterID src, RegisterID dest) { truncateDoubleToUint64(src, dest); }
+    void truncateFloatToUint64(FPRegisterID src, RegisterID dest, FPRegisterID, FPRegisterID) { truncateDoubleToUint64(src, dest); }
 
     // --- Double compares/branches ---------------------------------------
     // fcmpu sets CR0 bits LT=0, GT=1, EQ=2, UN=3.  Compound conditions
@@ -2208,6 +2246,57 @@ public:
     void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
     void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
     void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+
+    // Remaining SIMD surface required by the wasm BBQ JIT. PPC64LE keeps
+    // Options::useWasmSIMD() off (notifyOptionsChanged forces it false for
+    // every non-x86_64/arm64 target) and run-jsc-stress-tests skips the SIMD
+    // variants because $isSIMDPlatform excludes ppc64le, so none of these are
+    // reachable today -- but BBQ still has to compile. They trap loudly rather
+    // than silently doing nothing if a future change ever routes here.
+    void moveZeroToVector(FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplat(SIMDLane lane, RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSplat(SIMDLane lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUshl8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
+    void vectorSshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
+    void vectorUshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNIMPLEMENTED(); }
+    void vectorSshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorUshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNIMPLEMENTED(); }
+    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNIMPLEMENTED(); }
+    void vectorLoad8Splat(Address address, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLane(SIMDLane simdLane, SIMDSignMode signMode, TrustedImm32 lane, FPRegisterID src, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtractLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, RegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID tmp) { PPC64_UNIMPLEMENTED(); }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorPopcnt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNIMPLEMENTED(); }
+    void vectorConvertLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR1, FPRegisterID scratchFPR2) { PPC64_UNIMPLEMENTED(); }
+    void vectorNot(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorNeg(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNIMPLEMENTED(); }
+    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorSshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest, RegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorHorizontalAdd(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNIMPLEMENTED(); }
+    void vectorUnsignedMin(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
+    void vectorUnsignedMax(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNIMPLEMENTED(); }
     void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
     void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNIMPLEMENTED(); }
 
@@ -2527,12 +2616,86 @@ public:
         // rotr64(n) = rotl64(64 - n); rldicl with mb=0 is rotldi.
         m_assembler.rldicl(dest, dest, (64 - (imm.m_value & 63)) & 63, 0);
     }
+    void rotateRight64(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        m_assembler.rldicl(dest, src, (64 - (imm.m_value & 63)) & 63, 0);
+    }
+    void rotateRight64(RegisterID src, RegisterID shiftAmount, RegisterID dest)
+    {
+        // rldcl uses only the low 6 bits of the rotate operand, so 64 - amount
+        // wraps correctly for amount == 0 (64 -> 0) and for amount >= 64.
+        m_assembler.subfic(dataTempRegister, shiftAmount, 64);
+        m_assembler.rldcl(dest, src, dataTempRegister, 0);
+    }
+
+    // rotr32(n) = rotl32(32 - n). rlwinm/rlwnm rotate the low word and clear
+    // the high 32 bits of the result, which keeps the int32-values-are-
+    // zero-extended invariant for free.
+    void rotateRight32(RegisterID src, TrustedImm32 imm, RegisterID dest)
+    {
+        m_assembler.rlwinm(dest, src, (32 - (imm.m_value & 31)) & 31, 0, 31);
+    }
+    void rotateRight32(TrustedImm32 imm, RegisterID srcDst) { rotateRight32(srcDst, imm, srcDst); }
+    void rotateRight32(RegisterID src, RegisterID shiftAmount, RegisterID dest)
+    {
+        // rlwnm uses only the low 5 bits of the rotate operand, so 32 - amount
+        // wraps correctly for amount == 0 (32 -> 0) and for amount >= 32.
+        m_assembler.subfic(dataTempRegister, shiftAmount, 32);
+        m_assembler.rlwnm(dest, src, dataTempRegister, 0, 31);
+    }
 
     void not64(RegisterID srcDest) { m_assembler.nor(srcDest, srcDest, srcDest); }
     void not64(RegisterID src, RegisterID dest) { m_assembler.nor(dest, src, src); }
 
     void countLeadingZeros32(RegisterID src, RegisterID dest) { m_assembler.cntlzw(dest, src); }
     void countLeadingZeros64(RegisterID src, RegisterID dest) { m_assembler.cntlzd(dest, src); }
+
+    // cnttzw/cnttzd are Power ISA v3.0 (POWER9); this port targets v2.07B
+    // (POWER8), so synthesise it: ctz(x) == 32 - clz(~x & (x - 1)). The
+    // identity also yields the required ctz(0) == 32, since ~0 & -1 is all
+    // ones and clz of that is 0. Verified on POWER9 hardware against
+    // __builtin_ctz for 0, 1, 5, 6, 8, 0x10000, 0x80000000 and 0xFFFFFFFF.
+    void countTrailingZeros32(RegisterID src, RegisterID dest)
+    {
+        m_assembler.addi(dataTempRegister, src, -1);           // x - 1
+        m_assembler.andc(dataTempRegister, dataTempRegister, src); // (x - 1) & ~x
+        m_assembler.cntlzw(dest, dataTempRegister);
+        m_assembler.subfic(dest, dest, 32);
+    }
+    void countTrailingZeros64(RegisterID src, RegisterID dest)
+    {
+        m_assembler.addi(dataTempRegister, src, -1);
+        m_assembler.andc(dataTempRegister, dataTempRegister, src);
+        m_assembler.cntlzd(dest, dataTempRegister);
+        m_assembler.subfic(dest, dest, 64);
+    }
+
+    // popcntw/popcntd are v2.06+, comfortably inside the POWER8 baseline.
+    static bool supportsCountPopulation() { return true; }
+    // The FP temp is part of the shared signature (ARM64 needs a vector
+    // register for its cnt/addv sequence); PPC64 has a direct instruction.
+    void countPopulation32(RegisterID src, RegisterID dest, FPRegisterID)
+    {
+        // popcntw counts each word separately, so a non-zero-extended src
+        // would leave the high word's count in bits 32:63. Clear them.
+        m_assembler.popcntw(dest, src);
+        m_assembler.rldicl(dest, dest, 0, 32);
+    }
+    void countPopulation64(RegisterID src, RegisterID dest, FPRegisterID) { m_assembler.popcntd(dest, src); }
+
+    // dest = minuend - mulLeft * mulRight. PPC64 has no integer multiply-sub,
+    // so this is mullw/mulld followed by subf (subf rD, rA, rB = rB - rA).
+    void multiplySub32(RegisterID mulLeft, RegisterID mulRight, RegisterID minuend, RegisterID dest)
+    {
+        m_assembler.mullw(dataTempRegister, mulLeft, mulRight);
+        m_assembler.subf(dest, dataTempRegister, minuend);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void multiplySub64(RegisterID mulLeft, RegisterID mulRight, RegisterID minuend, RegisterID dest)
+    {
+        m_assembler.mulld(dataTempRegister, mulLeft, mulRight);
+        m_assembler.subf(dest, dataTempRegister, minuend);
+    }
 
     // --- Memory-destination logical read-modify-write ---------------------
     // load width, combine, store back. Byte/halfword forms operate on the
@@ -3106,6 +3269,13 @@ public:
         return Call(m_assembler.emitUnlinkedJump(), Call::LinkableNearTail);
     }
 
+    // Thread-safe patchable variants. nearCall/nearTailCall already emit a
+    // fixed-size slot at a constant offset, which is what the "thread safe"
+    // contract needs, so these are the same emission (as on ARM64, where
+    // threadSafePatchableNearTailCall is likewise identical to nearTailCall).
+    Call threadSafePatchableNearCall() { return nearCall(); }
+    Call threadSafePatchableNearTailCall() { return nearTailCall(); }
+
     Call call(PtrTag tag)
     {
         bool cCall = isCFunctionCallTag(tag);
@@ -3480,6 +3650,12 @@ public:
         loadVector(src, fpTempRegister);
         storeVector(fpTempRegister, dest);
     }
+    void transferVector(Address src, BaseIndex dest)
+    {
+        loadVector(src, fpTempRegister);
+        getEffectiveAddress(dest, memoryTempRegister);
+        m_assembler.stxvd2x(fpTempRegister, PPC64Registers::r0, memoryTempRegister);
+    }
     void transferVector(BaseIndex src, BaseIndex dest)
     {
         getEffectiveAddress(src, memoryTempRegister);
@@ -3635,6 +3811,196 @@ public:
     Jump branchAtomicWeakCAS32(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(32, cond, expected, newValue, address); }
     Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, Address address)   { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
     Jump branchAtomicWeakCAS64(StatusCondition cond, RegisterID expected, RegisterID newValue, BaseIndex address) { return branchAtomicWeakCAS(64, cond, expected, newValue, address); }
+
+    // Strong compare-and-swap. Unlike branchAtomicWeakCAS this retries on a
+    // lost reservation, so it only returns once the CAS genuinely succeeded or
+    // genuinely saw a mismatching value. `expectedAndResult` supplies the
+    // comparand and receives the previous memory value; `result` receives 1 or
+    // 0 according to whether the outcome matched `cond`. Mirrors the ARM64
+    // ldaxr/stlxr version, including its mismatch path: that path stores the
+    // just-loaded value straight back, which both releases the reservation and
+    // proves no other thread intervened (if it did, the stcx. fails and the
+    // whole comparison is retried).
+    template<typename AddressType>
+    void atomicStrongCAS(unsigned width, StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result)
+    {
+        RegisterID addr = prepareAtomicAddress(address, memoryTempRegister);
+        RegisterID tmp = dataTempRegister;
+        constexpr RegisterID zero = PPC64Registers::r0;
+
+        // Match the zero-extended larx result so cmpld compares like for like.
+        switch (width) {
+        case 8:  and64(TrustedImm32(0xFF), expectedAndResult); break;
+        case 16: and64(TrustedImm32(0xFFFF), expectedAndResult); break;
+        case 32: zeroExtend32ToWord(expectedAndResult, expectedAndResult); break;
+        default: break;
+        }
+
+        m_assembler.sync(); // seq-cst leading barrier
+        Label reloop(this);
+        switch (width) {
+        case 8:  m_assembler.lbarx(tmp, zero, addr); break;
+        case 16: m_assembler.lharx(tmp, zero, addr); break;
+        case 32: m_assembler.lwarx(tmp, zero, addr); break;
+        default: m_assembler.ldarx(tmp, zero, addr); break;
+        }
+        m_assembler.cmpld(0, expectedAndResult, tmp);
+        Jump failure = makeBranch(NotEqual);
+
+        switch (width) {
+        case 8:  m_assembler.stbcx_(newValue, zero, addr); break;
+        case 16: m_assembler.sthcx_(newValue, zero, addr); break;
+        case 32: m_assembler.stwcx_(newValue, zero, addr); break;
+        default: m_assembler.stdcx_(newValue, zero, addr); break;
+        }
+        makeBranch(NotEqual).linkTo(reloop, this); // reservation lost -> retry
+        m_assembler.isync();                       // acquire
+        move(TrustedImm32(cond == Success), result);
+        Jump done = jump();
+
+        failure.link(this);
+        move(tmp, expectedAndResult); // report the value we actually saw
+        switch (width) {
+        case 8:  m_assembler.stbcx_(tmp, zero, addr); break;
+        case 16: m_assembler.sthcx_(tmp, zero, addr); break;
+        case 32: m_assembler.stwcx_(tmp, zero, addr); break;
+        default: m_assembler.stdcx_(tmp, zero, addr); break;
+        }
+        makeBranch(NotEqual).linkTo(reloop, this);
+        m_assembler.isync();
+        move(TrustedImm32(cond == Failure), result);
+
+        done.link(this);
+    }
+
+    // Three-operand form: same CAS, but the caller only wants the previous
+    // value in expectedAndResult and no success flag. BBQ uses both shapes.
+    template<typename AddressType>
+    void atomicStrongCASNoStatus(unsigned width, RegisterID expectedAndResult, RegisterID newValue, AddressType address)
+    {
+        RegisterID addr = prepareAtomicAddress(address, memoryTempRegister);
+        RegisterID tmp = dataTempRegister;
+        constexpr RegisterID zero = PPC64Registers::r0;
+
+        switch (width) {
+        case 8:  and64(TrustedImm32(0xFF), expectedAndResult); break;
+        case 16: and64(TrustedImm32(0xFFFF), expectedAndResult); break;
+        case 32: zeroExtend32ToWord(expectedAndResult, expectedAndResult); break;
+        default: break;
+        }
+
+        m_assembler.sync();
+        Label reloop(this);
+        switch (width) {
+        case 8:  m_assembler.lbarx(tmp, zero, addr); break;
+        case 16: m_assembler.lharx(tmp, zero, addr); break;
+        case 32: m_assembler.lwarx(tmp, zero, addr); break;
+        default: m_assembler.ldarx(tmp, zero, addr); break;
+        }
+        m_assembler.cmpld(0, expectedAndResult, tmp);
+        Jump mismatch = makeBranch(NotEqual);
+        switch (width) {
+        case 8:  m_assembler.stbcx_(newValue, zero, addr); break;
+        case 16: m_assembler.sthcx_(newValue, zero, addr); break;
+        case 32: m_assembler.stwcx_(newValue, zero, addr); break;
+        default: m_assembler.stdcx_(newValue, zero, addr); break;
+        }
+        makeBranch(NotEqual).linkTo(reloop, this); // strong: retry a lost reservation
+        mismatch.link(this);
+        m_assembler.isync();
+        move(tmp, expectedAndResult);
+    }
+
+    template<typename AddressType> void atomicStrongCAS8(RegisterID expectedAndResult, RegisterID newValue, AddressType address)  { atomicStrongCASNoStatus(8, expectedAndResult, newValue, address); }
+    template<typename AddressType> void atomicStrongCAS16(RegisterID expectedAndResult, RegisterID newValue, AddressType address) { atomicStrongCASNoStatus(16, expectedAndResult, newValue, address); }
+    template<typename AddressType> void atomicStrongCAS32(RegisterID expectedAndResult, RegisterID newValue, AddressType address) { atomicStrongCASNoStatus(32, expectedAndResult, newValue, address); }
+    template<typename AddressType> void atomicStrongCAS64(RegisterID expectedAndResult, RegisterID newValue, AddressType address) { atomicStrongCASNoStatus(64, expectedAndResult, newValue, address); }
+
+    template<typename AddressType> void atomicStrongCAS8(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result)  { atomicStrongCAS(8, cond, expectedAndResult, newValue, address, result); }
+    template<typename AddressType> void atomicStrongCAS16(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result) { atomicStrongCAS(16, cond, expectedAndResult, newValue, address, result); }
+    template<typename AddressType> void atomicStrongCAS32(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result) { atomicStrongCAS(32, cond, expectedAndResult, newValue, address, result); }
+    template<typename AddressType> void atomicStrongCAS64(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result) { atomicStrongCAS(64, cond, expectedAndResult, newValue, address, result); }
+
+    // --- Atomic read-modify-write, x86 "lock xadd" / "xchg" shape ---------
+    // `reg` supplies the operand and receives the previous memory value,
+    // zero-extended from the access width. Sequential consistency uses the
+    // same leading sync / trailing isync idiom as branchAtomicWeakCAS above.
+    // `reg` is never written inside the larx/stcx. loop, so a lost
+    // reservation can simply retry.
+    template<typename AddressType>
+    void atomicXchgAdd(unsigned width, RegisterID reg, AddressType address)
+    {
+        RegisterID addr = prepareAtomicAddress(address, memoryTempRegister);
+        RegisterID tmp = dataTempRegister;
+        constexpr RegisterID zero = PPC64Registers::r0; // rA=0 -> literal 0 in larx/stcx.
+
+        m_assembler.sync(); // seq-cst leading barrier
+        Label reloop(this);
+        switch (width) {
+        case 8:  m_assembler.lbarx(tmp, zero, addr); break;
+        case 16: m_assembler.lharx(tmp, zero, addr); break;
+        case 32: m_assembler.lwarx(tmp, zero, addr); break;
+        default: m_assembler.ldarx(tmp, zero, addr); break;
+        }
+        // Hold the *sum* in tmp rather than the old value: that keeps reg
+        // intact for a retry, and the old value is recovered exactly as
+        // sum - reg once the store sticks (true at every width, since larx
+        // zero-extends and the subtraction is done at full 64-bit width).
+        m_assembler.add(tmp, tmp, reg);
+        switch (width) {
+        case 8:  m_assembler.stbcx_(tmp, zero, addr); break;
+        case 16: m_assembler.sthcx_(tmp, zero, addr); break;
+        case 32: m_assembler.stwcx_(tmp, zero, addr); break;
+        default: m_assembler.stdcx_(tmp, zero, addr); break;
+        }
+        makeBranch(NotEqual).linkTo(reloop, this); // CR0[EQ] clear -> reservation lost
+        m_assembler.isync();                       // acquire
+        m_assembler.subf(reg, reg, tmp);           // reg = tmp - reg = old value
+    }
+
+    template<typename AddressType>
+    void atomicXchg(unsigned width, RegisterID reg, AddressType address)
+    {
+        RegisterID addr = prepareAtomicAddress(address, memoryTempRegister);
+        RegisterID tmp = dataTempRegister;
+        constexpr RegisterID zero = PPC64Registers::r0;
+
+        m_assembler.sync();
+        Label reloop(this);
+        switch (width) {
+        case 8:  m_assembler.lbarx(tmp, zero, addr); break;
+        case 16: m_assembler.lharx(tmp, zero, addr); break;
+        case 32: m_assembler.lwarx(tmp, zero, addr); break;
+        default: m_assembler.ldarx(tmp, zero, addr); break;
+        }
+        switch (width) {
+        case 8:  m_assembler.stbcx_(reg, zero, addr); break;
+        case 16: m_assembler.sthcx_(reg, zero, addr); break;
+        case 32: m_assembler.stwcx_(reg, zero, addr); break;
+        default: m_assembler.stdcx_(reg, zero, addr); break;
+        }
+        makeBranch(NotEqual).linkTo(reloop, this);
+        m_assembler.isync();
+        move(tmp, reg); // previous value
+    }
+
+    void atomicXchgAdd8(RegisterID reg, Address address)    { atomicXchgAdd(8, reg, address); }
+    void atomicXchgAdd8(RegisterID reg, BaseIndex address)  { atomicXchgAdd(8, reg, address); }
+    void atomicXchgAdd16(RegisterID reg, Address address)   { atomicXchgAdd(16, reg, address); }
+    void atomicXchgAdd16(RegisterID reg, BaseIndex address) { atomicXchgAdd(16, reg, address); }
+    void atomicXchgAdd32(RegisterID reg, Address address)   { atomicXchgAdd(32, reg, address); }
+    void atomicXchgAdd32(RegisterID reg, BaseIndex address) { atomicXchgAdd(32, reg, address); }
+    void atomicXchgAdd64(RegisterID reg, Address address)   { atomicXchgAdd(64, reg, address); }
+    void atomicXchgAdd64(RegisterID reg, BaseIndex address) { atomicXchgAdd(64, reg, address); }
+
+    void atomicXchg8(RegisterID reg, Address address)    { atomicXchg(8, reg, address); }
+    void atomicXchg8(RegisterID reg, BaseIndex address)  { atomicXchg(8, reg, address); }
+    void atomicXchg16(RegisterID reg, Address address)   { atomicXchg(16, reg, address); }
+    void atomicXchg16(RegisterID reg, BaseIndex address) { atomicXchg(16, reg, address); }
+    void atomicXchg32(RegisterID reg, Address address)   { atomicXchg(32, reg, address); }
+    void atomicXchg32(RegisterID reg, BaseIndex address) { atomicXchg(32, reg, address); }
+    void atomicXchg64(RegisterID reg, Address address)   { atomicXchg(64, reg, address); }
+    void atomicXchg64(RegisterID reg, BaseIndex address) { atomicXchg(64, reg, address); }
 
     // --- Air LoadLink/StoreCond (B3 atomics LL/SC loops) ----------------
     // The Air forms use SimpleAddr (a bare register address, offset 0).
