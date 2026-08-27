@@ -857,8 +857,11 @@ void Options::notifyOptionsChanged()
     if (!Options::useWasmIPInt())
         Options::thresholdForBBQOptimizeAfterWarmUp() = 0; // Trigger immediate BBQ tier up.
 
-#if CPU(ARM_THUMB2)
-    // WasmIPInt is not supported on ARM32, so disable wasm if BBQJIT is disabled.
+#if CPU(ARM_THUMB2) || CPU(PPC64LE)
+    // WasmIPInt is not supported on ARM32 or PPC64, so disable wasm if BBQJIT is
+    // disabled: those platforms have no other engine, and aborting on the
+    // coherence check would take down every configuration that merely turns the
+    // JIT off, including ones that never touch wasm.
     if (Options::useWasm() && !Options::useBBQJIT())
         Options::useWasm() = false;
 #endif
