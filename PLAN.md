@@ -423,7 +423,12 @@ Gate: `jsc --useDFGJIT=0 --useFTLJIT=0 --useWasmJIT=0` (Baseline only) passes th
 1. Expand MacroAssemblerPPC64 to cover the full Baseline surface: all integer arith, logical, shift, comparison, branches, loads/stores across sizes, float arith, truncation, conversion. Use ISA XO-form for arith, X-form for loads/stores, B-form for conditional branches via CR fields.
 2. Implement `nearCall`/`farCall` — PPC64LE needs a local-call fast path (direct `bl`) and an external-call path that restores TOC via r2 reload (`ld r2, 24(r1)` per ELFv2 §2.3.2).
 3. Implement probe trampolines for the Probe API (`Probe.cpp` hooks).
-4. Flush icache correctly. On PPC the sequence is `dcbst; sync; icbi; isync` — the Linux kernel exposes `__builtin___clear_cache`; use it and verify it emits the right sequence via `objdump`.
+4. Flush icache correctly. On PPC the sequence is `dcbst; sync; icbi; sync; isync`. **Do not use
+   `__builtin___clear_cache`: GCC compiles it to a bare `blr` on ppc64le** (verified by `objdump`), so
+   the port ran without any icache invalidation until 2026-08-21. It is now written by hand, with the
+   block size taken from `AT_DCACHEBSIZE`/`AT_ICACHEBSIZE` (128 on the test box, 32 fallback). PPC64
+   also needs a real `crossModifyingCodeFence()` (`isync`) — it was falling through to a seq-cst `sync`,
+   which orders memory but does not discard prefetched instructions.
 
 **Verification**: Baseline vs LLInt parity. Any test that passes in LLInt and fails in Baseline is a pure codegen bug; isolate with `JSC_useBaselineJIT=true JSC_jitPolicyScale=0.001`.
 
@@ -585,9 +590,51 @@ DFG is compiled (`ENABLE_DFG_JIT=1`, FTL off) and defaults on when JIT is on —
 
 **Verification**: diff `jsc --dumpDFGGraph=1` output between ARM64 and PPC64 on the same test — the DFG IR should be identical (it's arch-agnostic). Divergence means we're mis-reading the bytecode. Codegen divergence is expected at the Air level.
 
-## Phase 5 — B3 / Air backend
+## Phase 5 — B3 / Air backend — ✅ DONE 2026-08-26
 
 Gate: FTL and WASM-OMG both functional. This is the largest phase.
+
+**Gate met for FTL. `JSTests/stress` is fully green: 47,610 PASS / 0 FAIL**, release FTL build,
+JIT enabled by default. WASM-OMG is *not* covered — WASM has no execution tier on PPC64 at all,
+so it moves to Phase 6 (see there). Run it with:
+
+```sh
+export TZ=America/Los_Angeles JSCTEST_memoryLimit=$((2*1024*1024*1024))
+Tools/Scripts/run-jsc-stress-tests --memory-limited \
+    --jsc WebKitBuild/FTL/bin/jsc -c 20 -o /home/tle/stress JSTests/stress
+```
+
+`--memory-limited` is **mandatory**: without it `StringObject-define-length-getter-rope-string-oom.js`
+invites the kernel OOM killer, which kills the workers and wedges the ruby driver — two runs died at
+that exact test while appearing to still progress. It in turn imposes a 1 GB `JSCTEST_memoryLimit`,
+which 64 KB pages push a typed-array test 0.06% past, hence the explicit 2 GB override. Launch from a
+script file: `pkill -f "run-jsc-stress"` matches your own ssh command line and kills the launch, and
+`pgrep -f run-jsc-stress-tests` self-matches so it always reports "running" — detect completion with
+`ps -eo args | grep -c "[j]sc-stress"`.
+
+**Two bug families accounted for nearly every runtime failure in this phase.** Both are worth checking
+first for any new crash:
+
+1. **ELFv2 lets a callee write into the CALLER's frame** — CR at `sp+8`, LR at `sp+16`, TOC at `sp+24`,
+   plus a parameter save area from `sp+32`. **Audit rule: any `emitFunctionPrologue()` followed by a C
+   call is a bug unless `sp` is lowered first** (`makeSpaceOnStackForCCall()`,
+   `maxFrameExtentForSlowPathCall` = 96). Six sites fixed: the FTL slow-path saving area, FTL's inline
+   native call, `CallDirectEval`, the FTL OSR-exit thunk and its materialization calls, and the
+   bound/remote function thunks. Diagnostic: a frame whose header slots hold *code addresses* while its
+   callers look healthy — match the clobbered offset to the save (8 = CR, 16 = LR, 24 = TOC) to name the
+   culprit.
+2. **r11/r12/f0 are the MacroAssembler scratches** (`dataTempRegister`, `memoryTempRegister`,
+   `fpTempRegister`) and are not allocatable. ELFv2 leaves **no** volatile GPR outside the argument
+   registers r3–r10 and those two scratches, so upstream code that assumes one exists breaks here.
+   Five sites fixed: Air's register pool, the ColdCCall callee, `nonArgGPR0` in the DFG ShadowChicken
+   nodes, `ensureShadowChickenPacket` holding a pointer across a compare that materialises into r11,
+   and `branchAdd32` re-reading an operand it had already clobbered.
+
+Almost nothing was a wrong instruction encoding — every encoding checked against
+`as -mpower8` was correct. The recurring defect was **an arch gate that omitted PPC**, either falling
+through to `RELEASE_ASSERT_NOT_REACHED` (DFG integer div/mod) or silently taking the x86 shape with the
+wrong operand count (`UMulHigh64`). Note Air opcode gates live on individual form *sub-lines* in
+`b3/air/AirOpcode.opcodes`, not just the opcode header.
 
 1. Per-arch Air bits: `b3/air/AirOpcode.opcodes` additions guarded by `arch(ppc64le)`; `AirCCallingConvention.cpp` ELFv2 specialization; Air register info covering GPR/FPR volatility per ELFv2 Table 2.1.
 2. Register allocator is arch-agnostic, but the register set sizes and constraints matter. PPC64 has 32 GPR / 32 FPR / 64 VSX, similar headroom to ARM64.
@@ -596,16 +643,148 @@ Gate: FTL and WASM-OMG both functional. This is the largest phase.
 
 **Verification**: `JSC_dumpAirGraph=1` on the same test on ARM64 and PPC64 — the Air IR should be **structurally** similar. Air passes FTL through the full B3 optimizer, so correctness bugs here are extremely subtle. Use `--useConcurrentJIT=0 --validateAir=1 --validateB3=1` as the default dev flags.
 
-## Phase 6 — WASM BBQ + OMG
+## Phase 6 — WASM (IPInt entry + BBQ/OMG) — ACTIVE
 
-Gate: WASM conformance suite (via `Tools/Scripts/run-jsc-stress-tests JSTests/wasm`) passes.
+Gate: `Tools/Scripts/run-jsc-stress-tests JSTests/wasm.yaml` green (1,777 test files, 27 groups).
 
-1. BBQ (`WasmBBQJIT64.cpp`) is MacroAssembler-based — will mostly work once Phase 3 is solid. `WasmCallingConvention.cpp` needs a PPC64 entry assigning GPR/FPR argument slots per ELFv2.
-2. OMG uses B3/Air — works once Phase 5 is solid.
-3. WASM SIMD: gated off until VSX lowering is ready.
-4. WASM traps: implement signal-based trap handler using PPC64 `siginfo_t` / `ucontext_t`; extract faulting PC from `uc_mcontext.gp_regs[PT_NIP]`.
+### Status — 2026-08-27
 
-**Verification**: `JSTests/wasm/` stress runs. `wasm-tools`-generated fuzz cases cross-checked between arm64 and ppc64.
+Builds and links with `ENABLE_WEBASSEMBLY_BBQJIT/OMGJIT=1`. `typeof WebAssembly` is `object`.
+Options resolve coherently: `useWasm=true useBBQJIT=true useOMGJIT=true useWasmIPInt=false`.
+`new WebAssembly.Instance(...)` **traps in `ipint_entry`** — that is the whole remaining gap.
+
+### The architectural constraint — IPInt is mandatory (learned 2026-08-27, the hard way)
+
+**BBQ and OMG are tier-ups *from* IPInt, not alternative entry tiers.** A detour through
+"enable BBQ and skip IPInt" was attempted and is a dead end. Evidence, all in-tree:
+
+- `CalleeGroup`'s constructor *requires* `Ref<IPIntCallees>&&` and unconditionally builds an
+  `IPIntPlan` (`WasmCalleeGroup.cpp:75`); `m_wasmIndirectCallEntrypoints` are populated from
+  `m_ipintCallees->at(i)->entrypoint()`.
+- `IPIntPlan::compileFunction` sets the entrypoint to `LLInt::inPlaceInterpreterEntryThunk()`
+  **unconditionally** — it is not gated on `Options::useWasmIPInt()`.
+- `useWasmIPInt=false` does not bypass IPInt; it means *"do not interpret, tier up immediately"*.
+  `WasmIPIntSlowPaths.cpp:185` reads `if (!Options::useWasmIPInt() || needsSIMDReplacement)` inside
+  the prologue-OSR path, and `jitCompileAndSetHeuristics` then calls `plan->waitForCompletion()` —
+  a synchronous BBQ compile. `WasmIPIntTierUpCounter.h:77` asserts the contract outright:
+  `ASSERT(Options::useWasmIPInt() || checkIfOptimizationThresholdReached())`.
+- On PPC64 `ipint_entry` is `if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7) … else break end`
+  (`InPlaceInterpreter.asm:1357`) — literally a trap instruction.
+
+**Consequence:** with `useWasmIPInt=false` the executed IPInt path is exactly
+*entry → argumINT → prologue OSR → jump to BBQ*. No opcode handlers, no mINT/uINT. That subset alone
+yields running wasm; the full port is what unlocks a JIT-less wasm tier and the
+`wasm-no-jit` / `wasm-no-wasm-jit` suite variants.
+
+### Already landed (the BBQ/OMG detour was not wasted — BBQ needs all of it)
+
+- `WebKitFeatures.cmake`: `WTF_CPU_PPC64LE` now sets `ENABLE_FTL_DEFAULT ON` (was a stale Phase-2
+  comment), which is what turns on `ENABLE_WEBASSEMBLY_BBQJIT/OMGJIT`.
+- ~20 MacroAssembler primitives: `rotateRight32/64` (register + immediate forms),
+  `countTrailingZeros32/64` (POWER8 fallback — `cnttzw` is POWER9; uses `32 - clz(~x & (x-1))`,
+  hardware-validated including the `ctz(0)` edge case), `countPopulation32/64` + a `true`
+  `supportsCountPopulation()` (`popcntw`/`popcntd` are v2.06, inside baseline), `multiplySub32/64`,
+  `truncateFloat*`/`truncateDoubleToUint64` (floats are already double-format in PPC64 FPRs, so these
+  delegate), `atomicXchg*`/`atomicXchgAdd*`/`atomicStrongCAS*` (larx/stcx. loops, both the 3-arg and
+  5-arg CAS shapes), `threadSafePatchableNear{Call,TailCall}`, templated `transfer8/16/32/64/Vector`,
+  `store16(TrustedImm32, …)`. New assembler opcodes: `andc` (31/XO=60), `rldcl` (MDS-form, 30/XO=8).
+- **Three silent-wrong-code fixes**, all the same defect class (arch gate omitting PPC, compiling
+  clean, emitting a wrong or empty body):
+  - `WasmBBQJIT64.cpp` `emitAtomicOpGeneric()` had no `#else` for its store phase — PPC64 would emit
+    a load and a computation with **no store**, making every wasm atomic a silent no-op. Now wired to
+    the existing `loadLinkAcq*`/`storeCondRel*`, with an `#else #error` so a future backend fails loudly.
+  - `JSToWasm.cpp` never saved/restored PPC64's **8 FP argument registers** (the FP chain had no
+    catch-all) and the generic `USE(JSVALUE64)` GPR branch covers only 6 registers while
+    `wasmCallingConvention()` uses `GPRInfo::numberOfArgumentRegisters` = 8 here, dropping
+    `regWA6`/`regWA7`. Any wasm function taking floats or 7+ integer args got garbage.
+  - `ipintReloadMemory` and both `branchIfWasmException` sites had no PPC64 body, silently skipping the
+    reload of the pinned `memoryBase`/`boundsCheckingSize` registers.
+- `_wasm_restore_frame_return` moved from `InPlaceInterpreter64.asm` into `InPlaceInterpreter.asm`:
+  it is not IPInt-specific (BBQ/OMG call it via `emitRestoreInstanceFrameIfNeeded`) but lived in a file
+  included only where IPInt exists. Stays inside `_wasmIPIntPCRangeStart/End`, so ARM64/x86 are unchanged.
+- `IPInt::initialize()` is now called only when `Options::useWasmIPInt()` — it installs IPInt's own
+  dispatch bases and validates handler stride, neither of which is meaningful when wasm runs on BBQ.
+- `checkWasmStackOverflow` (RISCV64 `memoryTempRegister` form) and OSR-entry frame reconstruction in
+  `WasmOperations.cpp` now have PPC64 branches. The latter uses `context.spr(PPC64Registers::lr)`,
+  because **LR is a special-purpose register on PPC64, not a GPR**.
+- ~124 SIMD stubs re-labelled `PPC64_UNSUPPORTED()` (see below).
+
+### Plan — staged, each stage gated
+
+**6A. Make `InPlaceInterpreter64.asm` assemble for ppc64le.** The include gate at
+`InPlaceInterpreter.asm:~2103` (`if JSVALUE64 and (ARM64 or ARM64E or X86_64)`) now admits PPC64LE.
+Adding the file introduces new constant references, so `LLIntOffsetsExtractor` must be rebuilt before
+`asm.rb` will run. Then drive offlineasm to a clean pass. Known first blockers:
+- `nextIPIntInstruction()` ends in `else error end` — the computed-goto dispatch. PPC64 needs
+  `pcrtoaddr <base>, tmp` + `opcode << log2(alignIPInt)` + `add` + `jmp`, i.e. the X86_64 shape.
+- `ipint_dispatch_base` (and the gc/conversion/simd/atomic bases) are `const`s defined only under
+  `if ARM64 or ARM64E or X86_64`.
+- `saveIPIntRegisters`/`restoreIPIntRegisters`: take the `X86_64 or RISCV64` two-`storep`/`loadp` form;
+  PPC64 has no `storepairq`.
+- `pushQuad` and friends end in `else break end`.
+*Gate: `/tmp/k/oasm.sh` exits 0 and `jsc` links.*
+
+**6B. Port the entry path.** `ipint_entry`, `preserveCallerPCAndCFR`/`saveIPIntRegisters`,
+`unboxWasmCallee`, `ipintEntry` (argumINT argument marshalling),
+`argumINTInitializeDefaultLocals`/`argumINTFinish`,
+`preserveWasmArgumentRegisters`/`restoreWasmArgumentRegisters`, `ipintPrologueOSR`.
+*Gate: `new WebAssembly.Instance` runs a function to completion via BBQ; the targeted primitive smoke
+test (`/tmp/k/prim.js`) passes.* **This is the first milestone that produces executable wasm.**
+
+**6C. Audit the silent gates.** ~730 gates in `InPlaceInterpreter64.asm` cover only
+ARM64/X86_64/RISCV64. Those with no `else` emit **nothing** rather than failing — the exact class that
+produced every hard bug in this port. Enumerate, classify (needs a body / genuinely N/A), and make the
+N/A cases explicit. Do this *before* trusting any green test result.
+
+**6D. Port the opcode handlers plus mINT/uINT.** The bulk: control flow, memory, arithmetic,
+conversions, atomics, GC; mINT (call argument marshalling) and uINT (return marshalling).
+
+**6E. Satisfy the stride validation.** Re-enable `IPInt::initialize()` for PPC64 and make every handler
+fit its fixed slot: `alignIPInt` = 256 bytes (512 with LLINT_TRACING), `alignAtomicIPInt` = 512,
+`alignArgumInt`/`alignUInt`/`alignMInt` = 64. Handlers that overflow must move work out of line.
+PPC64 is fixed-width 4-byte, so a 256-byte slot is **64 instructions** — tighter than it sounds for
+handlers that ARM64 writes with load/store-pair. Expect overflow to be a real, recurring constraint.
+*Gate: `JSTests/wasm.yaml` green in the `wasm-bbq`, `wasm-omg`, `wasm-no-jit` and `wasm-no-wasm-jit`
+variants.*
+
+### Remaining Phase 6 items (unchanged)
+
+1. ~~`WasmCallingConvention.cpp` needs a PPC64 entry~~ — **it does not.** The file is arch-generic: it
+   builds its register vectors from `GPRInfo::numberOfArgumentRegisters` / `toArgumentRegister()` and
+   the FPR equivalents, and already excludes `macroClobberedGPRs()` from its scratch set. (Independently
+   confirmed by `InPlaceInterpreter.asm`, which sets `NumberOfWasmArgumentGPRs = 8` for PPC64LE.)
+2. **WASM SIMD stays off.** `notifyOptionsChanged()` forces `useWasmSIMD()` false for every
+   non-x86_64/arm64 target and `$isSIMDPlatform` excludes ppc64le, so the ~124 vector methods are
+   `PPC64_UNSUPPORTED()` stubs. Turning SIMD on means writing real VSX sequences *and* removing both
+   gates. Note the two distinct traps now in `MacroAssemblerPPC64.h`: `PPC64_UNIMPLEMENTED` = a hole in
+   the port that should be filled (only the Float16 family remains); `PPC64_UNSUPPORTED` = deliberately
+   off here, so hitting one means **a gate leaked**, and the gate is the bug.
+3. **WASM traps**: implement the signal-based trap handler. Nothing in WTF references `PT_NIP` or
+   `gp_regs`, and the only `CPU(PPC64)` branch in `PlatformRegisters.h` is the legacy Darwin/Mach path
+   (`ppc_thread_state64_t`), not Linux — on Linux we take `HAVE(MACHINE_CONTEXT)`. Faulting-PC
+   extraction needs writing.
+4. `add128`/`sub128`/`I64MulWide` in BBQ need `add64AndSetFlags`/`addCarry64`/`sub64AndSetFlags`/
+   `subBorrow64`, which PPC64 lacks. `useWasmWideArithmetic` defaults to **false**, so these are latent;
+   the ARM64 branch shape would port directly if it is ever enabled.
+
+### Risks specific to this phase
+
+- **256-byte handler slots on a fixed-width ISA.** See 6E. The most likely source of grind.
+- **Silent empty bodies.** 6C exists because a passing test proves nothing if the handler emitted no code.
+- **Reservation loops and `break`.** IPInt macros that fall through to `break` produce a trap word
+  (`0x7fe00008`) rather than a link error, so mistakes surface as SIGBUS at runtime, not at build time.
+
+### Tooling for this phase (both established, both worth keeping)
+
+```bash
+# offlineasm alone, ~15s, no C++ build — the .asm iteration loop
+/tmp/k/oasm.sh                 # writes /tmp/k/LLIntAssembly_test.h
+
+# single C++ file syntax check, ~14s vs a 20-min full build.
+# MUST point -include at a cmake_pch.hxx copy with no .gch beside it, or a stale
+# PCH silently reports methods missing that you have already added.
+/tmp/k/syn3.sh
+```
 
 ## Phase 7 — Hardening
 
@@ -632,19 +811,67 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 - **Scratch-register pool.** r11/r12 as primary, r16 as pool-base, r0 **not** usable as a load/store base. See Lessons section — this is the top source of SM bugs.
 - **Memory ordering.** ARM64 has acquire/release loads/stores as primitives; PPC needs explicit `lwsync` / `isync` / full `sync` fences. DFG/FTL concurrent-JIT assumptions need audit. PPC uses `lwsync` for acquire/release; full `sync` only for seq-cst.
 - **Compare-exchange reservation leak on fail path.** SM has this open and unsolved — all three workarounds pessimise the success path. Design the PPC64 `compareExchange` macro with separate success/fail exits so the fail path can be enlarged without regressing success.
-- **Executable memory.** `mmap(PROT_EXEC)` + icache flush semantics on recent kernels — verify on the actual test box kernel version. Use `__builtin___clear_cache` and verify the emitted `dcbst; sync; icbi; isync` sequence.
+- **Executable memory.** ~~Use `__builtin___clear_cache`~~ — **RESOLVED, and the advice was wrong**: that
+  builtin emits nothing at all on ppc64le. The flush is now hand-written; see the Linking architecture
+  note above. This was almost certainly the cause of a long tail of "flaky" failures on this port.
 - **POWER8 validation gap.** Runtime-gated POWER8-forced testing is not equivalent to real POWER8 silicon. Unguarded POWER9 instructions pass the forced test and crash on real P8. Acquire POWER8 hardware or qemu-power8 access before claiming POWER8 support.
 - **mimalloc + 64K pages.** Default on for RISCV64 and ARM64. 64K pages are standard on Linux PPC64LE (not 4K). Confirm upstream mimalloc supports PPC64LE page sizes; if not, default `USE_MIMALLOC=OFF` for PPC64LE initially.
 
-## Immediate next actions (updated 2026-07-13)
+## Immediate next actions (updated 2026-08-27)
 
-Phase 0 done; Phase 1 (assembler skeleton) built and linked; Phase 2 (LLInt) is the active front — LLInt executes JS but crashes on the `op_call` return path. See "Phase 2 status" above for the full picture.
+Phases 0–5 are done. `JSTests/stress` is fully green (47,610 PASS / 0 FAIL) with the JIT on by default.
+**Phase 6 (WASM) is the active front, and the decision is to do a full IPInt port** — see the staged
+6A–6E plan in Phase 6 above. Everything BBQ/OMG needs at the MacroAssembler level is already landed;
+what remains is offlineasm assembly.
 
-1. **Fix the `op_call_return_location` crash** — the JS→JS call/return convention in the ppc64le offlineasm backend. Minimal repro: `jsc --useJIT=0 --useWasm=0 -e 'print(1); print(2)'` — prints 1, segfaults before 2, every time. Follow the "Next debugging steps" in the Phase 2 status section. Everything else in Phase 2 is blocked on this. (Post-rebase re-validation: done 2026-07-14; overflow/conversion arithmetic: fixed and verified, see status.)
-2. **Fix the latent lowerings found during the overflow work** (see status list): `truncated2is` FPR-clobber + LE word pick, `bdneq` placeholder, `cnttzw` P9 gate, then the broader i-op width audit.
-3. **Remove the `ppc64le call dbg` asm comment** from ppc64le.rb once the call classification is validated.
-4. **Evaluate mimalloc on 64K pages** (carried over) — try `-DUSE_MIMALLOC=ON` on the box once Phase 2 is green; drop `USE_SYSTEM_MALLOC=ON` if clean.
-5. **Upstream bytecode-cache race** (carried over, out-of-band) — report to WebKit upstream with the reproducer in the Phase 0 section.
+1. **6A — get `InPlaceInterpreter64.asm` assembling for ppc64le.** In progress. The include gate is
+   flipped; `LLIntOffsetsExtractor` has to be rebuilt first because the file adds new constant
+   references (`buildOffsetsMap` throws otherwise, which is not an obvious error message). First real
+   blocker is `InPlaceInterpreter64.asm:80`, the `else error end` in `nextIPIntInstruction()`.
+2. **6B — port the entry path** (`ipint_entry`, argumINT, prologue OSR). First milestone with
+   executable wasm, because immediate tier-up means only this subset runs.
+3. **6C — audit the ~730 silent arch gates** before believing any green result.
+4. **6D/6E — opcode handlers, mINT/uINT, and the 256-byte stride validation.**
+5. **Write the WASM trap handler** — faulting-PC extraction from `ucontext` (`PT_NIP` /
+   `uc_mcontext.gp_regs`) does not exist yet for Linux PPC64.
+6. **Port the Yarr JIT, or leave it off deliberately.** `useRegExpJIT` is currently forced off for
+   PPC64 (`regExpJITEnabledByDefault()`): `YarrJITRegisters.h` assigns it registers but nothing beyond
+   that works, and enabling it segfaults across ~86 regexp test files. This is the largest remaining
+   known gap after WASM.
+7. **Re-run the earlier tier gates against the current tree.** Baseline and DFG were declared green
+   before the icache fix landed, and `WebKitBuild/JSCOnly/Release` is months stale — stale enough that
+   comparing against it once produced a wrong conclusion. Rebuild it before using it as a reference.
+8. **Consider jump islands.** `nearJumpRange` is now unbounded because every patchable slot falls back
+   to materialise-target + `bctr`/`bctrl`, so the executable pool is no longer capped. If
+   `ENABLE_JUMP_ISLANDS` is ever turned on for PPC64, that constant has to become the real branch reach
+   again and the islands machinery needs auditing.
+9. **Evaluate mimalloc on 64K pages** (carried over) — try `-DUSE_MIMALLOC=ON`; drop
+   `USE_SYSTEM_MALLOC=ON` if clean.
+10. **Upstream bytecode-cache race** (carried over, out-of-band) — report to WebKit upstream with the
+    reproducer in the Phase 0 section.
+
+Fixes in this tree that are **not PPC-specific** and are candidates for upstreaming:
+`disableAllWasmJITOptions()` forcing `useLLInt` back on when wasm is disabled entirely (its own comment
+had specified the condition, which was never written); the FP-return `OperationResult` change, which
+matters on any ABI where `{double; Exception*}` is not a homogeneous float aggregate; the
+`emitAtomicOpGeneric()` missing-store-phase `#else #error`, which protects any future 64-bit backend
+from silently compiling wasm atomics into no-ops; and arguably gating `IPInt::initialize()` on
+`Options::useWasmIPInt()`, which avoids paying its validation cost when IPInt is not the engine.
+
+### Build-workflow traps on the power9 box (cost two debugging rounds on 2026-08-26 — read this first)
+
+Both disguise themselves as compile errors. The tell is the same: *the compiler describes a world
+inconsistent with the file you just wrote.*
+
+- **Stale PCH.** GCC does not invalidate `cmake_pch.hxx.gch` (~630 MB) when the headers it was built
+  from change. Symptoms: methods you just added are reported missing, and the "did you mean"
+  suggestions list your *older* additions. Worse, `rsync` writes a temp file and renames, so an edited
+  header gets a **new inode**; the stale PCH recorded `#pragma once` against the old one, the header is
+  included twice, and you get `error: redefinition of class …`. Fix: `rm` the `.gch`.
+- **Silent rsync failure.** ssh to the box times out intermittently, and a `for f in …; do rsync …; done`
+  loop does not propagate failure — it prints "synced" while files never transferred. Surfaces as a
+  bogus signature error. Fix: retry each rsync, then **verify by md5** against the remote.
+- `PrivateHeaders/` entries are symlinks, not copies — verified, *not* a staleness source. Don't chase them.
 
 ## Appendix — commands cheat sheet
 
