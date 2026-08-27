@@ -118,12 +118,12 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_C_LOOP_DEFAULT OFF)
         set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
     elseif (WTF_CPU_PPC64LE)
-        # Phase 2: native LLInt via ppc64le.rb offlineasm backend. C_LOOP is off;
-        # JIT is on (required for offlineasm LLInt). FTL and sampling profiler
-        # both require native JIT frames beyond LLInt, so keep them off until
-        # Baseline JIT lands (Phase 3).
+        # Native LLInt via the ppc64le.rb offlineasm backend, plus Baseline, DFG
+        # and FTL. FTL_DEFAULT also turns on the B3-based wasm BBQ/OMG JITs, which
+        # are the only wasm engines available here: IPInt's handlers exist only for
+        # ARM64/X86_64. The sampling profiler stays off pending a ppc64le unwinder.
         set(ENABLE_JIT_DEFAULT ON)
-        set(ENABLE_FTL_DEFAULT OFF)
+        set(ENABLE_FTL_DEFAULT ON)
         set(USE_SYSTEM_MALLOC_DEFAULT ON)
         set(USE_MIMALLOC_DEFAULT OFF)
         set(ENABLE_C_LOOP_DEFAULT OFF)

@@ -179,6 +179,8 @@ private:
     // so keep this off rather than holding useJIT back. Still overridable with
     // --useRegExpJIT=1 for bring-up work.
     static constexpr bool regExpJITEnabledByDefault() { return jitEnabledByDefault() && is64Bit() && !isPPC64LE(); }
+    // PPC64LE deliberately absent: InPlaceInterpreter64.asm has no ppc64le forms,
+    // so wasm runs on BBQ/OMG here instead.
     static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64(); }
     static double defaultQuickDFGTierUpThresholdFactor()
     {

@@ -830,7 +830,10 @@ void Options::notifyOptionsChanged()
     Options::forceUnlinkedDFG() = false;
     Options::useWasmSIMD() = false;
     Options::useWasmIPInt() = false;
-#if !CPU(ARM_THUMB2)
+    // PPC64LE has no IPInt handlers (InPlaceInterpreter64.asm is ARM64/X86_64 only),
+    // so BBQ is its wasm execution engine; leaving both off aborts VM startup on the
+    // useWasmIPInt/useBBQJIT coherence check.
+#if !CPU(ARM_THUMB2) && !CPU(PPC64LE)
     Options::useBBQJIT() = false;
 #endif
 #endif
@@ -1555,11 +1558,7 @@ bool NODELETE canUseJITCage() { return false; }
 bool NODELETE canUseWasm()
 {
 #if ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
-    // PPC64LE: no wasm execution engine is validated yet (IPInt assembles but
-    // is untested; BBQ/OMG need the JIT). Defaulting useWasm on would make
-    // every VM startup fail the useWasmIPInt/useBBQJIT coherence check.
-    // Overridable with --useWasm=1 once IPInt is brought up.
-    return !isPPC64LE();
+    return true;
 #else
     return false;
 #endif
