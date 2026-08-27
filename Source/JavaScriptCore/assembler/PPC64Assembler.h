@@ -221,6 +221,15 @@ public:
         insn(xForm(31, rs, ra, rb, /*XO*/ 124, /*Rc*/ 0));
     }
 
+    // andc — AND with complement: RA = RS & ~RB. Power ISA v2.07B §3.3.9,
+    // X-form, opcode 31, XO=60.
+    // Verified with as -mpower8:
+    //   andc 3,4,5 → 0x7c832878
+    void andc(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 60, /*Rc*/ 0));
+    }
+
     // mfcr — Move From Condition Register. Power ISA v2.07B §3.3.17,
     // XFX-form, opcode 31, XO=19 (bit 11 = 0 selects the full-CR form).
     // Carrying adds (XER.CA). Encodings verified against powerpc64le as:
@@ -1118,6 +1127,26 @@ public:
     void rldicr(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t me)
     {
         insn(mdForm(30, rs, ra, sh, me, /*XO*/ 1, /*Rc*/ 0));
+    }
+
+    // rldcl RA, RS, RB, MB — MDS-form, opcode 30, XO=8. Rotate left by the
+    // low 6 bits of RB, then clear the high MB bits. `rotld RA,RS,RB` is
+    // rldcl with MB=0. MDS-form differs from MD-form in that the rotate
+    // amount comes from RB, so there is no split SH and XO occupies the
+    // full four bits 27-30; the mb field is encoded the same way.
+    // Verified with as -mpower8:
+    //   rldcl 3,4,5,0  → 0x78832810 (disassembles as rotld r3,r4,r5)
+    //   rldcl 3,4,5,32 → 0x78832830
+    void rldcl(RegisterID ra, RegisterID rs, RegisterID rb, uint32_t mb)
+    {
+        ASSERT(mb < 64);
+        uint32_t mbField = ((mb & 0x1F) << 1) | ((mb >> 5) & 1);
+        insn((30u << 26)
+            | (registerValue(rs) << 21)
+            | (registerValue(ra) << 16)
+            | (registerValue(rb) << 11)
+            | (mbField << 5)
+            | (8u << 1));
     }
 
     void rldic(RegisterID ra, RegisterID rs, uint32_t sh, uint32_t mb)
