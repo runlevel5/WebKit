@@ -2152,7 +2152,7 @@ void AssemblyHelpers::loadTypedArrayLength(GPRReg baseGPR, GPRReg valueGPR, GPRR
 #endif // ENABLE(JSVALUE64)
 
 #if ENABLE(WEBASSEMBLY)
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM) || CPU(PPC64LE)
 AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanceGPR, TrustedImm32 checkSize, GPRReg framePointerGPR)
 {
 #if CPU(ARM64)
@@ -2169,7 +2169,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
     addPtr(checkSize, scratchRegister());
     overflow.append(branchPtr(LessThan, framePointerGPR, scratchRegister()));
     return overflow;
-#elif CPU(RISCV64)
+#elif CPU(RISCV64) || CPU(PPC64LE)
     loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), memoryTempRegister);
     JumpList overflow;
     // Because address is within 48bit, this addition never causes overflow.
