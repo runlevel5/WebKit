@@ -30,7 +30,8 @@ macro saveIPIntRegisters()
     subp IPIntCalleeSaveSpaceStackAligned, sp
     if ARM64 or ARM64E
         storepairq MC, PC, -2 * SlotSize[cfr]
-    elsif X86_64 or RISCV64
+    elsif X86_64 or RISCV64 or PPC64LE
+        # PPC64 has no store-pair, so use the two-storep form.
         storep PC, -1 * SlotSize[cfr]
         storep MC, -2 * SlotSize[cfr]
     end
@@ -42,7 +43,8 @@ macro restoreIPIntRegisters()
     # to be observable within the same Wasm module.
     if ARM64 or ARM64E
         loadpairq -2 * SlotSize[cfr], MC, PC
-    elsif X86_64 or RISCV64
+    elsif X86_64 or RISCV64 or PPC64LE
+        # PPC64 has no load-pair, so use the two-loadp form.
         loadp -1 * SlotSize[cfr], PC
         loadp -2 * SlotSize[cfr], MC
     end
@@ -87,7 +89,7 @@ end
 macro pushQuad(reg)
     if ARM64 or ARM64E
         push reg, reg
-    elsif X86_64
+    elsif X86_64 or PPC64LE
         push reg, reg
     else
         break
@@ -102,7 +104,8 @@ macro popQuad(reg)
     # FIXME: emit post-increment in offlineasm
     if ARM64 or ARM64E
         loadqinc [sp], reg, V128ISize
-    elsif X86_64
+    elsif X86_64 or PPC64LE
+        # PPC64 has no load-with-post-increment for GPRs, so load then bump sp.
         loadq [sp], reg
         addq V128ISize, sp
     else
@@ -208,7 +211,7 @@ macro argumINTDispatch()
     addp 1, MC
     bbgteq argumINTTmp, (constexpr IPInt::ArgumINTBytecode::NumOpcodes), _ipint_argument_dispatch_err
     lshiftp (constexpr (WTF::fastLog2(JSC::IPInt::alignArgumInt))), argumINTTmp
-if ARM64 or ARM64E or X86_64
+if ARM64 or ARM64E or X86_64 or PPC64LE
     pcrtoaddr _argumINT_begin, argumINTDsp
     addp argumINTTmp, argumINTDsp
     jmp argumINTDsp
@@ -1774,7 +1777,7 @@ ipintOp(_i32_div_s, macro()
         # https://bugs.webkit.org/show_bug.cgi?id=203692
         cdqi
         idivi t1
-    elsif ARM64 or ARM64E or RISCV64
+    elsif ARM64 or ARM64E or RISCV64 or PPC64LE
         divis t1, t0
     else
         error
@@ -1793,7 +1796,7 @@ ipintOp(_i32_div_u, macro()
     if X86_64
         xori t2, t2
         udivi t1
-    elsif ARM64 or ARM64E or RISCV64
+    elsif ARM64 or ARM64E or RISCV64 or PPC64LE
         divi t1, t0
     else
         error
@@ -1828,6 +1831,17 @@ ipintOp(_i32_rem_s, macro()
         subi t0, t2, t2
     elsif RISCV64
         remis t0, t1, t2
+    elsif PPC64LE
+        # POWER8 (Power ISA v2.07B) has no integer modulo instruction: modsw/
+        # moduw/modsd/modud are POWER9 (v3.0) only, so synthesize the remainder
+        # as t0 - (t0 / t1) * t1, the same shape ARM64 uses. Only the two-operand
+        # "dst = dst op src" form of divis is used here, since that is the
+        # unambiguous offlineasm convention (the three-operand div forms have
+        # different operand orders on ARM64 and RISCV64).
+        move t0, t2
+        divis t1, t2
+        muli t1, t2
+        subi t0, t2, t2
     else
         error
     end
@@ -1853,6 +1867,12 @@ ipintOp(_i32_rem_u, macro()
         subi t0, t2, t2
     elsif RISCV64
         remi t0, t1, t2
+    elsif PPC64LE
+        # No POWER8 modulo instruction; see i32.rem_s above.
+        move t0, t2
+        divi t1, t2
+        muli t1, t2
+        subi t0, t2, t2
     else
         error
     end
@@ -2031,7 +2051,7 @@ ipintOp(_i64_div_s, macro()
         # https://bugs.webkit.org/show_bug.cgi?id=203692
         cqoq
         idivq t1
-    elsif ARM64 or ARM64E or RISCV64
+    elsif ARM64 or ARM64E or RISCV64 or PPC64LE
         divqs t1, t0
     else
         error
@@ -2050,7 +2070,7 @@ ipintOp(_i64_div_u, macro()
     if X86_64
         xorq t2, t2
         udivq t1
-    elsif ARM64 or ARM64E or RISCV64
+    elsif ARM64 or ARM64E or RISCV64 or PPC64LE
         divq t1, t0
     else
         error
@@ -2085,6 +2105,12 @@ ipintOp(_i64_rem_s, macro()
         subq t0, t2, t2
     elsif RISCV64
         remqs t0, t1, t2
+    elsif PPC64LE
+        # No POWER8 modulo instruction; see i32.rem_s above.
+        move t0, t2
+        divqs t1, t2
+        mulq t1, t2
+        subq t0, t2, t2
     else
         error
     end
@@ -2110,6 +2136,12 @@ ipintOp(_i64_rem_u, macro()
         subq t0, t2, t2
     elsif RISCV64
         remq t0, t1, t2
+    elsif PPC64LE
+        # No POWER8 modulo instruction; see i32.rem_s above.
+        move t0, t2
+        divq t1, t2
+        mulq t1, t2
+        subq t0, t2, t2
     else
         error
     end
