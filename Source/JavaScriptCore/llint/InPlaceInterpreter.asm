@@ -2099,6 +2099,41 @@ _pinballHandlerRejectFunction:
 # 5. Instruction implementation #
 #################################
 
+# Restore frame return stub: only used when JIT cage is disabled.
+# When JIT cage is enabled, the wasmRestoreFrame gate thunk handles this.
+# At entry: return values in wa/wfa registers and at sp (don't change these)
+#
+# Lives here rather than in InPlaceInterpreter64.asm because it is not actually
+# IPInt-specific: emitRestoreInstanceFrameIfNeeded() in WasmIRGeneratorHelpers.h
+# calls it from BBQ and OMG. That file is included only on architectures that
+# have IPInt, so defining it there left PPC64 -- which runs wasm on BBQ/OMG with
+# no IPInt -- with an undefined wasm_restore_frame_return at link time. It stays
+# within the _wasmIPIntPCRangeStart/End markers either way.
+global _wasm_restore_frame_return
+_wasm_restore_frame_return:
+    loadp CodeBlock[cfr], wasmInstance
+    ipintReloadMemory(ws0)
+
+if ARM64E
+    loadp ReturnPC[cfr], lr
+    addp CallerFrameAndPCSize, cfr, ws0
+    untagReturnAddress ws0
+    loadp [cfr], cfr
+    tagReturnAddress sp
+    ret
+elsif ARM64
+    loadpairq [cfr], cfr, lr
+    ret
+elsif X86_64 or PPC64LE
+    # Jump straight to the return address rather than restoring a link
+    # register. PPC64 does have LR, but this thunk is entered *as* a return
+    # address and never returns here, so the caller's own epilogue reloads LR
+    # from its frame and leaving it untouched is safe.
+    loadp ReturnPC[cfr], ws1
+    loadp [cfr], cfr
+    jmp ws1
+end
+
 if JSVALUE64 and (ARM64 or ARM64E or X86_64)
     include InPlaceInterpreter64
 else
