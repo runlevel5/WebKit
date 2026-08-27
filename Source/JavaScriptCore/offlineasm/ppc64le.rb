@@ -1106,10 +1106,27 @@ class Instruction
         # Annotate / no-ops
         # ------------------------------------------------------------------
         when "tagReturnAddress", "untagReturnAddress", "untagReturnAddressWithoutMoving",
-             "loadStoreFence", "memfence", "fence",
              "nop", "breakpoint"
             $asm.puts "nop"
 
+        # Memory barriers. These were previously lumped in with the no-ops
+        # above, which silently compiled every fence in the LLInt to nothing --
+        # including the one in skipIfIsRememberedOrInEden, the GC write-barrier
+        # fast path, where it orders the store to the object against the load of
+        # m_cellState. PPC64 has a weaker memory model than either arch that
+        # this file was cribbed from, so the fences have to be real.
+        #
+        # memfence/fence match ARM64's "dmb sy"/"dmb ish" and x86's locked
+        # read-modify-write: a full barrier, which on PPC is sync (hwsync, L=0)
+        # -- lwsync is not enough because it does not order store-then-load.
+        # loadStoreFence only has to order loads and stores against each other,
+        # which is exactly lwsync.
+        # Verified with as -mpower8: sync 0x7c0004ac, lwsync 0x7c2004ac.
+        when "memfence", "fence"
+            $asm.puts "sync"
+
+        when "loadStoreFence"
+            $asm.puts "lwsync"
 
         when "checkStackPointerAlignment"
             # Alignment check: NOP in optimised builds, crash on misalign.
