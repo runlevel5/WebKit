@@ -533,7 +533,7 @@ x86_64: RotateRight32 U:G:32, UZD:G:32
     Tmp*, Tmp
     Imm, Tmp
 
-arm: RotateRight32 U:G:32, U:G:32, ZD:G:32
+arm ppc64le: RotateRight32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -541,7 +541,7 @@ x86_64: RotateRight64 U:G:64, UD:G:64
     Tmp*, Tmp
     Imm, Tmp
 
-arm64: RotateRight64 U:G:64, U:G:64, D:G:64
+arm64 ppc64le: RotateRight64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
@@ -626,7 +626,7 @@ x86: Not32 UZD:G:32
     Addr
     Index
 
-arm64: Not64 U:G:64, D:G:64
+arm64 ppc64le: Not64 U:G:64, D:G:64
     Tmp, Tmp
 
 x86_64: Not64 UD:G:64
