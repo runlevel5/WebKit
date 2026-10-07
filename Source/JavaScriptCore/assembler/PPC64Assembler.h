@@ -240,6 +240,22 @@ public:
     {
         insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 10, /*Rc*/ 0));
     }
+    // Extended (carry-in) add and carrying subtracts. Verified with as -mpower8:
+    //   adde  3,4,5 -> 0x7c642914 (XO=138): RT = RA + RB + CA
+    //   subfc 3,4,5 -> 0x7c642810 (XO=8):   RT = RB - RA, CA = no borrow
+    //   subfe 3,4,5 -> 0x7c642910 (XO=136): RT = ~RA + RB + CA
+    void adde(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 138, /*Rc*/ 0));
+    }
+    void subfc(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 8, /*Rc*/ 0));
+    }
+    void subfe(RegisterID rt, RegisterID ra, RegisterID rb)
+    {
+        insn(xoForm(31, rt, ra, rb, /*OE*/ 0, /*XO*/ 136, /*Rc*/ 0));
+    }
     void addze(RegisterID rt, RegisterID ra)
     {
         insn(xoForm(31, rt, ra, PPC64Registers::r0, /*OE*/ 0, /*XO*/ 202, /*Rc*/ 0));

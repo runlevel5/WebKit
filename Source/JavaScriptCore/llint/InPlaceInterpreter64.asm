@@ -4083,11 +4083,10 @@ ipintOp(_i64_add128, macro()
         addq t2, t0        # resultLo = lhsLo + rhsLo, sets carry flag
         adcq t3, t1        # resultHi = lhsHi + rhsHi + carry flag
     elsif PPC64LE
-        # Wide arithmetic needs carry-propagating add/sub and a high-half
-        # multiply, which the PPC64LE offlineasm backend does not implement.
-        # The proposal is off by default (useWasmWideArithmetic = false), so
-        # trap explicitly rather than push a wrong result.
-        break
+        # The offlineasm backend has no carry ops, so emit them directly:
+        # t0..t3 are r3..r6. addc sets XER.CA, adde consumes it.
+        emit "addc 3, 3, 5"   # resultLo = lhsLo + rhsLo, CA = carry
+        emit "adde 4, 4, 6"   # resultHi = lhsHi + rhsHi + CA
     else
         error
     end
@@ -4111,7 +4110,9 @@ ipintOp(_i64_sub128, macro()
         subq t2, t0        # resultLo = lhsLo - rhsLo, sets carry flag (borrow)
         sbcq t3, t1        # resultHi = lhsHi - rhsHi - carry flag
     elsif PPC64LE
-        break # No carry/borrow ops in the PPC64LE backend; see i64.add128.
+        # subfc RT,RA,RB = RB - RA with CA = no borrow; subfe consumes it.
+        emit "subfc 3, 5, 3"  # resultLo = lhsLo - rhsLo
+        emit "subfe 4, 6, 4"  # resultHi = lhsHi - rhsHi - borrow
     else
         error
     end
@@ -4134,7 +4135,8 @@ ipintOp(_i64_mul_wide_s, macro()
         # t2 = rdx
         smulhq t1          # imulq %rsi: rdx:rax = rax * rsi -> t0=resultLo, t2=resultHi
     elsif PPC64LE
-        break # No high-multiply op in the PPC64LE backend; see i64.add128.
+        emit "mulhd 5, 3, 4"  # resultHi = smulh(lhs, rhs) (t2 = r5) - must precede mulld
+        emit "mulld 3, 3, 4"  # resultLo = lhs * rhs
     else
         error
     end
@@ -4157,7 +4159,8 @@ ipintOp(_i64_mul_wide_u, macro()
         # t2 = rdx
         umulhq t1          # mulq %rsi: rdx:rax = rax * rsi -> t0=resultLo, t2=resultHi
     elsif PPC64LE
-        break # No high-multiply op in the PPC64LE backend; see i64.add128.
+        emit "mulhdu 5, 3, 4" # resultHi = umulh(lhs, rhs) (t2 = r5) - must precede mulld
+        emit "mulld 3, 3, 4"  # resultLo = lhs * rhs
     else
         error
     end

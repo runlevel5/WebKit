@@ -3496,7 +3496,7 @@ auto OMGIRGenerator::addI64Add128(ExpressionType lhsLoVar, ExpressionType lhsHiV
         GPRReg aHi = params[3].gpr();
         GPRReg bLo = params[4].gpr();
         GPRReg bHi = params[5].gpr();
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         jit.add64AndSetFlags(aLo, bLo, resLo);
         jit.addCarry64(aHi, bHi, resHi);
 #elif CPU(X86_64)
@@ -3504,6 +3504,8 @@ auto OMGIRGenerator::addI64Add128(ExpressionType lhsLoVar, ExpressionType lhsHiV
         jit.add64(bLo, resLo);
         jit.move(aHi, resHi);
         jit.addCarry64(bHi, resHi);
+#else
+#error "Not implemented for this CPU"
 #endif
     });
     patchpoint->effects = Effects::none();
@@ -3534,7 +3536,7 @@ auto OMGIRGenerator::addI64Sub128(ExpressionType lhsLoVar, ExpressionType lhsHiV
         GPRReg aHi = params[3].gpr();
         GPRReg bLo = params[4].gpr();
         GPRReg bHi = params[5].gpr();
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
         jit.sub64AndSetFlags(aLo, bLo, resLo);
         jit.subBorrow64(aHi, bHi, resHi);
 #elif CPU(X86_64)
@@ -3542,6 +3544,8 @@ auto OMGIRGenerator::addI64Sub128(ExpressionType lhsLoVar, ExpressionType lhsHiV
         jit.sub64(bLo, resLo);
         jit.move(aHi, resHi);
         jit.subBorrow64(bHi, resHi);
+#else
+#error "Not implemented for this CPU"
 #endif
     });
     patchpoint->effects = Effects::none();
@@ -3556,7 +3560,7 @@ auto OMGIRGenerator::addI64MulWideU(ExpressionType lhsVar, ExpressionType rhsVar
     Value* lhs = get(lhsVar);
     Value* rhs = get(rhsVar);
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
     resultLo = push(m_currentBlock->appendNew<Value>(m_proc, Mul, origin(), lhs, rhs));
     resultHi = push(m_currentBlock->appendNew<Value>(m_proc, UMulHigh, origin(), lhs, rhs));
 
@@ -3574,6 +3578,8 @@ auto OMGIRGenerator::addI64MulWideU(ExpressionType lhsVar, ExpressionType rhsVar
 
     resultLo = push(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), B3::Int64, patchpoint, 0));
     resultHi = push(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), B3::Int64, patchpoint, 1));
+#else
+#error "I64MulWideU is not implemented for this CPU"
 #endif
 
     return { };
@@ -3584,7 +3590,7 @@ auto OMGIRGenerator::addI64MulWideS(ExpressionType lhsVar, ExpressionType rhsVar
     Value* lhs = get(lhsVar);
     Value* rhs = get(rhsVar);
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
     resultLo = push(m_currentBlock->appendNew<Value>(m_proc, Mul, origin(), lhs, rhs));
     resultHi = push(m_currentBlock->appendNew<Value>(m_proc, MulHigh, origin(), lhs, rhs));
 
@@ -3602,6 +3608,8 @@ auto OMGIRGenerator::addI64MulWideS(ExpressionType lhsVar, ExpressionType rhsVar
 
     resultLo = push(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), B3::Int64, patchpoint, 0));
     resultHi = push(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), B3::Int64, patchpoint, 1));
+#else
+#error "I64MulWideS is not implemented for this CPU"
 #endif
 
     return { };

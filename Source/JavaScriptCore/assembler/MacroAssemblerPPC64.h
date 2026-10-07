@@ -370,6 +370,15 @@ public:
     {
         m_assembler.mulhd(dest, left, right);
     }
+
+    // 128-bit add/sub halves, with ARM64's carry convention (carry set = no
+    // borrow on subtract), which XER.CA follows too. The low half must be
+    // emitted immediately before the high half: nothing in between may touch
+    // XER.CA. Each reads both sources before writing dest.
+    void add64AndSetFlags(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.addc(dest, a, b); }
+    void addCarry64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.adde(dest, a, b); }
+    void sub64AndSetFlags(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.subfc(dest, b, a); }
+    void subBorrow64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.subfe(dest, b, a); }
     // uMulHigh64 is defined with the other 64-bit multiplies below.
 
     void div32(RegisterID dividend, RegisterID divisor, RegisterID dest)
