@@ -819,6 +819,38 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions (updated 2026-08-27)
 
+### Status — 2026-10-07, Phase 6 gate (supersedes the block below)
+
+- **IPInt is on by default** (29c08fe111af). `--useJIT=false`, `--useBBQJIT=false`, `--useWasmIPInt=false`
+  all keep wasm on; `--useJIT=false --useWasmIPInt=false` now aborts on the coherence check, as on
+  ARM64/x86_64. The 4 `lockdown` stress failures are gone.
+- **`JSTests/stress`: 80,818 pairs, 4 FAIL, 0 new** against `/home/tle/stress-baseline-fails.txt` (still the
+  8-entry list): the 3 `waitasync-*-multi-workers` in `ftl-no-cjit-small-pool` and
+  `js-to-wasm-callee-has-correct-prototype`.
+- **`JSTests/wasm.yaml` runs end to end: 13,460 pairs, 374 FAIL**, all of them in two deliberate
+  configuration gaps: 347 need wasm tail calls (forced off on PPC64: the tail-call*/return_call* tests,
+  the tail-call spec suites, `try_table.wast`, `compile-unreachable-catch.js`) and 27 need SIMD (off on
+  PPC64: `simd-multimemory.js`, `gc/struct-new-default-v128.js`, `ipint-multimem-oob.js`). Those tests do not
+  skip themselves on non-SIMD/non-tail-call platforms; whether to skip them is a harness decision.
+  First run (IPInt default already on): 1,086 FAIL, of which 39 were an artefact (the harness's
+  `wasmFrameCountFromError` counts stack lines containing "wasm-", which matched an output directory named
+  `wasm-v1`; the runner now writes to `/home/tle/wsuite`).
+- **Root causes fixed in the wasm triage** (one commit each): Air had no PPC64 RotateRight/two-operand
+  Not64, so B3 lowering fell through to x86's `%ecx` shape and fed `<none>` to the greedy allocator; five
+  more ELFv2 linkage-area clobbers (Air frames with no call-arg area, wasm throw's payload at sp, the
+  register-preserving wasm thunks, the IC write barrier, the builtin trampoline, the wasm-to-JS throw
+  stub; handleException padded defensively); IPInt i32.wrap_i64 left the high word (ELFv2 callers must
+  extend) and loaded the int32 heap type zero-extended; IPInt never published its call frame for
+  operationWasmUnwind (PPC64 has no builtin frame address); f32 FPR-vs-buffer format mixups in OSR and
+  multi-value results; FP spill width vs patchpoint/argument encodings in both Air allocators; f1 reserved
+  as a phantom FP scratch (BBQ lost values held in it across calls); BBQ C-call arguments not extended per
+  C type; strong CAS wrote on a retried mismatch; branchAdd Carry missing (memory64 BBQ aborted); local-label
+  `call` in offlineasm shifted sp (all of JSPI); wide arithmetic silently compiled to nothing; f32→f64
+  promote did not quiet sNaN; BBQ allocated the C-callee-saved f22–f31.
+- **Known, not fixed:** B3's CCallSpecial sign-extends every Int32 argument, which is wrong for a `uint32_t`
+  C parameter ≥ 2^31 under ELFv2; ARM64's atomicStrongCAS has the same retry-after-mismatch shape that was
+  fixed for PPC64; the O0 Air allocator spills every FP tmp as 64-bit (not audited against patchpoints).
+
 ### Status — 2026-10-07 (supersedes the stress figures below)
 
 - **`JSTests/stress`: 80,818 pairs, 8 FAIL, 0 new.** 874 of the 882 failures found after the box rebuild are
