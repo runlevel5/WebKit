@@ -3561,7 +3561,14 @@ public:
 
     void lshift64(TrustedImm32 imm, RegisterID dest) { m_assembler.sldi(dest, dest, imm.m_value & 63); }
     void lshift64(RegisterID src, TrustedImm32 imm, RegisterID dest) { m_assembler.sldi(dest, src, imm.m_value & 63); }
-    void lshift64(TrustedImm32 imm, RegisterID src, RegisterID dest) { m_assembler.sldi(dest, src, imm.m_value & 63); }
+    // dest = imm << (shiftAmount & 63): the immediate is the value, the register
+    // the count, as on ARM64/x86_64/RISCV64 (Yarr's character-class bit test).
+    void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, dataTempRegister);
+        m_assembler.rldicl(memoryTempRegister, shiftAmount, 0, 58);   // count & 63
+        m_assembler.sld(dest, dataTempRegister, memoryTempRegister);
+    }
     void lshift64(RegisterID shiftAmount, RegisterID dest) { lshift64(dest, shiftAmount, dest); }
     void lshift64(RegisterID src, RegisterID shiftAmount, RegisterID dest)
     {
