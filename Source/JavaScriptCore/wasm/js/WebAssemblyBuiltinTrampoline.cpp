@@ -55,6 +55,12 @@ Expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> generateWasmBui
 
     JIT jit;
     jit.emitFunctionPrologue();
+    // sp == cfr after the prologue, and the frame's CodeBlock and Callee slots
+    // (cfr+16, cfr+24) are filled below. On PPC64 a C callee saves LR at sp+16
+    // and the call sequence saves the TOC at sp+24, so reserve the slow-path
+    // call extent first (0 on ARM64 and x86_64). The epilogue restores sp from
+    // cfr, and the exception path never returns.
+    jit.makeSpaceOnStackForCCall();
 
     // IPInt stores the callee and wasmInstance into the frame but JIT tiers don't, so we must do that here.
     jit.move(GPRInfo::wasmContextInstancePointer, scratch);
