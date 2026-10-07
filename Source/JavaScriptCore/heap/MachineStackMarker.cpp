@@ -69,6 +69,12 @@ static inline int NODELETE osRedZoneAdjustment()
     // There is no red zone.
     // https://stackoverflow.com/questions/77908878/aarch64-is-there-a-red-zone-on-linux-if-so-16-or-128-bytes
 #endif
+#elif CPU(PPC64LE)
+    // 64-bit ELF V2 ABI for Power, Section 2.2.2.4 "Protected Zone": the 288 bytes below the
+    // stack pointer are volatile storage that code may use without allocating a frame
+    // (leaf functions and the out-of-line GPR/FPR save routines use it). The further 224
+    // bytes of the 512-byte protected zone are reserved for the system, not for program data.
+    redZoneAdjustment = -288;
 #endif
     return redZoneAdjustment;
 }
