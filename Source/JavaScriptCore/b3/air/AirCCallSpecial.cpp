@@ -140,7 +140,10 @@ CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
     // VirtualRegister offset constant, as in operationLoadVarargs'
     // firstElementDest) would otherwise arrive as a huge positive value.
     // Sign-extend every Int32 GP argument in place before the call (JSC
-    // operation int32 parameters are signed).
+    // operation int32 parameters are mostly signed). The C type is not known
+    // here; creators that know it (OMG's callWasmOperation, FTL's vmCall) pass
+    // an argument for a uint32_t parameter as a zero-extended Int64 instead,
+    // see B3::cCallArgumentIsUnsigned32.
     if (B3::CCallValue* cCall = inst.origin->as<B3::CCallValue>()) {
         unsigned argIndex = argArgOffset;
         for (unsigned i = 1; i < cCall->numChildren(); ++i) {
