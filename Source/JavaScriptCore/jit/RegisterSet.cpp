@@ -140,9 +140,9 @@ RegisterSet RegisterSet::macroClobberedGPRs()
 RegisterSet RegisterSet::macroClobberedFPRs()
 {
     RegisterSet result;
-#if CPU(X86_64) || CPU(ARM64) || CPU(ARM_THUMB2)
+#if CPU(X86_64) || CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
     result.add(MacroAssembler::fpTempRegister, IgnoreVectors);
-#elif CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(RISCV64)
     result.add(MacroAssembler::fpTempRegister, IgnoreVectors);
     result.add(MacroAssembler::fpTempRegister2, IgnoreVectors);
 #endif

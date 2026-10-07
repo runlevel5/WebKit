@@ -102,11 +102,12 @@ public:
     // Scratch pool per ELFv2: r11 is the environment / PLT-call scratch,
     // r12 is the function-entry / static-chain scratch. Both are volatile
     // and not used by our JIT-emitted ABI. See PLAN.md §"Quick reference:
-    // register convention to adopt". f0 and f1 are used for FP scratch.
+    // register convention to adopt". f0 is the FP scratch. (There is no
+    // second FP scratch: the only other volatile FPRs, f1-f13, are all ELFv2
+    // argument registers, and f1 is also the FP return register.)
     static constexpr RegisterID dataTempRegister = PPC64Registers::r11;
     static constexpr RegisterID memoryTempRegister = PPC64Registers::r12;
     static constexpr FPRegisterID fpTempRegister = PPC64Registers::f0;
-    static constexpr FPRegisterID fpTempRegister2 = PPC64Registers::f1;
 
     static constexpr RegisterID InvalidGPRReg = PPC64Registers::InvalidGPRReg;
 

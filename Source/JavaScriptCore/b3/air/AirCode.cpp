@@ -146,10 +146,8 @@ Code::Code(Procedure& proc)
                 static_assert(GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::nonArgGPR1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::regWS1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::wasmScratchGPR1);
                 all.remove(GPRInfo::nonPreservedNonArgumentGPR0);
                 all.remove(GPRInfo::nonPreservedNonArgumentGPR1);
-            } else {
+            } else
                 all.remove(MacroAssembler::fpTempRegister);
-                all.remove(MacroAssembler::fpTempRegister2);
-            }
 #endif
             auto calleeSave = RegisterSet::calleeSaveRegisters();
             all.forEach(
