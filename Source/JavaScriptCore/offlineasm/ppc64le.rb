@@ -2353,7 +2353,17 @@ class Instruction
                     $asm.puts "mtctr 12"
                     $asm.puts "bctrl"
                 end
-            elsif op.is_a?(LabelReference) || op.is_a?(LocalLabelReference)
+            elsif op.is_a?(LocalLabelReference)
+                # A local label is an asm subroutine in the same function body
+                # (e.g. JSPI's .jspi_execute_evacuated_slice), written for ARM64
+                # `bl` semantics: sp unchanged at entry, the callee's
+                # functionPrologue pushes below it. It is never a C function, so
+                # it does not write the ELFv2 linkage area, and code like the
+                # JSPI sentinel frame relies on sp being exactly what the caller
+                # left ("the sentinel must be right below the
+                # PinballHandlerContext"). A bare bl.
+                $asm.puts "bl #{op.asmLabel}"
+            elsif op.is_a?(LabelReference)
                 # Direct call to a C function (slow path / runtime helper).
                 # ELFv2 sec 2.2.4: the callee writes its saved lr at 16(r1) of
                 # the CALLER's sp.  We must reserve at least 32 bytes of
