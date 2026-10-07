@@ -3517,7 +3517,7 @@ ipintOp(_array_init_elem, macro()
 end)
 
 ipintOp(_ref_test, macro()
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     move 0, a2  # allowNull
     popQuad(a3)
     operationCall(macro() cCall3(_ipint_extern_ref_test) end)
@@ -3531,7 +3531,7 @@ ipintOp(_ref_test, macro()
 end)
 
 ipintOp(_ref_test_nullable, macro()
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     move 1, a2  # allowNull
     popQuad(a3)
     operationCall(macro() cCall3(_ipint_extern_ref_test) end)
@@ -3545,7 +3545,7 @@ ipintOp(_ref_test_nullable, macro()
 end)
 
 ipintOp(_ref_cast, macro()
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     move 0, a2  # allowNull
     popQuad(a3)
     operationCallMayThrow(macro() cCall3(_ipint_extern_ref_cast) end)
@@ -3559,7 +3559,7 @@ ipintOp(_ref_cast, macro()
 end)
 
 ipintOp(_ref_cast_nullable, macro()
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     move 1, a2  # allowNull
     popQuad(a3)
     operationCallMayThrow(macro() cCall3(_ipint_extern_ref_cast) end)
@@ -3574,7 +3574,7 @@ end)
 
 ipintOp(_br_on_cast, macro()
     validateOpcodeConfig(a1)
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     # fb 18 FLAGS
     loadb 2[PC], a2
     rshifti 1, a2  # bit 1 = null2
@@ -3592,7 +3592,7 @@ end)
 
 ipintOp(_br_on_cast_fail, macro()
     validateOpcodeConfig(a1)
-    loadi IPInt::RefTestCastMetadata::toHeapType[MC], a1
+    loadis IPInt::RefTestCastMetadata::toHeapType[MC], a1  # int32_t parameter: sign-extend (ELFv2 requires it)
     loadb 2[PC], a2
     # fb 19 FLAGS
     rshifti 1, a2  # bit 1 = null2
