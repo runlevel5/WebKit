@@ -62,7 +62,7 @@ PPC64's scratch register story is more constrained than ARM64's. A careless borr
 ### SIMD / VSX / VMX traps (Power ISA v2.07 baseline)
 
 - **`stxvx` vs `stfd` LE byte order.** On PPC64 LE, `stxvx` places a scalar double at bytes 8-15; `stfd` at bytes 0-7. For scalar FP save/restore (including probe frames and bailout stacks), **always use `stfd`/`lfd`, never `stxvx`/`lxvx`**. Cross-kind reads of the same slot (e.g. the B3 spill slot interpretation) depend on this.
-- **VMX vs VSX register-space confusion.** VMX instructions address VR0-31 (= VSR32-63); FPRs are VSR0-31. A Simd128 encoded in VSR0-31 will need a VR-staging round-trip for every VMX op. Decide the encoding early: SM moved Simd128 into the VR namespace (VSR32-63) in Phase 2 and saved ~80 dynamic instructions across extmul/dot/widen. **Do the same in JSC from the start.**
+- **VMX vs VSX register-space confusion.** VMX instructions address VR0-31 (= VSR32-63); FPRs are VSR0-31. A Simd128 encoded in VSR0-31 will need a VR-staging round-trip for every VMX op. Decide the encoding early: SM moved Simd128 into the VR namespace (VSR32-63) in Phase 2 and saved ~80 dynamic instructions across extmul/dot/widen. **Do the same in JSC from the start.** *(JSC decided otherwise, 2026-10-08: JSC's allocators and calling convention treat vectors as FPRs, so v128 lives in VSR 0-31 and VMX ops stage through v0-v5. See "Status — 2026-10-08, wasm SIMD".)*
 - **`ScratchSimd128Reg` must be distinct from `ScratchDoubleReg`.** SM's post-Phase-2 convention: `ScratchDoubleReg = f0`, `ScratchSimd128Reg = v0`. They are different physical registers. Do not alias them; scalar FP X/A-form ops (`fcfid`, `fctiwz`, `lfdx`, `fcmpu`) encode only a 5-bit FRT/FRB and will corrupt the opcode if given a Simd128-encoded register. Bridge scalar↔SIMD via `ScratchDoubleScope` + `xxlor` (XX3-form).
 - **`xxsel XT,XA,XB,XC` is `(XA & ~XC) | (XB & XC)` — opposite of the intuitive reading.** Wrap this in a named helper the first time you use it. Wasteful to rediscover.
 - **`xxpermdi DM`: DM bit 0 selects XA dword for result DW0; DM bit 1 selects XB dword for result DW1.** DM=2 swaps both halves. Document the table; do not reason from the spec under time pressure.
@@ -753,12 +753,11 @@ variants.*
    builds its register vectors from `GPRInfo::numberOfArgumentRegisters` / `toArgumentRegister()` and
    the FPR equivalents, and already excludes `macroClobberedGPRs()` from its scratch set. (Independently
    confirmed by `InPlaceInterpreter.asm`, which sets `NumberOfWasmArgumentGPRs = 8` for PPC64LE.)
-2. **WASM SIMD stays off.** `notifyOptionsChanged()` forces `useWasmSIMD()` false for every
-   non-x86_64/arm64 target and `$isSIMDPlatform` excludes ppc64le, so the ~124 vector methods are
-   `PPC64_UNSUPPORTED()` stubs. Turning SIMD on means writing real VSX sequences *and* removing both
-   gates. Note the two distinct traps now in `MacroAssemblerPPC64.h`: `PPC64_UNIMPLEMENTED` = a hole in
-   the port that should be filled (only the Float16 family remains); `PPC64_UNSUPPORTED` = deliberately
-   off here, so hitting one means **a gate leaked**, and the gate is the bug.
+2. **WASM SIMD is on (BBQ + OMG); IPInt SIMD is not.** See "Status — wasm SIMD" below. The
+   `PPC64_UNSUPPORTED()` vector stubs are gone except seven ARM64/x86-shaped forms nothing routes
+   PPC64 to (`vectorHorizontalAdd`, `vectorUnsigned{Min,Max}`, `vectorSshl`, the 5-operand x86
+   shifts). `PPC64_UNIMPLEMENTED` = a hole that should be filled (only the Float16 family remains);
+   `PPC64_UNSUPPORTED` = deliberately off here, so hitting one means **a gate leaked**.
 3. **WASM traps**: implement the signal-based trap handler. Nothing in WTF references `PT_NIP` or
    `gp_regs`, and the only `CPU(PPC64)` branch in `PlatformRegisters.h` is the legacy Darwin/Mach path
    (`ppc_thread_state64_t`), not Linux — on Linux we take `HAVE(MACHINE_CONTEXT)`. Faulting-PC
@@ -818,6 +817,51 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 - **mimalloc + 64K pages.** Default on for RISCV64 and ARM64. 64K pages are standard on Linux PPC64LE (not 4K). Confirm upstream mimalloc supports PPC64LE page sizes; if not, default `USE_MIMALLOC=OFF` for PPC64LE initially.
 
 ## Immediate next actions (updated 2026-08-27)
+
+### Status — 2026-10-08, wasm SIMD (supersedes the SIMD lines below)
+
+- **Wasm SIMD runs in BBQ and OMG** (459fb0348c25 .. 84c166362460, plus the Air spill fix and the
+  run-jsc-stress-tests change recorded below). `useWasmSIMD` is on; `useWasmIPIntSIMD` is forced off,
+  so IPIntPlan sends every SIMD function to BBQ with a tier-up threshold of 0. `--useJIT=false` drops
+  `useWasmSIMD`; `--useBBQJIT=false --useOMGJIT=false` keeps it and a SIMD module fails to compile
+  ("JIT is disabled, but the entrypoint ... requires JIT"), as on any target without IPInt SIMD.
+- **Register model:** a v128 is the full VSR aliasing FPRegisterID fN (VSR 0-31); doubleword 0 is the
+  scalar FPR. VMX-only operations copy into v0..v5 (VSR 32-37) inside one MacroAssembler call; nothing
+  is ever live there between calls, so nothing allocates or saves VSR 32-63. Callee-saves stay Width64
+  (f14-f31 doubleword 0), the ARM64 d8-d15 model. (This deliberately differs from SpiderMonkey's choice
+  of the VR namespace: JSC's allocators, spills and calling convention treat vectors as FPRs.)
+- **Lane order:** the lxvd2x/stxvd2x layout — doubleword 0 = bytes 0-7 as a little-endian u64. Loads
+  and stores need no permute and f64x2/i64x2 lane 0 is the scalar (B3 relies on that for f64 lane 0).
+  Wasm lane i of an S-byte element is ISA element `i ^ (8/S - 1)` (bytes `i^7`, halfwords `i^3`, words
+  `i^1`). VMX unpack/pack see the doublewords swapped, so extend/narrow add an xxswapd. f32x4 lane 0 is
+  *not* the scalar (single vs double format): B3LowerToAir no longer copy-propagates that extract on
+  PPC64. IPInt's `storev`/`loadv` already use the same layout.
+- **Verification:** 203 encodings compared word-for-word with `as -mpower8`; a standalone harness JITs
+  each MacroAssembler vector op and compares against a scalar wasm reference (119,230 checks, distinct
+  values in every lane, every lane index, NaN/sNaN/-0/inf/denormal/saturation edges, dest-aliasing).
+  Harness sources: `power9:/home/tle/simd/` (`build.sh`, `t1.cpp`, `enc.cpp`+`enccheck.sh`,
+  `runsimd.sh` for the spec tests, `extract.js` to pull modules out of a .wast.js). All 57
+  simd-spec-tests pass with default tiering, BBQ-only, eager OMG, `--forceAllFunctionsToUseSIMD`.
+- **Bugs found on the way:** IPInt preserved wasm FPR arguments with stfd/lfd (a v128 argument lost its
+  upper half on the first call into a function that tiers up from ipint_entry); the probe saved only
+  doubleword 0 of each VSR (OSR entry with live v128s); with many results, OMG's dead call results could
+  not be spilled in place because 546ea37c38d2's width rule also blocked slots nothing reads — fixed by
+  applying that rule only to slots some instruction reads (big-tuple*.js, simd-big-tuple.js).
+- **`$isSIMDPlatform` includes ppc64le** (ELF machine "powerpc64"). JSTests/wasm.yaml then has
+  17,218 pairs; every remaining failure is a `wasm-no-jit` or `wasm-no-wasm-jit` variant of a test
+  that needs SIMD, i.e. needs IPInt SIMD. The wasm-simd (`--forceAllFunctionsToUseSIMD`) variants and
+  the SIMD spec-test modes are all green.
+- **Open:** IPInt SIMD (6F below). Nothing has run on POWER8 silicon; the sequences avoid the words
+  POWER8 leaves undefined (xvcvdpsp, xvcvdpsxws/uxws, xscvdpspn) but that is checked by reading only.
+
+### 6F. IPInt SIMD (not started; a large lift)
+
+256 SIMD handlers in InPlaceInterpreter64.asm are `ipintSIMDOp` traps on PPC64LE; 213 of them have
+per-architecture `emit` bodies (ARM64/x86_64 only), so each needs a hand-written PPC64 body within its
+512-byte `alignIPInt` slot. The MacroAssemblerPPC64 sequences are the reference (same lane layout:
+IPInt's pushv/popv are stxvd2x/lxvd2x). offlineasm v0-v7 map to VSR 32,33,46-51 (VMX-addressable).
+Then drop the `useWasmIPIntSIMD() = false` override in Options.cpp. This is what the ~240 remaining
+wasm-no-jit / wasm-no-wasm-jit SIMD failures need.
 
 ### Status — 2026-10-07, Phase 6 gate (supersedes the block below)
 
