@@ -4027,17 +4027,28 @@ public:
     // --- Air LoadLink/StoreCond (B3 atomics LL/SC loops) ----------------
     // The Air forms use SimpleAddr (a bare register address, offset 0).
     // storeCond* results follow the ARM64 stxr convention the lowering
-    // expects: 0 = success, nonzero = reservation lost. Acq/Rel variants add
-    // lwsync (load-acquire after the load-reserve; store-release before the
-    // store-conditional).
+    // expects: 0 = success, nonzero = reservation lost.
+    //
+    // The Acq/Rel variants stand in for ARM64's ldaxr/stlxr, which are RCsc:
+    // besides acquire and release, a store-release is ordered before any later
+    // load-acquire. lwsync alone does not give that -- it orders every pair
+    // except store -> load -- so an atomic store followed by an atomic load of
+    // another location (each one an LL/SC loop here) could be reordered, which
+    // breaks the seq-cst atomics wasm and JS require (store-buffering litmus).
+    // So use the leading-sync C11 seq_cst mapping for Power, the one
+    // branchAtomicWeakCAS uses: a full sync before the load-reserve orders it,
+    // and the whole loop, after everything earlier, including a preceding
+    // stcx. The lwsync after the load-reserve keeps acquire ordering for what
+    // follows, and the lwsync before the store-conditional keeps storeCondRel a
+    // release on its own, independent of how the reserve was taken.
     void loadLink8(Address address, RegisterID dest)  { m_assembler.lbarx(dest, PPC64Registers::r0, address.base); }
     void loadLink16(Address address, RegisterID dest) { m_assembler.lharx(dest, PPC64Registers::r0, address.base); }
     void loadLink32(Address address, RegisterID dest) { m_assembler.lwarx(dest, PPC64Registers::r0, address.base); }
     void loadLink64(Address address, RegisterID dest) { m_assembler.ldarx(dest, PPC64Registers::r0, address.base); }
-    void loadLinkAcq8(Address address, RegisterID dest)  { loadLink8(address, dest); m_assembler.lwsync(); }
-    void loadLinkAcq16(Address address, RegisterID dest) { loadLink16(address, dest); m_assembler.lwsync(); }
-    void loadLinkAcq32(Address address, RegisterID dest) { loadLink32(address, dest); m_assembler.lwsync(); }
-    void loadLinkAcq64(Address address, RegisterID dest) { loadLink64(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq8(Address address, RegisterID dest)  { m_assembler.sync(); loadLink8(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq16(Address address, RegisterID dest) { m_assembler.sync(); loadLink16(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq32(Address address, RegisterID dest) { m_assembler.sync(); loadLink32(address, dest); m_assembler.lwsync(); }
+    void loadLinkAcq64(Address address, RegisterID dest) { m_assembler.sync(); loadLink64(address, dest); m_assembler.lwsync(); }
     void emitStoreCondResult(RegisterID result)
     {
         // CR0.EQ set by st*cx. on success; produce 0 on success, 1 on failure.
