@@ -1109,8 +1109,9 @@ end
     loadp JSWebAssemblyInstance::m_vm[wasmInstance], a0
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(a0, a1)
 
-# Should be (not USE_BUILTIN_FRAME_ADDRESS) but need to keep down the size of LLIntAssembly.h
-if ASSERT_ENABLED or ARMv7
+# Should be (not USE_BUILTIN_FRAME_ADDRESS) but need to keep down the size of LLIntAssembly.h.
+# Every target without USE(BUILTIN_FRAME_ADDRESS) (ARMv7, PPC64LE) must be listed.
+if ASSERT_ENABLED or ARMv7 or PPC64LE
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
@@ -1192,7 +1193,7 @@ op(wasm_to_js_wrapper_entry, macro()
         end
     end)
 
-if ASSERT_ENABLED or ARMv7
+if ASSERT_ENABLED or ARMv7 or PPC64LE
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
@@ -1290,7 +1291,7 @@ end
     loadp JSWebAssemblyInstance::m_vm[wasmInstance], a0
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(a0, a1)
 
-if ASSERT_ENABLED or ARMv7
+if ASSERT_ENABLED or ARMv7 or PPC64LE
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
