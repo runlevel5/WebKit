@@ -2501,6 +2501,123 @@ public:
     void xvcvspdp(uint32_t vsrT, uint32_t vsrB)   { insn(xx2Form(60, vsrT, vsrB, 457)); }
 
     // ===================================================================
+    // Wasm SIMD additions. Every instruction below is in the POWER8
+    // baseline (Power ISA v2.07B: VMX, VSX from v2.06, plus the v2.07
+    // additions marked "2.07"); none is a POWER9 (v3.0) instruction.
+    // Encodings were checked word-for-word against `as -mpower8` on the
+    // test box with operands in both VSR halves (0-31 and 32-63).
+    // ===================================================================
+
+    // VSX logical, v2.07: OR-complement, NAND, equivalence.
+    void xxlorc(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 170)); }
+    void xxlnand(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 178)); }
+    void xxleqv(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 186)); }
+
+    // VSX permutes (v2.06). XX3 with a 2-bit field inside the 8-bit XO.
+    //   xxpermdi T,A,B,DM: T.dw0 = DM&2 ? A.dw1 : A.dw0; T.dw1 = DM&1 ? B.dw1 : B.dw0
+    //   xxsldwi  T,A,B,SHW: words SHW..SHW+3 of A||B
+    void xxpermdi(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB, uint32_t dm)
+    {
+        ASSERT(dm < 4);
+        insn(xx3Form(60, vsrT, vsrA, vsrB, (dm << 5) | 10));
+    }
+    void xxswapd(uint32_t vsrT, uint32_t vsrA) { xxpermdi(vsrT, vsrA, vsrA, 2); }
+    void xxsldwi(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB, uint32_t shw)
+    {
+        ASSERT(shw < 4);
+        insn(xx3Form(60, vsrT, vsrA, vsrB, (shw << 5) | 2));
+    }
+    void xxmrghw(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 18)); }
+    void xxmrglw(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 50)); }
+    // xxspltw T,B,UIM (XX2, XO=164): UIM sits in bits 14-15.
+    void xxspltw(uint32_t vsrT, uint32_t vsrB, uint32_t uim)
+    {
+        ASSERT(uim < 4);
+        insn(xx2Form(60, vsrT, vsrB, 164) | (uim << 16));
+    }
+    // xxsel T,A,B,C (XX4, v2.06): T = (A & ~C) | (B & C).
+    void xxsel(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB, uint32_t vsrC)
+    {
+        ASSERT(vsrT < 64 && vsrA < 64 && vsrB < 64 && vsrC < 64);
+        insn((60u << 26)
+            | ((vsrT & 0x1F) << 21) | ((vsrA & 0x1F) << 16) | ((vsrB & 0x1F) << 11) | ((vsrC & 0x1F) << 6)
+            | (3u << 4)
+            | (((vsrC >> 5) & 1) << 3) | (((vsrA >> 5) & 1) << 2) | (((vsrB >> 5) & 1) << 1) | ((vsrT >> 5) & 1));
+    }
+
+    // VSX single-precision vector arithmetic / compare (v2.06).
+    void xvaddsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 64)); }
+    void xvsubsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 72)); }
+    void xvmaxsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 192)); }
+    void xvminsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 200)); }
+    void xvcmpeqsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 67)); }
+    void xvcmpgtsp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 75)); }
+    void xvcmpgesp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 83)); }
+    // Fused multiply-add, "A" forms: T = A*B + T; nmsub: T = -(A*B - T).
+    void xvmaddasp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 65)); }
+    void xvmaddadp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 97)); }
+    void xvnmsubasp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 209)); }
+    void xvnmsubadp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 241)); }
+    // Round to integral: p = toward +inf, m = toward -inf, z = toward zero,
+    // c = current mode (round-to-nearest-even, JSC never changes FPSCR[RN]).
+    void xvrspip(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 169)); }
+    void xvrspim(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 185)); }
+    void xvrspiz(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 153)); }
+    void xvrspic(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 171)); }
+    // Conversions between f32 and i32 lanes (saturating; NaN -> 0x80000000 / 0).
+    void xvcvspsxws(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 152)); }
+    void xvcvspuxws(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 136)); }
+    void xvcvsxwsp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 184)); }
+    void xvcvuxwsp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 168)); }
+    // Scalar single <-> double, non-signalling (v2.07): xscvdpspn leaves the
+    // single in word 0 of T; xscvspdpn reads the single from word 0 of B.
+    void xscvdpspn(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 267)); }
+    void xscvspdpn(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 331)); }
+
+    // VSX scalar / splat indexed loads and stores (XX1, opcode 31).
+    //   lxsdx (v2.06)   T.dw0 = doubleword at EA
+    //   stxsdx (v2.06)  doubleword at EA = S.dw0
+    //   lxsiwzx (2.07)  T.dw0 = zero-extended word at EA
+    //   stxsiwx (2.07)  word at EA = S.word1
+    //   lxvdsx (v2.06)  T.dw0 = T.dw1 = doubleword at EA
+    void lxsdx(uint32_t vsrT, RegisterID ra, RegisterID rb) { insn(xx1Form(31, vsrT, ra, rb, 588)); }
+    void stxsdx(uint32_t vsrS, RegisterID ra, RegisterID rb) { insn(xx1Form(31, vsrS, ra, rb, 716)); }
+    void lxsiwzx(uint32_t vsrT, RegisterID ra, RegisterID rb) { insn(xx1Form(31, vsrT, ra, rb, 12)); }
+    void stxsiwx(uint32_t vsrS, RegisterID ra, RegisterID rb) { insn(xx1Form(31, vsrS, ra, rb, 140)); }
+    void lxvdsx(uint32_t vsrT, RegisterID ra, RegisterID rb) { insn(xx1Form(31, vsrT, ra, rb, 332)); }
+
+    // GPR <-> VSR direct moves addressing all 64 VSRs (v2.07).
+    void mtvsrd(uint32_t vsrT, RegisterID ra) { insn(xx1Form(31, vsrT, ra, PPC64Registers::r0, 179)); }
+    void mtvsrwz(uint32_t vsrT, RegisterID ra) { insn(xx1Form(31, vsrT, ra, PPC64Registers::r0, 243)); }
+    void mfvsrd(RegisterID ra, uint32_t vsrS) { insn(xx1Form(31, vsrS, ra, PPC64Registers::r0, 51)); }
+    void mfvsrwz(RegisterID ra, uint32_t vsrS) { insn(xx1Form(31, vsrS, ra, PPC64Registers::r0, 115)); }
+
+    // VMX additions (all original AltiVec unless marked 2.07).
+    // vsldoi T,A,B,SH: bytes SH..SH+15 of A||B.
+    void vsldoi(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, uint32_t shb)
+    {
+        ASSERT(shb < 16);
+        insn(vaForm(4, vrt, vra, vrb, static_cast<VRegisterID>(shb), /*XO*/ 44));
+    }
+    void vmladduhm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc) { insn(vaForm(4, vrt, vra, vrb, vrc, 34)); }
+    void vmsumuhm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc) { insn(vaForm(4, vrt, vra, vrb, vrc, 38)); }
+    void vmsummbm(VRegisterID vrt, VRegisterID vra, VRegisterID vrb, VRegisterID vrc) { insn(vaForm(4, vrt, vra, vrb, vrc, 37)); }
+    void vmulesb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 776)); }
+    void vmulosb(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 264)); }
+    void vmuleub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 520)); }
+    void vmuloub(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 8)); }
+    void vmuleuh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 584)); }
+    void vmulouh(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 72)); }
+    void vmuleuw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 648)); } // 2.07
+    void vmulouw(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 136)); } // 2.07
+    void vpkuhum(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 14)); }
+    void vpkuwum(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 78)); }
+    void vpkudum(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1102)); } // 2.07
+    // vbpermq (2.07): T.dw0 bits 48:63 = the 16 bits of A selected by the
+    // byte indices in B (index >= 128 selects 0); T.dw1 = 0.
+    void vbpermq(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1356)); }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,
