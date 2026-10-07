@@ -2693,6 +2693,16 @@ end)
 
 ipintOp(_i32_wrap_i64, macro()
     # because of how we store values on stack, do nothing
+    if PPC64LE
+        # ...except on PPC64, where every other i32 producer leaves the upper
+        # word zero and C callees rely on it: ELFv2 makes the caller extend a
+        # 32-bit argument to 64 bits, and the IPInt slow paths take i32 operands
+        # straight from the value stack (array.new's length, for one). Leaving
+        # the i64's high word in place handed them a huge length.
+        loadq [sp], t0
+        zxi2q t0, t0
+        storeq t0, [sp]
+    end
     advancePC(1)
     nextIPIntInstruction()
 end)
