@@ -832,9 +832,7 @@ void Options::notifyOptionsChanged()
 #if !CPU(PPC64LE)
     Options::useWasmIPInt() = false;
 #endif
-    // PPC64LE has IPInt (InPlaceInterpreter64.asm), opt-in via --useWasmIPInt=1
-    // (ipintEnabledByDefault() is false there), so the option is not forced off;
-    // BBQ stays on, as it is the default engine.
+    // PPC64LE has IPInt (InPlaceInterpreter64.asm) and BBQ, so neither is forced off.
 #if !CPU(ARM_THUMB2) && !CPU(PPC64LE)
     Options::useBBQJIT() = false;
 #endif
@@ -874,12 +872,6 @@ void Options::notifyOptionsChanged()
     // coherence check would take down every configuration that merely turns the
     // JIT off, including ones that never touch wasm.
     if (Options::useWasm() && !Options::useBBQJIT())
-        Options::useWasm() = false;
-#elif CPU(PPC64LE)
-    // IPInt is opt-in on PPC64LE (ipintEnabledByDefault() is false there), so
-    // turning the JIT off leaves no wasm engine unless --useWasmIPInt=1 was given;
-    // disable wasm in that case rather than abort on the coherence check.
-    if (Options::useWasm() && !Options::useBBQJIT() && !Options::useWasmIPInt())
         Options::useWasm() = false;
 #endif
 
