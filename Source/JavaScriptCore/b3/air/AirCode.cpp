@@ -137,6 +137,15 @@ Code::Code(Procedure& proc)
             if (bank == GP) {
                 all.remove(MacroAssembler::dataTempRegister);
                 all.remove(MacroAssembler::memoryTempRegister);
+                // GPRInfo's non-preserved non-argument scratch registers are
+                // r29/r30, which C calls preserve. CCallSpecial and FTL/wasm
+                // patchpoints use them as scratch around C calls without
+                // declaring them clobbered, which is only sound if Air never
+                // holds a value in them. See GPRInfo.h.
+                static_assert(GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::nonArgGPR0 && GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::regWS0 && GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::wasmScratchGPR0);
+                static_assert(GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::nonArgGPR1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::regWS1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::wasmScratchGPR1);
+                all.remove(GPRInfo::nonPreservedNonArgumentGPR0);
+                all.remove(GPRInfo::nonPreservedNonArgumentGPR1);
             } else {
                 all.remove(MacroAssembler::fpTempRegister);
                 all.remove(MacroAssembler::fpTempRegister2);

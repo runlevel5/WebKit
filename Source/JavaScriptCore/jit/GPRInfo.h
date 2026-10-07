@@ -909,31 +909,50 @@ public:
     static constexpr GPRReg argumentGPR6 = PPC64Registers::r9;  // regT6
     static constexpr GPRReg argumentGPR7 = PPC64Registers::r10; // regT7
 
-    // r11 (dataTempRegister) and r12 (memoryTempRegister) are assembler scratch;
-    // excluded from the allocatable pool but available for explicit use.
-    static constexpr GPRReg nonArgGPR0 = PPC64Registers::r11;
-    static constexpr GPRReg nonArgGPR1 = PPC64Registers::r12;
+    // ELFv2 has no volatile GPR outside the argument registers r3-r10 and
+    // r11/r12, and r11/r12 are MacroAssemblerPPC64's dataTempRegister and
+    // memoryTempRegister, which almost any MacroAssembler operation may
+    // overwrite (folding an immediate, a wide offset or an absolute address).
+    // A "non-preserved non-argument" scratch that callers keep a value in
+    // across MacroAssembler operations therefore cannot live there: e.g. BBQ's
+    // wasmScratchGPR held a counter address in r11 and branchAdd32 loaded the
+    // counter into r11 on top of it. Use r29/r30 instead. They are ELFv2
+    // callee-saved, but to JSC they are scratch: the LLInt and IPInt use them
+    // as offlineasm temporaries, no JIT tier preserves them across JS calls
+    // (they are not VM callee-saves), and pushCalleeSaves saves them for the C
+    // caller at every C-to-VM entry. They are kept out of Air's register pool
+    // (AirCode.cpp), so Air never holds a value in them, which is what lets
+    // CCallSpecial and FTL patchpoints use them as scratch without declaring
+    // them clobbered. Being preserved by C calls is merely more than these
+    // names promise.
+    //
+    // These are JIT-side names only. offlineasm's ws0/ws1 stay r11/r12: the
+    // offlineasm backend itself scratches through r0 and r27-r30, not r11/r12,
+    // and on PPC64 no JIT thunk and no offlineasm code hand a value to each
+    // other through these registers (the gates that do are ARM64E-only).
+    static constexpr GPRReg nonArgGPR0 = PPC64Registers::r29;
+    static constexpr GPRReg nonArgGPR1 = PPC64Registers::r30;
 
     static constexpr GPRReg returnValueGPR  = PPC64Registers::r3; // regT0
     static constexpr GPRReg returnValueGPR2 = PPC64Registers::r4; // regT1
 
     static constexpr GPRReg nonPreservedNonReturnGPR    = PPC64Registers::r5;  // regT2
-    static constexpr GPRReg nonPreservedNonArgumentGPR0 = PPC64Registers::r11;
-    static constexpr GPRReg nonPreservedNonArgumentGPR1 = PPC64Registers::r12;
+    static constexpr GPRReg nonPreservedNonArgumentGPR0 = PPC64Registers::r29;
+    static constexpr GPRReg nonPreservedNonArgumentGPR1 = PPC64Registers::r30;
 
     // r12 is assembler scratch and not in the 8-reg allocatable pool {r3..r10}.
     // StaticScratchRegisterAllocator requires handlerGPR to be in the pool.
     // Use r10 (= regT7 = argumentGPR7) which is the last pool register.
     static constexpr GPRReg handlerGPR = PPC64Registers::r10;
 
-    static constexpr GPRReg wasmScratchGPR0 = PPC64Registers::r11;
-    static constexpr GPRReg wasmScratchGPR1 = PPC64Registers::r12;
+    static constexpr GPRReg wasmScratchGPR0 = PPC64Registers::r29;
+    static constexpr GPRReg wasmScratchGPR1 = PPC64Registers::r30;
     static constexpr GPRReg wasmContextInstancePointer    = regCS0;
     static constexpr GPRReg wasmBaseMemoryPointer         = regCS3;
     static constexpr GPRReg wasmBoundsCheckingSizeRegister = regCS4;
 
-    static constexpr GPRReg regWS0 = PPC64Registers::r11;
-    static constexpr GPRReg regWS1 = PPC64Registers::r12;
+    static constexpr GPRReg regWS0 = PPC64Registers::r29;
+    static constexpr GPRReg regWS1 = PPC64Registers::r30;
     static constexpr GPRReg regWA0 = PPC64Registers::r3;
     static constexpr GPRReg regWA1 = PPC64Registers::r4;
     static constexpr GPRReg regWA2 = PPC64Registers::r5;
