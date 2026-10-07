@@ -50,6 +50,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> handleExceptionGenerator(VM& vm)
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
 
     jit.move(CCallHelpers::TrustedImmPtr(&vm), GPRInfo::argumentGPR0);
+    // This thunk is jumped to with whatever sp the throwing code had, which for
+    // FTL is the bottom of the Air frame. On PPC64 the C callee writes its
+    // CR/LR/TOC saves at sp+8..sp+31, so give it the slow-path extent (0 on ARM64
+    // and x86_64). Not reclaimed: every handler re-derives sp from its frame.
+    jit.makeSpaceOnStackForCCall();
     jit.prepareCallOperation(vm);
     CCallHelpers::Call operation = jit.call(OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
