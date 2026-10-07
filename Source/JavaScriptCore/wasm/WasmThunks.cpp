@@ -34,6 +34,7 @@
 #include "JSInterfaceJIT.h"
 #include "JSWebAssemblyInstance.h"
 #include "LinkBuffer.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "ProbeContext.h"
 #include "ScratchRegisterAllocator.h"
 #include "WasmExceptionType.h"
@@ -143,7 +144,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> materializeBaselineDataGenerator(const Abs
     JIT_COMMENT(jit, "materializeBaselineDataGenerator");
     jit.emitFunctionPrologue();
 
-    const unsigned extraPaddingBytes = 0;
+    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
+    // below the preserved registers; 0 on ARM64 and x86_64.
+    const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     RegisterSet builder;
     for (auto regs : wasmCallingConvention().jsrArgs)
         builder.add(regs, IgnoreVectors);
@@ -204,7 +207,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> callPolymorphicCalleeGenerator(const Abstr
 
     needsPolyMaterialization.link(jit);
     jit.emitFunctionPrologue();
-    const unsigned extraPaddingBytes = 0;
+    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
+    // below the preserved registers; 0 on ARM64 and x86_64.
+    const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     RegisterSet builder;
     for (auto regs : wasmCallingConvention().jsrArgs)
         builder.add(regs, IgnoreVectors);
@@ -356,7 +361,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> triggerOMGEntryTierUpThunkGeneratorImpl(co
 
     jit.emitFunctionPrologue();
 
-    const unsigned extraPaddingBytes = 0;
+    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
+    // below the preserved registers; 0 on ARM64 and x86_64.
+    const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     auto registersToSpill = RegisterSet::registersToSaveForCCall(isSIMDContext ? RegisterSet::allRegisters() : RegisterSet::allScalarRegisters()).normalizeWidths();
     unsigned numberOfStackBytesUsedForRegisterPreservation = ScratchRegisterAllocator::preserveRegistersToStackForCall(jit, registersToSpill, extraPaddingBytes);
 
