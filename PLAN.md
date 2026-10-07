@@ -594,7 +594,7 @@ DFG is compiled (`ENABLE_DFG_JIT=1`, FTL off) and defaults on when JIT is on —
 
 Gate: FTL and WASM-OMG both functional. This is the largest phase.
 
-**Gate met for FTL. `JSTests/stress` is fully green: 47,610 PASS / 0 FAIL**, release FTL build,
+**Gate met for FTL. `JSTests/stress` is fully green: 47,610 PASS / 0 FAIL** *(measured with a test harness that was stale on the box — see the 2026-10-07 correction under Immediate next actions)*, release FTL build,
 JIT enabled by default. WASM-OMG is *not* covered — WASM has no execution tier on PPC64 at all,
 so it moves to Phase 6 (see there). Run it with:
 
@@ -819,7 +819,18 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions (updated 2026-08-27)
 
-Phases 0–5 are done. `JSTests/stress` is fully green (47,610 PASS / 0 FAIL) with the JIT on by default.
+Phases 0–5 are done, but **the stress baseline is not zero** (corrected 2026-10-07).
+
+**Correction.** The long-quoted "47,610 PASS / 0 FAIL" was almost certainly measured with a test harness
+that was months stale on the box: before the box was wiped, only individual changed source files were ever
+rsync'd, and the July rebase changed `Tools/Scripts/run-jsc-stress-tests` by 115 lines. After a full resync
+the same code — built before any later commit — runs **80,801** test/variant pairs with **882 FAIL**.
+793 of those are one pre-existing FTL bug, `FATAL: No color for %tmpN` (Air register allocation running out
+of registers), mostly in the `ftl-eager-no-cjit` variant; the rest are 46 bus errors, 36 segfaults and a
+handful of others. None of the commits since the last 0-FAIL run touch Air, so this is a measurement
+correction, not a regression. The reference failure list lives on the box at
+`/home/tle/stress-baseline-fails.txt`; the regression gate is now "nothing that passes in the baseline may
+fail", via `comm -13` against that file, not "expect 0".
 **Phase 6 (WASM) is the active front, and the decision is to do a full IPInt port** — see the staged
 6A–6E plan in Phase 6 above. Everything BBQ/OMG needs at the MacroAssembler level is already landed;
 what remains is offlineasm assembly.
@@ -855,8 +866,10 @@ Fixes in this tree that are **not PPC-specific** and are candidates for upstream
 had specified the condition, which was never written); the FP-return `OperationResult` change, which
 matters on any ABI where `{double; Exception*}` is not a homogeneous float aggregate; the
 `emitAtomicOpGeneric()` missing-store-phase `#else #error`, which protects any future 64-bit backend
-from silently compiling wasm atomics into no-ops; and arguably gating `IPInt::initialize()` on
-`Options::useWasmIPInt()`, which avoids paying its validation cost when IPInt is not the engine.
+from silently compiling wasm atomics into no-ops. (An earlier version of this list also proposed gating
+`IPInt::initialize()` on `Options::useWasmIPInt()`. That was wrong and has been reverted: IPInt is the
+mandatory wasm entry tier, so its dispatch bases must be initialised whenever wasm is on, and the gate would
+make ARM64/x86 abort under `--useWasmIPInt=false`.)
 
 ### Build-workflow traps on the power9 box (cost two debugging rounds on 2026-08-26 — read this first)
 
@@ -916,7 +929,8 @@ Helper scripts and fixtures that live outside the repo and are therefore NOT res
 — recreate them or keep them in version control somewhere:
 
 - `/home/tle/fencecheck.sh` — full `JSTests/stress` gate, `-c 20`, results in `/home/tle/stress-fence`.
-  Expect 47,610 PASS / 0 FAIL. Run this after anything touching Options defaults, shared C++ or the
+  Compare against /home/tle/stress-baseline-fails.txt (882 known failures as of 2026-10-07), not against
+  zero. Run this after anything touching Options defaults, shared C++ or the
   LLInt; it has already caught a 4,679-test regression that a green build and a working
   `typeof WebAssembly` both missed.
 - `/home/tle/wasmrun.sh` — same shape against `JSTests/wasm.yaml`.
