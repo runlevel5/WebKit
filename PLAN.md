@@ -819,6 +819,33 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions (updated 2026-08-27)
 
+### Status — 2026-10-07 (supersedes the stress figures below)
+
+- **`JSTests/stress`: 80,818 pairs, 8 FAIL, 0 new.** 874 of the 882 failures found after the box rebuild are
+  fixed. The 793 `No color for %tmpN` were a genuine Air register-pool deadlock, not flakiness: FTL's two
+  unspillable fast constants (numberTag, notCellMask) are live across every JS call, and with r24–r30
+  outside the pool but clobbered by calls each had exactly K=19 precoloured neighbours, so neither could
+  ever be coloured. Whether a compile kept both live across a call varied run to run, which is why it
+  looked random (129–132/150 sampled tests per run before, 0/750 after). Fixed by giving Air r24–r30.
+- **The 8 remaining:** 4 `lockdown` (no wasm engine with the JIT off while IPInt is opt-in), 3
+  `waitasync-*-multi-workers` in `ftl-no-cjit-small-pool` ("Ran out of executable memory"), and
+  `js-to-wasm-callee-has-correct-prototype` (needs the sampling profiler, which is not built on PPC64).
+  Baseline list: `/home/tle/stress-baseline-fails.txt`; the old 882-list is kept as `…-882.txt`.
+- **Wasm runs in every tier.** IPInt (opt-in, `--useWasmIPInt=1`), BBQ and OMG all execute; default
+  tiering works. Spec runner: 92/93 IPInt-only, 91/93 with the JITs on (14/93 before the fixes).
+- **Root causes fixed on the way:** the JIT's non-preserved scratch GPRs (`regWS0/1`, `wasmScratchGPR`,
+  `nonArgGPR`…) aliased the MacroAssembler's own r11/r12 scratches — moved to r29/r30; FTL's direct
+  JS→wasm calls assumed the wasm callee preserves r24–r30; JSToWasm's C calls let ELFv2's LR/TOC saves at
+  sp+16/sp+24 overwrite the argument buffer (a fourth ELFv2 linkage-area clobber); B3 chill div/mod and
+  BBQ `rem_s` relied on ARM64 `sdiv` results that the Power ISA leaves undefined; LL/SC is now RCsc; the
+  GC scans the 288-byte ELFv2 red zone; a backend compare with an immediate first operand compared
+  against r0.
+- **Open:** enable IPInt by default (clears the 4 lockdown failures); run the real Phase 6 gate,
+  `JSTests/wasm.yaml`, which has never been run end to end; BBQ's FPR pool includes the C-callee-saved
+  f22–f31, which nothing saves at vmEntry (found by reading, not yet reproduced); `conversions.wast:559`
+  (f32→f64 promote) fails with the JITs on; JSTests/wasm's bundled wabt library had not worked on PPC64
+  (re-check now that the tiers run).
+
 Phases 0–5 are done, but **the stress baseline is not zero** (corrected 2026-10-07).
 
 **Correction.** The long-quoted "47,610 PASS / 0 FAIL" was almost certainly measured with a test harness
