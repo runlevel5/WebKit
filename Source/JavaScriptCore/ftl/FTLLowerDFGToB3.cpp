@@ -26508,6 +26508,32 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(continuation, lastNext);
     }
 
+    template<typename OperationType, typename... Args>
+    LValue callOperationWithELFv2Extension(LType type, LValue function, Args&&... args)
+    {
+#if CPU(PPC64LE)
+        // See B3::cCallArgumentIsUnsigned32: pass an Int32 argument for a uint32_t
+        // parameter zero-extended, so CCallSpecial does not sign-extend it.
+        return [&]<size_t... I>(std::index_sequence<I...>) {
+            return m_out.call(type, function, extendCCallArgumentForELFv2<OperationType, I>(std::forward<Args>(args))...);
+        }(std::index_sequence_for<Args...> { });
+#else
+        return m_out.call(type, function, std::forward<Args>(args)...);
+#endif
+    }
+
+#if CPU(PPC64LE)
+    template<typename OperationType, size_t index>
+    LValue extendCCallArgumentForELFv2(LValue argument)
+    {
+        if constexpr (B3::cCallArgumentIsUnsigned32<OperationType, index>()) {
+            if (argument->type() == B3::Int32)
+                return m_out.zeroExtPtr(argument);
+        }
+        return argument;
+    }
+#endif
+
     // FIXME: We should be able to infer type from OperationType
     template<typename OperationResultType>
     LType resultTypeForOperation(LType type)
@@ -26524,7 +26550,7 @@ IGNORE_CLANG_WARNINGS_END
         static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
         callPreflight();
         using ResultType = typename FunctionTraits<OperationType>::ResultType;
-        LValue result = m_out.call(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
+        LValue result = callOperationWithELFv2Extension<OperationType>(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
         return operationExceptionCheckAndExtractResultIfNeeded<ResultType>(result);
     }
 
@@ -26535,7 +26561,7 @@ IGNORE_CLANG_WARNINGS_END
         static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
         callPreflight();
         using ResultType = typename FunctionTraits<OperationType>::ResultType;
-        LValue result = m_out.call(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
+        LValue result = callOperationWithELFv2Extension<OperationType>(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
         return operationExceptionCheckAndExtractResultIfNeeded<ResultType>(result);
     }
 

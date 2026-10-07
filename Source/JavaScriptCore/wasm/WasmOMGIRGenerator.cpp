@@ -924,8 +924,28 @@ private:
         emitPrepareWasmOperation(block);
         static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
         Value* operationValue = block->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(operation));
+#if CPU(PPC64LE)
+        return [&]<size_t... I>(std::index_sequence<I...>) {
+            return block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, extendCCallArgumentForELFv2<OperationType, I>(block, std::forward<Args>(args))...);
+        }(std::index_sequence_for<Args...> { });
+#else
         return block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, std::forward<Args>(args)...);
+#endif
     }
+
+#if CPU(PPC64LE)
+    // See cCallArgumentIsUnsigned32: pass an Int32 argument for a uint32_t parameter
+    // zero-extended, so CCallSpecial does not sign-extend it.
+    template<typename OperationType, size_t index>
+    Value* extendCCallArgumentForELFv2(BasicBlock* block, Value* argument)
+    {
+        if constexpr (B3::cCallArgumentIsUnsigned32<OperationType, index>()) {
+            if (argument->type() == Int32)
+                return block->appendNew<Value>(m_proc, ZExt32, origin(), argument);
+        }
+        return argument;
+    }
+#endif
 
     void emitExceptionCheck(CCallHelpers&, Origin, ExceptionType);
 
