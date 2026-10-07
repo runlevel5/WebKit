@@ -3663,11 +3663,10 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     clobber(ARM64Registers::q29);
     ScratchScope<0, 0> scratches(*this, Location::fromFPR(ARM64Registers::q28), Location::fromFPR(ARM64Registers::q29));
 #else
-    // Neither shuffle strategy below applies, but both are still name-looked-up
-    // (an `if constexpr` in a non-template function still analyses the
-    // discarded branch), so `scratches` has to exist. PPC64LE keeps SIMD off,
-    // so this is only ever a compile-time placeholder.
-    ScratchScope<0, 1> scratches(*this);
+    // PPC64LE shuffles with a single vperm and needs no scratch. The x86 branch
+    // below is still name-looked-up (an `if constexpr` in a non-template
+    // function analyses the discarded branch), so `scratches` has to exist.
+    ScratchScope<0, 0> scratches(*this);
 #endif
     Location aLocation = loadIfNecessary(a);
     Location bLocation = loadIfNecessary(b);
@@ -3712,6 +3711,8 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
         bLocation = Location::fromFPR(ARM64Registers::q29);
     }
     m_jit.vectorSwizzle2(aLocation.asFPR(), bLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+#elif CPU(PPC64LE)
+    m_jit.vectorShuffle(imm, aLocation.asFPR(), bLocation.asFPR(), resultLocation.asFPR());
 #else
     UNREACHABLE_FOR_PLATFORM();
 #endif
@@ -3756,6 +3757,17 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
             m_jit.vectorUshr8(info, srcLocation.asFPR(), TrustedImm32(shiftImm), resultLocation.asFPR());
     } else {
         m_jit.and32(Imm32(mask), shiftLocation.asGPR(), wasmScratchGPR);
+#if CPU(PPC64LE)
+        // VMX shifts take a per-lane count; a byte splat feeds every lane size.
+        m_jit.vectorSplatInt8(wasmScratchGPR, wasmScratchFPR);
+        if (op == SIMDLaneOperation::Shl)
+            m_jit.vectorUshl(info, srcLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+        else if (info.signMode == SIMDSignMode::Signed)
+            m_jit.vectorSshr(info, srcLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+        else
+            m_jit.vectorUshr(info, srcLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+        return { };
+#endif
         if (op == SIMDLaneOperation::Shr) {
             // ARM64 doesn't have a version of this instruction for right shift. Instead, if the input to
             // left shift is negative, it's a right shift by the absolute value of that amount.
@@ -4041,12 +4053,23 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
 
         LOG_INSTRUCTION("Vector", op, pointer, uoffset, RESULT(result));
 
+#if CPU(PPC64LE)
+        // lfs converts to double format and neither lfs nor lfd clears the
+        // rest of the VSR, so load the bits through a GPR and zero the rest.
+        if (op == SIMDLaneOperation::LoadPad32)
+            m_jit.vectorLoad32Zero(location, resultLocation.asFPR());
+        else {
+            ASSERT(op == SIMDLaneOperation::LoadPad64);
+            m_jit.vectorLoad64Zero(location, resultLocation.asFPR());
+        }
+#else
         if (op == SIMDLaneOperation::LoadPad32)
             m_jit.loadFloat(location, resultLocation.asFPR());
         else {
             ASSERT(op == SIMDLaneOperation::LoadPad64);
             m_jit.loadDouble(location, resultLocation.asFPR());
         }
+#endif
         return result;
     });
     return { };
@@ -4128,7 +4151,9 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
 
     switch (op) {
     case SIMDLaneOperation::Bitmask:
-#if CPU(ARM64) || CPU(PPC64LE)
+#if CPU(PPC64LE)
+        m_jit.vectorBitmask(info, valueLocation.asFPR(), resultLocation.asGPR());
+#elif CPU(ARM64)
         if (info.lane == SIMDLane::i64x2) {
             // This might look bad, but remember: every bit of information we destroy contributes to the heat death of the universe.
             m_jit.vectorSshr8(SIMDInfo { SIMDLane::i64x2, SIMDSignMode::None }, valueLocation.asFPR(), TrustedImm32(63), wasmScratchFPR);
@@ -4194,7 +4219,9 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
 #endif
         return { };
     case JSC::SIMDLaneOperation::AllTrue:
-#if CPU(ARM64) || CPU(PPC64LE)
+#if CPU(PPC64LE)
+        m_jit.vectorAllTrue(info, valueLocation.asFPR(), resultLocation.asGPR());
+#elif CPU(ARM64)
         ASSERT(scalarTypeIsIntegral(info.lane));
         switch (info.lane) {
         case SIMDLane::i64x2:
