@@ -3007,20 +3007,28 @@ private:
         return true;
     }
 
+#if CPU(PPC64LE)
+    // A PPC64 FPR holds a float in double format, so for the FP bank the spill
+    // width is not a question of how many low bits matter: stfd/lfd and stfs/lfs
+    // use different memory encodings. defWidth() is conservatively 64 for any
+    // non-ZDef def (e.g. a Patchpoint result), which made a Float tmp spill with
+    // MoveDouble while patchpoint generators, and every other reader of a Float
+    // in memory, use the 4-byte single encoding. Spill FP tmps by their use
+    // width so a Float always lives in memory as a float; the in-place spill
+    // path refuses any access at a different width.
+    Width spillWidthForFP(Tmp tmp)
+    {
+        return std::max(m_tmpWidth.useWidth(tmp), Width32);
+    }
+#endif
+
     Opcode moveOpcode(Tmp tmp)
     {
         Opcode move = Oops;
         Width width = m_tmpWidth.requiredWidth(tmp);
 #if CPU(PPC64LE)
-        // A PPC64 FPR holds a float in double format, so for the FP bank the spill
-        // width is not a question of how many low bits matter: stfd/lfd and stfs/lfs
-        // use different memory encodings. defWidth() is conservatively 64 for any
-        // non-ZDef def (e.g. a Patchpoint result), which made a Float tmp spill with
-        // MoveDouble while patchpoint generators, and every other reader of a Float
-        // in memory, use the 4-byte single encoding. Spill FP tmps by their use
-        // width so a Float always lives in memory as a float.
         if (tmp.bank() == FP)
-            width = std::max(m_tmpWidth.useWidth(tmp), Width32);
+            width = spillWidthForFP(tmp);
 #endif
         switch (stackSlotMinimumWidth(width)) {
         case 4:
@@ -3145,6 +3153,20 @@ private:
                         }
 
                         Arg spilledArg = Arg::stack(spilled);
+#if CPU(PPC64LE)
+                        // An FP spill slot must only ever be accessed with the
+                        // move moveOpcode() picks for its tmp: on PPC64 a
+                        // 32-bit and a 64-bit FP access use different memory
+                        // encodings (stfs/lfs vs stfd/lfd), so an instruction
+                        // that would read or write the slot in place at the
+                        // other width (e.g. an argument's MoveDouble def of a
+                        // tmp only ever used as a float) goes through a
+                        // register and an explicit spill move instead.
+                        if (bank == FP && bytesForWidth(width) != stackSlotMinimumWidth(spillWidthForFP(arg.tmp()))) {
+                            m_stats[bank].numInPlaceSpillGiveUpSpillWidth++;
+                            return;
+                        }
+#endif
                         if (Arg::isZDef(role) && bytesForWidth(width) < spilled->byteSize()) {
                             // ZDef32 to 64 slot would require two 32-bit accesses (second one for zero extend), so
                             // usually it will be better to ZDef into a register and then storePtr the register.

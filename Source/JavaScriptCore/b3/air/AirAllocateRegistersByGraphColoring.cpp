@@ -2121,6 +2121,17 @@ private:
                             return;
                         
                         Width spillWidth = m_tmpWidth.requiredWidth(arg.tmp());
+#if CPU(PPC64LE)
+                        // See the spill-move selection below: on PPC64 an FP
+                        // slot is always accessed at its tmp's use width, since
+                        // 32- and 64-bit FP accesses use different memory
+                        // encodings, so never touch it in place at another width.
+                        if (bank == FP) {
+                            spillWidth = std::max(m_tmpWidth.useWidth(arg.tmp()), Width32);
+                            if (bytesForWidth(width) != stackSlotMinimumWidth(spillWidth))
+                                return;
+                        }
+#endif
                         if (Arg::isAnyDef(role) && width < spillWidth) {
                             // Either there are users of this tmp who will use more than width,
                             // or there are producers who will produce more than width non-zero
