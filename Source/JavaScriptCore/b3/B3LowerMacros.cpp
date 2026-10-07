@@ -129,7 +129,8 @@ private:
             switch (m_value->opcode()) {
             case Mod: {
                 if (m_value->isChill()) {
-                    if (isARM64() || isPPC64LE()) {
+                    // Only ARM64 has a native chill Div to build on; see makeDivisionChill().
+                    if (isARM64()) {
                         BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
                         BasicBlock* zeroDenCase = m_blockInsertionSet.insertBefore(m_block);
                         BasicBlock* normalModCase = m_blockInsertionSet.insertBefore(m_block);
@@ -290,7 +291,10 @@ private:
                 }
 
                 if (isARM64() || isPPC64LE()) {
-                    Value* divResult = m_insertionSet.insert<Value>(m_index, chill(Div), m_origin, m_value->child(0), m_value->child(1));
+                    // A non-chill Mod makes no promise for x%0 or INT_MIN%-1, so a plain Div is
+                    // enough. Only ARM64 lowers a chill Div natively.
+                    Kind divKind = isARM64() ? chill(Div) : Kind(Div);
+                    Value* divResult = m_insertionSet.insert<Value>(m_index, divKind, m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
                     Value* result = m_insertionSet.insert<Value>(m_index, Sub, m_origin, m_value->child(0), multipliedBack);
                     m_value->replaceWithIdentity(result);
@@ -1093,10 +1097,11 @@ private:
     {
         ASSERT(nonChillOpcode == Div || nonChillOpcode == Mod);
 
-        // ARM supports this instruction natively. PPC64's divd/divw likewise
-        // never trap (divide-by-zero and overflow give an undefined result),
-        // which satisfies the chill contract.
-        if (isARM64() || isPPC64LE())
+        // ARM supports this instruction natively: sdiv gives 0 for x/0 and INT_MIN for INT_MIN/-1.
+        // PPC64 does not. divw/divd do not trap either, but the Power ISA leaves their result
+        // undefined for both cases (POWER9 returns 0 for INT_MIN/-1, not INT_MIN), so PPC64 needs
+        // the explicit checks below just like x86.
+        if (isARM64())
             return;
 
         // We implement "res = Div<Chill>/Mod<Chill>(num, den)" as follows:
@@ -1140,7 +1145,13 @@ private:
         Value* innerResult;
         if (isARM_THUMB2() && (m_value->type() == Int64 || m_value->type() == Int32))
             innerResult = callDivModHelper(normalDivCase, nonChillOpcode, num, den);
-        else
+        else if (isPPC64LE() && nonChillOpcode == Mod) {
+            // POWER8 has no integer remainder instruction. Here den is neither 0 nor -1 paired
+            // with INT_MIN, so the plain Div is well defined and num - (num / den) * den is exact.
+            Value* quotient = normalDivCase->appendNew<Value>(m_proc, Div, m_origin, num, den);
+            Value* multipliedBack = normalDivCase->appendNew<Value>(m_proc, Mul, m_origin, quotient, den);
+            innerResult = normalDivCase->appendNew<Value>(m_proc, Sub, m_origin, num, multipliedBack);
+        } else
             innerResult = normalDivCase->appendNew<Value>(m_proc, nonChillOpcode, m_origin, num, den);
         UpsilonValue* normalResult = normalDivCase->appendNew<UpsilonValue>(
             m_proc, m_origin,

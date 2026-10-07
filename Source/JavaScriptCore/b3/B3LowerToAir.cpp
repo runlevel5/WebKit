@@ -4122,7 +4122,7 @@ private:
 
         case Div: {
             if (m_value->isChill())
-                RELEASE_ASSERT(isARM64() || isPPC64LE());
+                RELEASE_ASSERT(isARM64());
             if (m_value->type().isInt() && isX86()) {
                 appendX86Div(Div);
                 return;
