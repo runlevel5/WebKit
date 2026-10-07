@@ -828,7 +828,13 @@ void Options::notifyOptionsChanged()
 #if !CPU(X86_64) && !CPU(ARM64)
     Options::useConcurrentGC() = false;
     Options::forceUnlinkedDFG() = false;
+#if CPU(PPC64LE)
+    // Wasm SIMD runs in BBQ on PPC64LE. IPInt has no SIMD handlers here, so
+    // IPIntPlan sends every function that uses SIMD straight to BBQ.
+    Options::useWasmIPIntSIMD() = false;
+#else
     Options::useWasmSIMD() = false;
+#endif
 #if !CPU(PPC64LE)
     Options::useWasmIPInt() = false;
 #endif
