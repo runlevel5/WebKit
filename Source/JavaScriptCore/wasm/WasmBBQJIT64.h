@@ -480,6 +480,26 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
         recordJumpToThrowException(ExceptionType::IntegerOverflow, isNegativeOne);
     }
 
+    // Signed remainder by a runtime -1 is always 0, and INT_MIN % -1 must give 0 rather than trap.
+    // ARM64 gets that for free because sdiv yields INT_MIN for INT_MIN / -1, so the multiplySub
+    // below cancels out. On PPC64 divw/divd leave that quotient undefined (POWER9 returns 0, which
+    // would make the remainder INT_MIN), so answer x % -1 directly without dividing. A constant
+    // divisor of -1 was already folded above.
+    Jump remainderByNegativeOneDone;
+    if constexpr (isPPC64LE() && isSigned && IsMod) {
+        if (!rhs.isConst()) {
+            Jump notNegativeOne = is32
+                ? m_jit.branch32(RelationalCondition::NotEqual, rhsLocation.asGPR(), TrustedImm32(-1))
+                : m_jit.branch64(RelationalCondition::NotEqual, rhsLocation.asGPR(), TrustedImm64(-1));
+            if constexpr (is32)
+                m_jit.xor32(resultLocation.asGPR(), resultLocation.asGPR());
+            else
+                m_jit.xor64(resultLocation.asGPR(), resultLocation.asGPR());
+            remainderByNegativeOneDone = m_jit.jump();
+            notNegativeOne.link(&m_jit);
+        }
+    }
+
     GPRReg divResult = IsMod ? scratches.gpr(0) : resultLocation.asGPR();
     if (is32 && isSigned)
         m_jit.div32(lhsLocation.asGPR(), rhsLocation.asGPR(), divResult);
@@ -496,6 +516,9 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
         else
             m_jit.multiplySub64(divResult, rhsLocation.asGPR(), lhsLocation.asGPR(), resultLocation.asGPR());
     }
+
+    if (remainderByNegativeOneDone.isSet())
+        remainderByNegativeOneDone.link(&m_jit);
 }
 #endif
 
