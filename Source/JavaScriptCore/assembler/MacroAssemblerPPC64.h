@@ -3893,10 +3893,8 @@ public:
     // genuinely saw a mismatching value. `expectedAndResult` supplies the
     // comparand and receives the previous memory value; `result` receives 1 or
     // 0 according to whether the outcome matched `cond`. Mirrors the ARM64
-    // ldaxr/stlxr version, including its mismatch path: that path stores the
-    // just-loaded value straight back, which both releases the reservation and
-    // proves no other thread intervened (if it did, the stcx. fails and the
-    // whole comparison is retried).
+    // ldaxr/stlxr version except on a mismatch, which is reported straight
+    // from the larx (see below).
     template<typename AddressType>
     void atomicStrongCAS(unsigned width, StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result)
     {
@@ -3935,14 +3933,16 @@ public:
         Jump done = jump();
 
         failure.link(this);
+        // Mismatch: the larx was an atomic read of a value other than the
+        // comparand, which is all a failed strong CAS has to observe, so report
+        // it without storing anything (as atomicStrongCASNoStatus does). The
+        // ARM64 shape stores the loaded value back and retries the whole CAS if
+        // that store-conditional fails, but by then it has already replaced the
+        // comparand with the observed value, so the retry compares the value
+        // against itself, matches, and stores newValue: a mismatching CAS that
+        // writes. stcx. failures on the store-back made that happen here
+        // (stress/atomic-multimemory.js, memory64-atomics.js).
         move(tmp, expectedAndResult); // report the value we actually saw
-        switch (width) {
-        case 8:  m_assembler.stbcx_(tmp, zero, addr); break;
-        case 16: m_assembler.sthcx_(tmp, zero, addr); break;
-        case 32: m_assembler.stwcx_(tmp, zero, addr); break;
-        default: m_assembler.stdcx_(tmp, zero, addr); break;
-        }
-        makeBranch(NotEqual).linkTo(reloop, this);
         m_assembler.isync();
         move(TrustedImm32(cond == Failure), result);
 
