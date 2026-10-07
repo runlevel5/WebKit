@@ -2504,9 +2504,11 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.move(lhsHiLocation.asGPR(), resultHiLocation.asGPR());
         m_jit.addCarry64(rhsHiLocation.asGPR(), resultHiLocation.asGPR());
     }
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
     m_jit.add64AndSetFlags(lhsLoLocation.asGPR(), rhsLoLocation.asGPR(), resultLoLocation.asGPR());
     m_jit.addCarry64(lhsHiLocation.asGPR(), rhsHiLocation.asGPR(), resultHiLocation.asGPR());
+#else
+#error "I64Add128 is not implemented for this CPU"
 #endif
 
     return { };
@@ -2556,9 +2558,11 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.move(lhsHiLocation.asGPR(), resultHiLocation.asGPR());
         m_jit.subBorrow64(rhsHiLocation.asGPR(), resultHiLocation.asGPR());
     }
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
     m_jit.sub64AndSetFlags(lhsLoLocation.asGPR(), rhsLoLocation.asGPR(), resultLoLocation.asGPR());
     m_jit.subBorrow64(lhsHiLocation.asGPR(), rhsHiLocation.asGPR(), resultHiLocation.asGPR());
+#else
+#error "I64Sub128 is not implemented for this CPU"
 #endif
 
     return { };
@@ -2597,7 +2601,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.move(X86Registers::edx, resultHiLocation.asGPR());
         m_jit.move(X86Registers::eax, resultLoLocation.asGPR());
     }
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
     if (resultHiLocation.asGPR() == lhsLocation.asGPR()) {
         m_jit.move(lhsLocation.asGPR(), wasmScratchGPR);
         m_jit.uMulHigh64(wasmScratchGPR, rhsLocation.asGPR(), resultHiLocation.asGPR());
@@ -2610,6 +2614,8 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.uMulHigh64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultHiLocation.asGPR());
         m_jit.mul64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLoLocation.asGPR());
     }
+#else
+#error "I64MulWide is not implemented for this CPU"
 #endif
 
     return { };
@@ -2648,7 +2654,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.move(X86Registers::edx, resultHiLocation.asGPR());
         m_jit.move(X86Registers::eax, resultLoLocation.asGPR());
     }
-#elif CPU(ARM64)
+#elif CPU(ARM64) || CPU(PPC64LE)
     if (resultHiLocation.asGPR() == lhsLocation.asGPR()) {
         m_jit.move(lhsLocation.asGPR(), wasmScratchGPR);
         m_jit.mulHigh64(wasmScratchGPR, rhsLocation.asGPR(), resultHiLocation.asGPR());
@@ -2661,6 +2667,8 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         m_jit.mulHigh64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultHiLocation.asGPR());
         m_jit.mul64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLoLocation.asGPR());
     }
+#else
+#error "I64MulWide is not implemented for this CPU"
 #endif
 
     return { };
