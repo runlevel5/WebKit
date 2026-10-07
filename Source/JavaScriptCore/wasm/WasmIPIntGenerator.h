@@ -241,7 +241,16 @@ enum class CallArgumentBytecode : uint8_t { // (mINT)
     TailCall = 0x1a,
     Call = 0x1b,
 
+#if CPU(PPC64LE)
+    // PPC64 holds an f32 in an FPR in double format (lfs widens, stfs narrows),
+    // while IPInt stack slots and locals hold the 4-byte IEEE encoding, so a
+    // type-blind 16-byte copy between the two is wrong for f32. These variants
+    // move an f32 through an FPR with lfs/stfs; f64 and v128 keep the plain ones.
+    ArgumentFPRFloat = 0x1c, // 0x1c - 0x23: pop an f32 into fa0, fa1, ...
+    NumOpcodes = 0x24 // this must be the last element of the enum!
+#else
     NumOpcodes // this must be the last element of the enum!
+#endif
 };
 
 struct CallMetadata {
@@ -296,7 +305,16 @@ enum class CallResultBytecode : uint8_t { // (mINT)
     ResultStackVector = 0x11,
     End = 0x12,
 
+#if CPU(PPC64LE)
+    // PPC64 holds an f32 in an FPR in double format (lfs widens, stfs narrows),
+    // while IPInt stack slots and locals hold the 4-byte IEEE encoding, so a
+    // type-blind 16-byte copy between the two is wrong for f32. These variants
+    // move an f32 through an FPR with lfs/stfs; f64 and v128 keep the plain ones.
+    ResultFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
+    NumOpcodes = 0x1b // this must be the last element of the enum!
+#else
     NumOpcodes // this must be the last element of the enum!
+#endif
 };
 
 struct CallReturnMetadata {
@@ -313,7 +331,16 @@ enum class ArgumINTBytecode: uint8_t {
     StackVector = 0x11,
     End = 0x12,
 
+#if CPU(PPC64LE)
+    // PPC64 holds an f32 in an FPR in double format (lfs widens, stfs narrows),
+    // while IPInt stack slots and locals hold the 4-byte IEEE encoding, so a
+    // type-blind 16-byte copy between the two is wrong for f32. These variants
+    // move an f32 through an FPR with lfs/stfs; f64 and v128 keep the plain ones.
+    ArgFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
+    NumOpcodes = 0x1b // this must be the last element of the enum!
+#else
     NumOpcodes // this must be the last element of the enum!
+#endif
 };
 
 enum class UINTBytecode: uint8_t {
@@ -323,7 +350,16 @@ enum class UINTBytecode: uint8_t {
     StackVector = 0x11,
     End = 0x12,
 
+#if CPU(PPC64LE)
+    // PPC64 holds an f32 in an FPR in double format (lfs widens, stfs narrows),
+    // while IPInt stack slots and locals hold the 4-byte IEEE encoding, so a
+    // type-blind 16-byte copy between the two is wrong for f32. These variants
+    // move an f32 through an FPR with lfs/stfs; f64 and v128 keep the plain ones.
+    RetFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
+    NumOpcodes = 0x1b // this must be the last element of the enum!
+#else
     NumOpcodes // this must be the last element of the enum!
+#endif
 };
 
 // GC Metadata

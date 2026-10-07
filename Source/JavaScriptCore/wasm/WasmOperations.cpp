@@ -71,6 +71,30 @@ namespace WasmOperationsInternal {
 static constexpr bool verbose = false;
 }
 
+// An f32 held in a floating-point argument register, as the entry/exit
+// wrappers spill it to (and reload it from) their 8-byte register save slots.
+// On x86_64 and ARM64 an FPR holds a float as its raw 32 bits in the low half,
+// so the slot holds those bits. A PPC64 FPR holds a float in double format (lfs
+// widens, stfs narrows), so the slot holds the float's double image, and the
+// wrappers move it with plain 8-byte FPR loads and stores.
+static ALWAYS_INLINE float loadF32FromFPRSlot(const void* slot)
+{
+#if CPU(PPC64LE)
+    return static_cast<float>(*static_cast<const double*>(slot));
+#else
+    return *static_cast<const float*>(slot);
+#endif
+}
+
+static ALWAYS_INLINE uint64_t f32FPRSlotBits(float value)
+{
+#if CPU(PPC64LE)
+    return std::bit_cast<uint64_t>(static_cast<double>(value));
+#else
+    return static_cast<uint64_t>(std::bit_cast<uint32_t>(value));
+#endif
+}
+
 JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee*, (void* sp, CallFrame* callFrame, WebAssemblyFunction* function))
 {
     dataLogLnIf(WasmOperationsInternal::verbose, "operationJSToWasmEntryWrapperBuildFrame sp: ", RawPointer(sp), " fp: ", RawPointer(callFrame));
@@ -135,6 +159,8 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
 
             if (type.isI32() || type.isF32())
                 value = static_cast<uint64_t>(static_cast<uint32_t>(value));
+            if (type.isF32() && wasmFrameConvention.params[i].location.isFPR())
+                value = f32FPRSlotBits(std::bit_cast<float>(static_cast<uint32_t>(value)));
             *access.operator()<uint64_t>(registerSpace, dst) = value;
         }
     }
@@ -182,7 +208,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
             result = JSBigInt::makeHeapBigIntOrBigInt32(instance->realm(), *access.operator()<int64_t>(registerSpace, 0));
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         } else if (signature.returnType(0).isF32())
-            result = jsNumber(purifyNaN(*access.operator()<float>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + 0)));
+            result = jsNumber(purifyNaN(loadF32FromFPRSlot(access.operator()<uint64_t>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + 0))));
         else if (signature.returnType(0).isF64())
             result = jsNumber(purifyNaN(*access.operator()<double>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + 0)));
         else if (isRefType(signature.returnType(0)))
@@ -239,7 +265,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 break;
             case TypeKind::F32:
-                result = jsNumber(purifyNaN(*access.operator()<float>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(loc.fpr()) * bytesForWidth(Width::Width64))));
+                result = jsNumber(purifyNaN(loadF32FromFPRSlot(access.operator()<uint64_t>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(loc.fpr()) * bytesForWidth(Width::Width64)))));
                 break;
             case TypeKind::F64:
                 result = jsNumber(purifyNaN(*access.operator()<double>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(loc.fpr()) * bytesForWidth(Width::Width64))));
@@ -405,7 +431,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
             if (wasmParam.isStack())
                 val = *access.operator()<float>(callFrame, wasmParam.offsetFromFP());
             else
-                val = *access.operator()<float>(argumentRegisters, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(wasmParam.fpr()) * bytesForWidth(Width::Width64));
+                val = loadF32FromFPRSlot(access.operator()<uint64_t>(argumentRegisters, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(wasmParam.fpr()) * bytesForWidth(Width::Width64)));
 
             double marshalled = purifyNaN(val);
             uint64_t raw = std::bit_cast<uint64_t>(marshalled);
@@ -513,7 +539,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             if (returned.isNumber()) {
                 if (returned.isInt32()) {
                     float result = static_cast<float>(*access.operator()<int32_t>(registerSpace, 0));
-                    *access.operator()<float>(registerSpace, offset) = result;
+                    *access.operator()<uint64_t>(registerSpace, offset) = f32FPRSlotBits(result);
                 } else {
 #if USE(JSVALUE64)
                     uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0) + JSValue::NumberTag;
@@ -521,12 +547,12 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
                     uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0);
 #endif
                     double d = std::bit_cast<double>(intermediate);
-                    *access.operator()<uint64_t>(registerSpace, offset) = static_cast<uint64_t>(std::bit_cast<uint32_t>(static_cast<float>(d)));
+                    *access.operator()<uint64_t>(registerSpace, offset) = f32FPRSlotBits(static_cast<float>(d));
                 }
             } else {
                 float result = static_cast<float>(JSValue::decode(std::bit_cast<EncodedJSValue>(returned)).toNumber(globalObject));
                 OPERATION_RETURN_IF_EXCEPTION(scope);
-                *access.operator()<uint64_t>(registerSpace, offset) = static_cast<uint64_t>(std::bit_cast<uint32_t>(result));
+                *access.operator()<uint64_t>(registerSpace, offset) = f32FPRSlotBits(result);
             }
             break;
         }

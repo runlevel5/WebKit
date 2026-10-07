@@ -166,11 +166,12 @@ void initialize()
     llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 
 #if ENABLE(WEBASSEMBLY)
-    // Only when IPInt is actually the wasm engine: initialize() installs
-    // IPInt's own dispatch base pointers and validates that every handler
-    // sits at its fixed slot, none of which is needed (or, on backends
-    // without IPInt handlers, even possible) when wasm runs on BBQ/OMG.
-    if (Options::useWasm() && Options::useWasmIPInt())
+    // Every wasm function is entered through IPInt (ipint_entry), even with
+    // useWasmIPInt off, which only makes IPInt tier up at the first prologue
+    // check; so IPInt's dispatch bases are installed and validated whenever
+    // wasm is on, as verifyInitialization() below expects. (This was gated on
+    // useWasmIPInt while PPC64 had no IPInt handlers to validate.)
+    if (Options::useWasm())
         IPInt::initialize();
 #endif
 
