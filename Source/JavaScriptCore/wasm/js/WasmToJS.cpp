@@ -546,6 +546,13 @@ void emitThrowWasmToJSException(CCallHelpers& jit, GPRReg wasmInstance, Wasm::Ex
 
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(type)), GPRInfo::argumentGPR1);
 
+    // Callers may reach here with sp == cfr (handleBadImportTypeUse runs right
+    // after the prologue has filled the CodeBlock and Callee slots at cfr+16 and
+    // cfr+24). On PPC64 the C callee saves LR at sp+16 and the call sequence saves
+    // the TOC at sp+24, which would overwrite them before the unwinder reads the
+    // frame. Reserve the slow-path call extent (0 on ARM64 and x86_64); the
+    // operation does not return here.
+    jit.makeSpaceOnStackForCCall();
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
     jit.callOperation<OperationPtrTag>(Wasm::operationWasmToJSException);
 
