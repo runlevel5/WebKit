@@ -3776,6 +3776,10 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
             auto spillState = preserveLiveRegistersToStackForCallWithoutExceptions();
 
+            // The live registers were just saved at sp; keep the C call's
+            // linkage area (ELFv2: CR/LR/TOC at sp+8..sp+31) below them, as the
+            // other slow-path calls in this file do.
+            jit.makeSpaceOnStackForCCall();
             if (m_propertyCache.isHandlerIC())
                 InlineCacheCompiler::emitDataICPrepareForCall(jit);
             jit.setupArguments<decltype(operationWriteBarrierSlowPath)>(CCallHelpers::TrustedImmPtr(&vm), scratchGPR);
@@ -3783,6 +3787,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
             jit.callOperation<OperationPtrTag>(operationWriteBarrierSlowPath);
             if (m_propertyCache.isHandlerIC())
                 InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
+            jit.reclaimSpaceOnStackForCCall();
             restoreLiveRegistersFromStackForCall(spillState);
 
             skipBarrier.link(&jit);
