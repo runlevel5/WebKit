@@ -291,7 +291,15 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
 
         // Prepare frame
         jit.setupArguments<decltype(operationJSToWasmEntryWrapperBuildFrame)>(GPRInfo::argumentGPR0, GPRInfo::callFrameRegister, GPRInfo::regWS0);
+        // The operation fills the argument buffer at sp. On PPC64 the C call's
+        // linkage area is at sp (the callee saves LR at sp+16, and the call
+        // sequence saves the TOC at sp+24), so give the call its own slow-path
+        // extent below the buffer instead of letting the two overlap.
+        if constexpr (!!maxFrameExtentForSlowPathCall)
+            jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
         jit.callOperation<OperationPtrTag>(operationJSToWasmEntryWrapperBuildFrame);
+        if constexpr (!!maxFrameExtentForSlowPathCall)
+            jit.addPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
 
         // Restore Callee slot regardless
 #if USE(JSVALUE64)
@@ -470,7 +478,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         // Prepare frame
         {
             jit.setupArguments<decltype(operationJSToWasmEntryWrapperBuildReturnFrame)>(CCallHelpers::stackPointerRegister, GPRInfo::callFrameRegister);
+            // As for operationJSToWasmEntryWrapperBuildFrame: keep the C call's
+            // linkage area off the saved results at sp.
+            if constexpr (!!maxFrameExtentForSlowPathCall)
+                jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
             jit.callOperation<OperationPtrTag>(operationJSToWasmEntryWrapperBuildReturnFrame);
+            if constexpr (!!maxFrameExtentForSlowPathCall)
+                jit.addPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
             using ResultType = typename FunctionTraits<decltype(operationJSToWasmEntryWrapperBuildReturnFrame)>::ResultType;
 #if USE(JSVALUE64)
             static_assert(CCallHelpers::operationExceptionRegister<ResultType>() != InvalidGPRReg, "We don't have a VM readily available so we rely on exception being returned");
