@@ -105,18 +105,25 @@ Code::Code(Procedure& proc)
             all.remove(MacroAssembler::addressTempRegister);
 #endif // CPU(ARM)
 #if CPU(PPC64LE)
-            // ELFv2 makes r14-r31 and f14-f31 callee-saved, but JSC only models
-            // r14-r23 (regCS0-9) and f14-f21 (fpRegCS0-7) as VM callee-saves, so
-            // only those have a slot in the VMEntryRecord buffer. If Air spilled
-            // into one of the unmodelled registers, it would record it in the
-            // frame's callee-save list and unwinding through that frame would
-            // hit the "no buffer slot for this register" assertion in
-            // UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer.
-            // Keep Air's pool inside the set the VM knows how to restore.
-            if (bank == GP) {
-                for (auto reg = PPC64Registers::r24; reg <= PPC64Registers::r31; reg = static_cast<PPC64Registers::RegisterID>(reg + 1))
-                    all.remove(reg);
-            } else {
+            // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21
+            // (fpRegCS0-7) as VM callee-saves, so only those have a slot in
+            // the VMEntryRecord buffer, and no C-to-VM entry saves f22-f31 for
+            // its C caller. If Air used one of them and an exception unwound
+            // through the frame, the C caller's value would be lost. Keep f22-
+            // f31 out of the pool.
+            //
+            // r24-r30 are different: they are scratch to the LLInt, IPInt and
+            // the JITs, and pushCalleeSaves saves them at every C-to-VM entry,
+            // so Air may use them. It still saves them in its prologue (Air
+            // code can be called straight from C), and the unwinder drops them
+            // just as it does for ARMv7's non-VM callee-saves. Without them the
+            // GP pool is only r3-r10 and r14-r23: every JS call clobbers
+            // r3-r12 and r24-r30, so the two unspillable FTL tag constants
+            // (numberTag, notCellMask), which are live across those calls,
+            // end up with K-1 precolored neighbours each plus each other, and
+            // the graph-coloring allocators can neither simplify nor spill
+            // them ("No color for %tmpN").
+            if (bank == FP) {
                 for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
                     all.remove(reg);
             }

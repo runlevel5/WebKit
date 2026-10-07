@@ -203,6 +203,21 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
         int8_t bufferSlot = m_vmCalleeSaveBufferSlotsByRegIndex[currentEntry.reg().index()];
 
         if (bufferSlot < 0) {
+#if CPU(PPC64LE)
+            // ELFv2 makes r14-r31 callee-saved, but the VM convention only
+            // models r14-r23. r24-r30 are scratch to the LLInt, IPInt and the
+            // JITs, and every C-to-VM entry (pushCalleeSaves in vmEntry) saves
+            // and restores them for the C caller. Air saves them because it
+            // must also be callable from C (testb3), but when called from the
+            // VM nobody relies on them, so like ARMv7 below it is correct to
+            // drop them. Anything else without a slot (e.g. f22-f31, which no
+            // C entry saves) is still a bug.
+            {
+                Reg reg = currentEntry.reg();
+                RELEASE_ASSERT(reg.isGPR() && reg.gpr() >= PPC64Registers::r24 && reg.gpr() <= PPC64Registers::r30);
+                continue;
+            }
+#endif
             if constexpr (!isARM_THUMB2())
                 RELEASE_ASSERT_NOT_REACHED();
             // This can happen on ARMv7, because there are more callee save
