@@ -15113,7 +15113,11 @@ IGNORE_CLANG_WARNINGS_END
         if (!wasmBaseMemoryPointerConfiguredAsInputContraints)
             clobber.add(GPRInfo::wasmBaseMemoryPointer, IgnoreVectors);
         patchpoint->clobber(WTF::move(clobber));
-        auto clobberLate = RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters());
+        // The callee is wasm code (IPInt, BBQ or OMG), which preserves the VM
+        // callee-saves, not every register the C ABI makes callee-saved. The
+        // two sets coincide on ARM64 and x86_64 (up to the frame pointer),
+        // but not on PPC64, where r24-r30 are scratch to IPInt and BBQ.
+        auto clobberLate = RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters());
         clobberLate.add(GPRInfo::wasmContextInstancePointer, IgnoreVectors); // Because it is already tied to JSWebAssemblyInstance* in patchpoint's input constraint, we should say it is late clobbered.
         if (wasmBoundsCheckingSizeRegisterConfiguredAsInputContraints)
             clobberLate.add(GPRInfo::wasmBoundsCheckingSizeRegister, IgnoreVectors);
