@@ -3489,7 +3489,9 @@ public:
     // `where` is the label AFTER a 5-instruction li64 (moveWithPatch).
     static void linkPointer(void* code, AssemblerLabel where, void* valuePtr)
     {
-        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + where.offset()) - 5;
+        // A DataLabelPtr marks the START of its fixed 5-instruction li64
+        // (MacroAssemblerPPC64::moveWithPatch), as repatchPointer() assumes.
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + where.offset());
         RegisterID rt = RegisterID((location[0] >> 21) & 0x1F);
         writeLi64(location, rt, uint64_t(valuePtr));
     }
