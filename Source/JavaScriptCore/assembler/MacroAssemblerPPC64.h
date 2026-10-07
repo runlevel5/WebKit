@@ -2683,9 +2683,10 @@ public:
     // ones and clz of that is 0. Verified on POWER9 hardware against
     // __builtin_ctz for 0, 1, 5, 6, 8, 0x10000, 0x80000000 and 0xFFFFFFFF.
     // Pick an assembler temp that is not `live`, an operand still read after the
-    // temp has been written. Callers may legitimately pass dataTempRegister: BBQ's
-    // wasmScratchGPR is r11 (GPRInfo::nonPreservedNonArgumentGPR0), the same
-    // register, and it holds operands such as a materialised constant.
+    // temp has been written. Callers may legitimately pass dataTempRegister (r11):
+    // BBQ's wasmScratchGPR (GPRInfo::nonPreservedNonArgumentGPR0) was r11 when
+    // this was written and held operands such as a materialised constant. It is
+    // r29 now, but nothing stops another caller handing in r11, so keep the guard.
     static RegisterID tempRegisterAvoiding(RegisterID live)
     {
         return live == dataTempRegister ? memoryTempRegister : dataTempRegister;
