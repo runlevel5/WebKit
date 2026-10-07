@@ -98,7 +98,14 @@ Value* ConstFloatValue::bitwiseCastConstant(Procedure& proc) const
 
 Value* ConstFloatValue::floatToDoubleConstant(Procedure& proc) const
 {
-    return proc.add<ConstDoubleValue>(origin(), static_cast<double>(m_value));
+    double result = static_cast<double>(m_value);
+    // FloatToDouble has to quiet a signalling NaN, as cvtss2sd, fcvt and PPC64's
+    // frsp do. The C++ conversion does not guarantee that: on PPC64 an FPR holds a
+    // float in double format, so the compiler emits nothing and an sNaN stays
+    // signalling. Set the quiet bit; this keeps the payload, like the hardware.
+    if (std::isnan(result))
+        result = std::bit_cast<double>(std::bit_cast<uint64_t>(result) | 0x0008000000000000ULL);
+    return proc.add<ConstDoubleValue>(origin(), result);
 }
 
 Value* ConstFloatValue::absConstant(Procedure& proc) const

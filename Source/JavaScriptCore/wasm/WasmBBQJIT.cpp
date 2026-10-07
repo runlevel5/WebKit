@@ -2995,7 +2995,13 @@ PartialResult BBQJIT::addI32Extend8S(Value operand, Value& result)
 {
     EMIT_UNARY(
         "F64PromoteF32", TypeKind::F64,
-        BLOCK(Value::fromF64(operand.asF32())),
+        // Promotion must quiet a signalling NaN. The C++ float-to-double conversion
+        // does not on PPC64 (FPRs already hold floats in double format, so it is a
+        // no-op), so set the quiet bit explicitly; that keeps the payload, as
+        // cvtss2sd, fcvt and frsp do.
+        BLOCK(Value::fromF64(std::isnan(operand.asF32())
+            ? std::bit_cast<double>(std::bit_cast<uint64_t>(static_cast<double>(operand.asF32())) | 0x0008000000000000ULL)
+            : static_cast<double>(operand.asF32()))),
         BLOCK(
             m_jit.convertFloatToDouble(operandLocation.asFPR(), resultLocation.asFPR());
         )
