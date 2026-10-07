@@ -174,13 +174,7 @@ private:
     static unsigned computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum = 1);
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);
     static constexpr bool jitEnabledByDefault() { return isAddress64Bit(); }
-    // PPC64LE: Yarr has a register map but its JIT has never been brought up, and
-    // enabling it segfaults across the regexp tests. The rest of the JIT is fine,
-    // so keep this off rather than holding useJIT back. Still overridable with
-    // --useRegExpJIT=1 for bring-up work.
-    static constexpr bool regExpJITEnabledByDefault() { return jitEnabledByDefault() && is64Bit() && !isPPC64LE(); }
-    // PPC64LE deliberately absent: InPlaceInterpreter64.asm has no ppc64le forms,
-    // so wasm runs on BBQ/OMG here instead.
+    static constexpr bool regExpJITEnabledByDefault() { return jitEnabledByDefault() && is64Bit(); }
     static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64() || isPPC64LE(); }
     static double defaultQuickDFGTierUpThresholdFactor()
     {
