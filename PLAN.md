@@ -873,6 +873,58 @@ inconsistent with the file you just wrote.*
   bogus signature error. Fix: retry each rsync, then **verify by md5** against the remote.
 - `PrivateHeaders/` entries are symlinks, not copies — verified, *not* a staleness source. Don't chase them.
 
+## Appendix — rebuilding the POWER9 test box from scratch
+
+Written after losing `/home/tle/Work/WebKit` on 2026-10-07. The build *invocation* was recorded
+below but the *configure* recipe never was, so it had to be reconstructed from session history.
+Everything needed to go from an empty box to a working build:
+
+```bash
+# 1. Source tree. Exclude .git (12 GB of the 20 GB checkout, not needed on the box) and any build
+#    dir. --exclude also protects remote build trees from --delete. ~8 GB, ~15 min over the LAN.
+rsync -az --delete --exclude .git --exclude WebKitBuild --exclude 'WebKitBuild.*' \
+    /Users/tle/Work/WebKit/ power9:/home/tle/Work/WebKit/
+
+# 2. Packages that are NOT obvious. Fedora splits core Perl into sub-packages and CMake's
+#    FindPerlModules fails on the missing ones with only a find_package error to go on.
+sudo dnf install -y perl-English perl-FindBin perl-JSON-PP   # required to configure at all
+sudo dnf install -y wabt                                     # wat2wasm, for hand-built wasm smoke tests
+
+# 3. TMPDIR must be off /tmp. /tmp is a 32 GB tmpfs with a ~25.9 GB user quota; exceeding it shows
+#    up as an EMPTY ninja log plus exit 1, which looks like nothing at all went wrong.
+mkdir -p /home/tle/tmp
+
+# 4. Configure. ENABLE_FTL_DEFAULT is now ON for WTF_CPU_PPC64LE, so FTL and the wasm BBQ/OMG JITs
+#    would come on by default, but they are passed explicitly here so the recipe is self-documenting.
+#    CXXFLAGS works around a GCC 16 sfinae diagnostic.
+cd /home/tle/Work/WebKit
+TMPDIR=/home/tle/tmp CXXFLAGS="-Wno-error=sfinae-incomplete" \
+  cmake -S . -B WebKitBuild/FTL -GNinja -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_JIT=ON -DENABLE_FTL_JIT=ON -DENABLE_WEBASSEMBLY=ON \
+    -DENABLE_WEBASSEMBLY_BBQJIT=ON -DENABLE_WEBASSEMBLY_OMGJIT=ON \
+    -DENABLE_STATIC_JSC=OFF -DUSE_SYSTEM_MALLOC=ON
+
+# 5. Build. Confirm the flags actually took before trusting the result:
+#    grep -E 'ENABLE_JIT |ENABLE_FTL_JIT|ENABLE_WEBASSEMBLY' WebKitBuild/FTL/cmakeconfig.h
+TMPDIR=/home/tle/tmp ninja -C WebKitBuild/FTL jsc
+```
+
+Helper scripts and fixtures that live outside the repo and are therefore NOT restored by the rsync
+— recreate them or keep them in version control somewhere:
+
+- `/home/tle/fencecheck.sh` — full `JSTests/stress` gate, `-c 20`, results in `/home/tle/stress-fence`.
+  Expect 47,610 PASS / 0 FAIL. Run this after anything touching Options defaults, shared C++ or the
+  LLInt; it has already caught a 4,679-test regression that a green build and a working
+  `typeof WebAssembly` both missed.
+- `/home/tle/wasmrun.sh` — same shape against `JSTests/wasm.yaml`.
+- `/tmp/k/w1.js` — minimal wasm module, hand-assembled bytes, no tooling needed.
+- `/tmp/k/prim.wat` + `prim.js` — targeted smoke test for the primitives ported for BBQ: rotates
+  swept past their wrap boundaries, `ctz(0)` at both widths, popcount, float truncation, and 8xf64
+  and 8xi32 functions that exercise wasm argument save/restore. Build with
+  `wat2wasm /tmp/k/prim.wat -o /tmp/k/prim.wasm`.
+- The fast iteration loops in `/tmp/k/` (`oasm.sh`, `syn3.sh`, `checkasm.sh`) depend on build
+  artifacts and have to be regenerated after a build. See the Phase 6 tooling notes.
+
 ## Appendix — commands cheat sheet
 
 ```sh
