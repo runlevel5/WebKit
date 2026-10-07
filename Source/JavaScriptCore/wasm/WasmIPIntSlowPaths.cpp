@@ -1272,18 +1272,18 @@ WASM_IPINT_EXTERN_CPP_DECL(set_global_64, unsigned index, uint64_t value)
 
 WASM_IPINT_EXTERN_CPP_DECL(get_global_64, unsigned index)
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     WASM_RETURN_TWO(std::bit_cast<void*>(instance->loadI64Global(index)), 0);
 #else
     UNUSED_PARAM(instance);
     UNUSED_PARAM(index);
-    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64 and X86_64 (for now)");
+    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64LE (for now)");
 #endif
 }
 
 WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_wait32, IPIntStackEntry* args)
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     uint8_t memoryIndex = args[4].i32;
     uint64_t timeout = args[5].i64;
     uint32_t value = args[6].i32;
@@ -1303,13 +1303,13 @@ WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_wait32, IPIntStackEntry* args)
 #else
     UNUSED_PARAM(instance);
     UNUSED_PARAM(args);
-    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64 and X86_64 (for now)");
+    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64LE (for now)");
 #endif
 }
 
 WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_wait64, IPIntStackEntry* args)
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     uint8_t memoryIndex = args[4].i32;
     uint64_t timeout = args[5].i64;
     uint64_t value = args[6].i64;
@@ -1329,13 +1329,13 @@ WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_wait64, IPIntStackEntry* args)
 #else
     UNUSED_PARAM(instance);
     UNUSED_PARAM(args);
-    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64 and X86_64 (for now)");
+    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64LE (for now)");
 #endif
 }
 
 WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_notify, IPIntStackEntry* args)
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     uint64_t offset = args[0].i64;
     uint8_t memoryIndex = args[1].i32;
     int32_t count = args[2].i32;
@@ -1345,7 +1345,7 @@ WASM_IPINT_EXTERN_CPP_DECL(memory_atomic_notify, IPIntStackEntry* args)
 #else
     UNUSED_PARAM(instance);
     UNUSED_PARAM(args);
-    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64 and X86_64 (for now)");
+    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64LE (for now)");
 #endif
 }
 

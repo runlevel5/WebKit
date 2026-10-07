@@ -829,10 +829,12 @@ void Options::notifyOptionsChanged()
     Options::useConcurrentGC() = false;
     Options::forceUnlinkedDFG() = false;
     Options::useWasmSIMD() = false;
+#if !CPU(PPC64LE)
     Options::useWasmIPInt() = false;
-    // PPC64LE has no IPInt handlers (InPlaceInterpreter64.asm is ARM64/X86_64 only),
-    // so BBQ is its wasm execution engine; leaving both off aborts VM startup on the
-    // useWasmIPInt/useBBQJIT coherence check.
+#endif
+    // PPC64LE has IPInt (InPlaceInterpreter64.asm), opt-in via --useWasmIPInt=1
+    // (ipintEnabledByDefault() is false there), so the option is not forced off;
+    // BBQ stays on, as it is the default engine.
 #if !CPU(ARM_THUMB2) && !CPU(PPC64LE)
     Options::useBBQJIT() = false;
 #endif
@@ -866,12 +868,18 @@ void Options::notifyOptionsChanged()
     if (!Options::useWasmIPInt())
         Options::thresholdForBBQOptimizeAfterWarmUp() = 0; // Trigger immediate BBQ tier up.
 
-#if CPU(ARM_THUMB2) || CPU(PPC64LE)
-    // WasmIPInt is not supported on ARM32 or PPC64, so disable wasm if BBQJIT is
-    // disabled: those platforms have no other engine, and aborting on the
+#if CPU(ARM_THUMB2)
+    // WasmIPInt is not supported on ARM32, so disable wasm if BBQJIT is
+    // disabled: that platform has no other engine, and aborting on the
     // coherence check would take down every configuration that merely turns the
     // JIT off, including ones that never touch wasm.
     if (Options::useWasm() && !Options::useBBQJIT())
+        Options::useWasm() = false;
+#elif CPU(PPC64LE)
+    // IPInt is opt-in on PPC64LE (ipintEnabledByDefault() is false there), so
+    // turning the JIT off leaves no wasm engine unless --useWasmIPInt=1 was given;
+    // disable wasm in that case rather than abort on the coherence check.
+    if (Options::useWasm() && !Options::useBBQJIT() && !Options::useWasmIPInt())
         Options::useWasm() = false;
 #endif
 
