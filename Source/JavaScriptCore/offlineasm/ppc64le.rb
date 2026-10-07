@@ -53,21 +53,25 @@
 #   r26  => ws3, t12 (callee-saved; preserved by C; t12=ws3 per LLInt const ws3 = t12)
 #   r31  => cfr   (frame pointer, callee-saved)
 #
-# FPR assignments (ELFv2: f0 volatile scratch; f1-f13 volatile args; f14-f31 callee-save):
-#   f0   => ft0
-#   f1   => fa0, wfa0
-#   f2   => fa1, wfa1
-#   f3   => fa2, wfa2
-#   f4   => fa3, wfa3
-#   f5   => fa4, wfa4
-#   f6   => fa5, wfa5
-#   f7   => fa6, wfa6
-#   f8   => fa7, wfa7
-#   f9   => ft1
-#   f10  => ft2
-#   f11  => ft3
-#   f12  => ft4
-#   f13  => ft5
+# FPR assignments (ELFv2: f0 volatile scratch; f1-f13 volatile, f1-f8 carry
+# FP arguments and f1 the FP result; f14-f31 callee-save):
+#   f1   => ft0, fa0, wfa0, fr
+#   f2   => ft1, fa1, wfa1
+#   f3   => ft2, fa2, wfa2
+#   f4   => ft3, fa3, wfa3
+#   f5   => ft4,      wfa4
+#   f6   => ft5,      wfa5
+#   f7   => ft6,      wfa6
+#   f8   => ft7,      wfa7
+# fa*/wfa*/fr are not register names in offlineasm: LowLevelInterpreter.asm
+# defines them as consts aliasing ft0-ft7 (the generic `else` arm of its
+# register-convention chain, which PPC64LE takes), and consts are substituted
+# before lowering.  So the argument registers are whatever ft0-ft7 lower to,
+# and ft0-ft7 must be f1-f8 for ELFv2 and for JSC's own PPC64 convention
+# (FPRInfo.h: argumentFPR0-7 = f1-f8, returnValueFPR = f1, fpRegT0-7 =
+# f1-f8).  This is the arm64 layout (q0-q7 => ft0-ft7 = fa0-fa7, fr = q0)
+# and satisfies the contract in LowLevelInterpreter.asm: ft0-ft5 pairwise
+# distinct, ft1-ft5 never fr, ftX never faY for X != Y.
 #   f14  => csfr0
 #   f15  => csfr1
 #   f16  => csfr2
@@ -85,11 +89,18 @@ PPC64LE_EXTRA_GPRS = [
     SpecialRegister.new("r29"),
     SpecialRegister.new("r30"),
 ]
+# Extra scratch FPRs for Tmp allocation.  These were f24-f27, which ELFv2
+# makes callee-saved and which nothing saves on the way into JS (vmEntry's
+# pushCalleeSaves covers r24-r30, and JSC's FP callee saves are f14-f21), so
+# every FP temporary -- e.g. the one ppc64le_truncd2i needs -- clobbered a
+# C caller's f24.  f9-f12 are volatile and, with ft0-ft7 on f1-f8, named by
+# nothing else.  They are ELFv2 argument registers 9-12, but a Tmp lives only
+# inside the expansion of one offlineasm instruction, never across a call.
 PPC64LE_EXTRA_FPRS = [
-    SpecialRegister.new("f24"),
-    SpecialRegister.new("f25"),
-    SpecialRegister.new("f26"),
-    SpecialRegister.new("f27"),
+    SpecialRegister.new("f9"),
+    SpecialRegister.new("f10"),
+    SpecialRegister.new("f11"),
+    SpecialRegister.new("f12"),
 ]
 
 # -------------------------------------------------------------------------
@@ -231,38 +242,25 @@ end
 class FPRegisterID
     def ppc64leOperand
         case @name
+        # See the FPR table at the top of the file: ft0-ft7 are also
+        # fa0-fa3/wfa0-wfa7/fr (via LowLevelInterpreter.asm consts), so they
+        # must be the ELFv2 FP argument registers f1-f8.
         when "ft0"
-            "0"
-        when "ft1"
-            "9"
-        when "ft2"
-            "10"
-        when "ft3"
-            "11"
-        when "ft4"
-            "12"
-        when "ft5"
-            "13"
-        when "fa0", "wfa0"
             "1"
-        when "fa1", "wfa1"
+        when "ft1"
             "2"
-        when "fa2", "wfa2"
+        when "ft2"
             "3"
-        when "fa3", "wfa3"
+        when "ft3"
             "4"
-        when "fa4", "wfa4"
+        when "ft4"
             "5"
-        when "fa5", "wfa5"
+        when "ft5"
             "6"
-        when "fa6", "wfa6"
+        when "ft6"
             "7"
-        when "fa7", "wfa7"
+        when "ft7"
             "8"
-        when "ft6"    # wfa6 alias on 8-arg platforms; callee-saved on PPC64LE ELFv2
-            "22"
-        when "ft7"    # wfa7 alias on 8-arg platforms
-            "23"
         when "csfr0"
             "14"
         when "csfr1"
@@ -1827,8 +1825,19 @@ class Instruction
         # need a scratch register we do not have at lowering time, so reject
         # it loudly (arm64.rb's arm64SimpleAddressOperand does the same).
         #
-        # Ordering: lwsync after the load-reserve gives acquire, lwsync before
-        # the store-conditional gives release (Power ISA v2.07B B.2.1.1).
+        # Ordering.  The contract is ARM64's ldaxr/stlxr, which are RCsc: an
+        # earlier store-release is ordered before a later load-acquire, so
+        # atomics are sequentially consistent with each other.  lwsync alone
+        # cannot give that -- it never orders a store before a later load --
+        # so a Dekker pattern (atomic store A; atomic RMW on B) could
+        # reorder.  Hence a full `sync` (hwsync) BEFORE every load-reserve,
+        # the leading-sync seq_cst mapping also used by C++11 compilers on
+        # Power and by MacroAssemblerPPC64's branchAtomicWeakCAS; `lwsync`
+        # after the load-reserve gives acquire, and `lwsync` before the
+        # store-conditional gives release (Power ISA v2.07B B.2.1.1).  The
+        # sync sits inside the retry loop (offlineasm lowers per
+        # instruction), which costs time on contention but not correctness:
+        # neither sync nor lwsync clears a reservation.
         # POWER8-safe: lbarx/lharx/stbcx./sthcx. are v2.06; the rest are older.
         #
         # Encodings verified with `as -mpower8 -a64` on the POWER9 box:
@@ -1851,6 +1860,7 @@ class Instruction
             # l{b,h,w}arx zero-extend into the full 64-bit register, matching
             # ARM64's ldaxr{b,h} Wt writes — the callers compare the result
             # against a 64-bit `expected` with bqneq, so this matters.
+            $asm.puts "sync"                              # order prior stores (RCsc)
             $asm.puts "#{larx} #{dst}, 0, #{addr}"
             $asm.puts "lwsync"                            # acquire
 
