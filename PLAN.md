@@ -885,10 +885,13 @@ Everything needed to go from an empty box to a working build:
 rsync -az --delete --exclude .git --exclude WebKitBuild --exclude 'WebKitBuild.*' \
     /Users/tle/Work/WebKit/ power9:/home/tle/Work/WebKit/
 
-# 2. Packages that are NOT obvious. Fedora splits core Perl into sub-packages and CMake's
-#    FindPerlModules fails on the missing ones with only a find_package error to go on.
-sudo dnf install -y perl-English perl-FindBin perl-JSON-PP   # required to configure at all
-sudo dnf install -y wabt                                     # wat2wasm, for hand-built wasm smoke tests
+# 2. Packages that are NOT obvious. Fedora splits core Perl into ~150 sub-packages, and a minimal
+#    install has only a fraction of them. The failures are staggered and opaque: configure dies in
+#    CMake's FindPerlModules with a bare find_package error (English, FindBin, JSON::PP), and once
+#    that is fixed the build dies much later in create_hash_table ("Can't locate bigint.pm"),
+#    hundreds of steps in. Install the full meta-package rather than chasing modules one at a time.
+sudo dnf install -y perl    # all of core Perl; pulls in ~157 packages on a minimal box
+sudo dnf install -y wabt    # wat2wasm, for hand-built wasm smoke tests
 
 # 3. TMPDIR must be off /tmp. /tmp is a 32 GB tmpfs with a ~25.9 GB user quota; exceeding it shows
 #    up as an EMPTY ninja log plus exit 1, which looks like nothing at all went wrong.
