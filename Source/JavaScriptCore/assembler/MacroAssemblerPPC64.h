@@ -2146,7 +2146,6 @@ public:
         RegisterID ea = prepareAtomicAddress(address, memoryTempRegister);
         m_assembler.stxvd2x(src, PPC64Registers::r0, ea);
     }
-    void move128ToVector(v128_t, FPRegisterID) { PPC64_UNIMPLEMENTED(); }
 
     // --- FP conditional moves (Air MoveDoubleConditionally* / *Float) ----
     template<typename CompareEmitter>
@@ -2215,140 +2214,1074 @@ public:
         moveDoubleConditionallyImpl({ b.bo, b.bi }, thenCase, elseCase, dest, [&] { emitTest64ToCR0(left, mask); });
     }
 
-    // --- SIMD vector surface: unimplemented stubs ------------------------
-    void vectorDupElementFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorDupElementFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorDupElementInt32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorDupElementInt64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneInt32(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneInt64(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneSignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneSignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneUnsignedInt16(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLaneUnsignedInt8(TrustedImm32, FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneFloat32(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneFloat64(TrustedImm32, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneInt16(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneInt32(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneInt64(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLaneInt8(TrustedImm32, RegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
-    // ENABLE_WEBASSEMBLY_SIMD is off for this port; these exist so the
-    // unguarded Air opcode forms compile. Signatures scraped from ARM64.
-    void compareFloatingPointVector(DoubleCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAndnot(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAnyTrue(FPRegisterID, RegisterID) { PPC64_UNSUPPORTED(); }
-    void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorBitwiseSelect(FPRegisterID left, FPRegisterID right, FPRegisterID inputBitsAndDest) { PPC64_UNSUPPORTED(); }
-    void vectorCeil(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorConvert(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorDemote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtendHigh(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtendLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtractPair(SIMDInfo simdInfo, TrustedImm32 firstLane, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorFloor(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorFusedNegMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorLoad16Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad16Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad32Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad32Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad64Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad64Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorLoad8Lane(Address address, TrustedImm32 imm, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorNarrow(SIMDInfo simdInfo, FPRegisterID lower, FPRegisterID upper, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorNearest(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorPromote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorRelaxedDotI8x16I7x16(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID a, FPRegisterID b, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch1, FPRegisterID scratch2) { PPC64_UNSUPPORTED(); }
-    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorRelaxedQ15Mulr(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorStore16Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
-    void vectorStore32Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
-    void vectorStore64Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
-    void vectorStore8Lane(FPRegisterID val, Address address, TrustedImm32 imm) { PPC64_UNSUPPORTED(); }
-    void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSwizzle(FPRegisterID a, FPRegisterID control, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorTrunc(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    // =====================================================================
+    // WebAssembly SIMD (v128) on the POWER8 baseline (VSX + VMX, ISA v2.07B).
+    //
+    // Register model. A v128 lives in the full 128-bit VSR that aliases
+    // FPRegisterID fN (VSR N, N = 0..31), so the register allocators, spill
+    // code and the wasm calling convention treat vectors exactly as they treat
+    // ARM64's q registers. VSX instructions address all 64 VSRs and work on
+    // those registers in place. VMX (AltiVec) instructions can only name VSR
+    // 32-63 (v0-v31), so a VMX operation copies its operands into v0..v5 with
+    // xxlor, operates there, and copies the result back. v0..v5 are scratch
+    // *within a single MacroAssembler call*: nothing is ever live in VSR 32-63
+    // between two calls, which is why nothing saves or allocates them. (They
+    // are ELFv2-volatile; IPInt's own v0-v7 mapping in offlineasm is never
+    // live across JIT code either.) Doubleword 1 of every VSR is volatile under
+    // ELFv2 and doubleword 0 of f14-f31 is callee-saved, which is the same
+    // Width64 callee-save model ARM64 uses for d8-d15.
+    //
+    // Lane order. The canonical in-register layout is the one lxvd2x/stxvd2x
+    // produce on little-endian: doubleword 0 (ISA bits 0-63, the half that is
+    // also the scalar FPR) holds bytes 0-7 of the v128 as a little-endian u64,
+    // doubleword 1 holds bytes 8-15. Consequences:
+    //   - vector loads and stores are a bare lxvd2x/stxvd2x, no permute;
+    //   - f64x2/i64x2 lane 0 is the scalar FPR, as on ARM64 and x86;
+    //   - wasm lane i of an S-byte element is ISA (big-endian numbered)
+    //     element i ^ (8/S - 1): bytes i ^ 7, halfwords i ^ 3, words i ^ 1,
+    //     doublewords i.
+    // Element-wise operations do not care. Every lane-indexed or cross-lane
+    // operation below (extract/replace/dup lane, splat, shuffle, swizzle,
+    // extend, narrow, extmul, promote/demote, conversions of the low half,
+    // bitmask) is written against that mapping. The VMX unpack/pack
+    // instructions see the two doublewords in the opposite order, so extend
+    // and narrow add an xxswapd.
+    //
+    // f32 in a scalar FPR is double format (the whole port relies on that) but
+    // an f32 lane is single format, so scalar <-> lane moves go through
+    // xscvdpspn / xscvspdpn (non-signalling, NaN payloads preserved).
+    //
+    // GPR scratch: dataTempRegister (r11) and memoryTempRegister (r12) only,
+    // as everywhere else in this file. No vector operation uses fpTempRegister.
+    // =====================================================================
+    using VRegisterID = PPC64Registers::VRegisterID;
+    static constexpr uint32_t vsr(FPRegisterID r) { return static_cast<uint32_t>(r); }
+    static constexpr uint32_t vsr(VRegisterID r) { return 32 + static_cast<uint32_t>(r); }
+    static constexpr VRegisterID vecTemp0 = PPC64Registers::v0;
+    static constexpr VRegisterID vecTemp1 = PPC64Registers::v1;
+    static constexpr VRegisterID vecTemp2 = PPC64Registers::v2;
+    static constexpr VRegisterID vecTemp3 = PPC64Registers::v3;
+    static constexpr VRegisterID vecTemp4 = PPC64Registers::v4;
+    // Used only inside materializeVectorBits().
+    static constexpr VRegisterID vecTempMaterialize = PPC64Registers::v5;
 
-    // Remaining SIMD surface required by the wasm BBQ JIT. PPC64LE keeps
-    // Options::useWasmSIMD() off (notifyOptionsChanged forces it false for
-    // every non-x86_64/arm64 target) and run-jsc-stress-tests skips the SIMD
-    // variants because $isSIMDPlatform excludes ppc64le, so none of these are
-    // reachable today -- but BBQ still has to compile. They trap loudly rather
-    // than silently doing nothing if a future change ever routes here.
-    void moveZeroToVector(FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorSplat(SIMDLane lane, RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSplat(SIMDLane lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUshl8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
-    void vectorSshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
-    void vectorUshr8(FPRegisterID input, FPRegisterID shift, FPRegisterID dest, FPRegisterID tmp1, FPRegisterID tmp2) { PPC64_UNSUPPORTED(); }
-    void vectorSshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorUshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNSUPPORTED(); }
-    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { PPC64_UNSUPPORTED(); }
-    void vectorLoad8Splat(Address address, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLane(SIMDLane simdLane, SIMDSignMode signMode, TrustedImm32 lane, FPRegisterID src, RegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtractLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, RegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID tmp) { PPC64_UNSUPPORTED(); }
-    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorPopcnt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
-    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNSUPPORTED(); }
-    void vectorConvertLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID src, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR1, FPRegisterID scratchFPR2) { PPC64_UNSUPPORTED(); }
-    void vectorNot(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorNeg(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest, RegisterID scratchGPR, FPRegisterID scratchFPR) { PPC64_UNSUPPORTED(); }
-    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorSshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest, RegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorHorizontalAdd(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID scratch) { PPC64_UNSUPPORTED(); }
-    void vectorUnsignedMin(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
-    void vectorUnsignedMax(SIMDInfo simdInfo, FPRegisterID vec, FPRegisterID dst) { PPC64_UNSUPPORTED(); }
-    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
-    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { PPC64_UNSUPPORTED(); }
+    using VMXBinaryOp = void (PPC64Assembler::*)(VRegisterID, VRegisterID, VRegisterID);
+    using VMXUnaryOp = void (PPC64Assembler::*)(VRegisterID, VRegisterID);
+    using VSXBinaryOp = void (PPC64Assembler::*)(uint32_t, uint32_t, uint32_t);
+    using VSXUnaryOp = void (PPC64Assembler::*)(uint32_t, uint32_t);
+
+    void copyToVR(FPRegisterID src, VRegisterID dest) { m_assembler.xxlor(vsr(dest), vsr(src), vsr(src)); }
+    void copyFromVR(VRegisterID src, FPRegisterID dest) { m_assembler.xxlor(vsr(dest), vsr(src), vsr(src)); }
+    void zeroVR(VRegisterID r) { m_assembler.vxor(r, r, r); }
+
+    void vmxBinary(VMXBinaryOp op, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        (m_assembler.*op)(vecTemp0, vecTemp0, vecTemp1);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vmxUnary(VMXUnaryOp op, FPRegisterID input, FPRegisterID dest)
+    {
+        copyToVR(input, vecTemp0);
+        (m_assembler.*op)(vecTemp0, vecTemp0);
+        copyFromVR(vecTemp0, dest);
+    }
+
+    static unsigned isaElementForLane(unsigned elementBytes, unsigned lane)
+    {
+        return lane ^ (8 / elementBytes - 1);
+    }
+
+    // Materializes raw ISA doublewords: dw0 is the value mfvsrd would read.
+    // Clobbers dataTempRegister and vecTempMaterialize.
+    void materializeVectorBits(uint64_t dw0, uint64_t dw1, uint32_t destVSR)
+    {
+        ASSERT(destVSR != vsr(vecTempMaterialize));
+        if (!dw0 && !dw1) {
+            m_assembler.xxlxor(destVSR, destVSR, destVSR);
+            return;
+        }
+        if (!~dw0 && !~dw1) {
+            m_assembler.xxleqv(destVSR, destVSR, destVSR);
+            return;
+        }
+        moveImmToScratch(static_cast<int64_t>(dw0), dataTempRegister);
+        m_assembler.mtvsrd(destVSR, dataTempRegister);
+        if (dw1 == dw0) {
+            m_assembler.xxpermdi(destVSR, destVSR, destVSR, 0);
+            return;
+        }
+        moveImmToScratch(static_cast<int64_t>(dw1), dataTempRegister);
+        m_assembler.mtvsrd(vsr(vecTempMaterialize), dataTempRegister);
+        m_assembler.xxpermdi(destVSR, destVSR, vsr(vecTempMaterialize), 0);
+    }
+    // ISA byte k of a vector built by materializeVectorBits().
+    static void setISAByte(uint64_t& dw0, uint64_t& dw1, unsigned k, uint8_t value)
+    {
+        uint64_t& dw = k < 8 ? dw0 : dw1;
+        unsigned shift = 56 - 8 * (k & 7);
+        dw = (dw & ~(0xffull << shift)) | (static_cast<uint64_t>(value) << shift);
+    }
+
+    void move128ToVector(v128_t value, FPRegisterID dest)
+    {
+        // Lane bytes 0-7 form doubleword 0 as a little-endian u64.
+        materializeVectorBits(value.u64x2[0], value.u64x2[1], vsr(dest));
+    }
+    void moveZeroToVector(FPRegisterID dest) { m_assembler.xxlxor(vsr(dest), vsr(dest), vsr(dest)); }
+
+    // result byte (wasm lane order) l = concat(first, second) byte map[l], map[l] < 32.
+    void vectorPermuteBytes(const uint8_t map[16], FPRegisterID first, FPRegisterID second, FPRegisterID dest)
+    {
+        // vperm selects ISA byte c of first||second for control byte c. Wasm
+        // byte x of either input is ISA byte x ^ 7 of it, so the control for
+        // result ISA byte k (= wasm byte k ^ 7) is map[k ^ 7] ^ 7.
+        uint64_t dw0 = 0, dw1 = 0;
+        for (unsigned k = 0; k < 16; ++k) {
+            ASSERT(map[k ^ 7] < 32);
+            setISAByte(dw0, dw1, k, map[k ^ 7] ^ 7);
+        }
+        materializeVectorBits(dw0, dw1, vsr(vecTemp2));
+        copyToVR(first, vecTemp0);
+        copyToVR(second, vecTemp1);
+        m_assembler.vperm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp0, dest);
+    }
+
+    // wasm i8x16.shuffle: pattern bytes are 0..31 indices into a||b.
+    void vectorShuffle(v128_t pattern, FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        uint8_t map[16];
+        for (unsigned i = 0; i < 16; ++i)
+            map[i] = pattern.u8x16[i] & 31;
+        vectorPermuteBytes(map, a, b, dest);
+    }
+
+    // --- Lane access ------------------------------------------------------
+    void vectorExtractLaneToGPR(unsigned elementBytes, unsigned lane, bool signExtend, FPRegisterID src, RegisterID dest)
+    {
+        unsigned perDoubleword = 8 / elementBytes;
+        ASSERT(lane < 2 * perDoubleword);
+        if (lane >= perDoubleword) {
+            m_assembler.xxswapd(vsr(vecTemp0), vsr(src));
+            m_assembler.mfvsrd(dest, vsr(vecTemp0));
+        } else
+            m_assembler.mfvsrd(dest, vsr(src));
+        if (elementBytes == 8)
+            return;
+        unsigned width = elementBytes * 8;
+        unsigned shift = (lane % perDoubleword) * width;
+        if (signExtend) {
+            unsigned left = 64 - shift - width;
+            if (left)
+                m_assembler.sldi(dest, dest, left);
+            m_assembler.sradi(dest, dest, 64 - width);
+        } else
+            m_assembler.rldicl(dest, dest, (64 - shift) & 63, 64 - width);
+    }
+    void vectorReplaceLaneFromGPR(unsigned elementBytes, unsigned lane, RegisterID src, FPRegisterID dest)
+    {
+        ASSERT(src != dataTempRegister);
+        unsigned perDoubleword = 8 / elementBytes;
+        ASSERT(lane < 2 * perDoubleword);
+        bool high = lane >= perDoubleword;
+        uint32_t temp = vsr(vecTemp0);
+        if (elementBytes == 8)
+            m_assembler.mtvsrd(temp, src);
+        else {
+            unsigned width = elementBytes * 8;
+            unsigned shift = (lane % perDoubleword) * width;
+            if (high) {
+                m_assembler.xxswapd(temp, vsr(dest));
+                m_assembler.mfvsrd(dataTempRegister, temp);
+            } else
+                m_assembler.mfvsrd(dataTempRegister, vsr(dest));
+            m_assembler.rldimi(dataTempRegister, src, shift, 64 - shift - width);
+            m_assembler.mtvsrd(temp, dataTempRegister);
+        }
+        if (high)
+            m_assembler.xxpermdi(vsr(dest), vsr(dest), temp, 0);
+        else
+            m_assembler.xxpermdi(vsr(dest), temp, vsr(dest), 1);
+    }
+
+    void vectorExtractLane(SIMDLane simdLane, SIMDSignMode signMode, TrustedImm32 lane, FPRegisterID src, RegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdLane));
+        vectorExtractLaneToGPR(elementByteSize(simdLane), lane.m_value, signMode == SIMDSignMode::Signed, src, dest);
+    }
+    void vectorExtractLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        if (simdLane == SIMDLane::f32x4)
+            vectorExtractLaneFloat32(lane, src, dest);
+        else {
+            ASSERT(simdLane == SIMDLane::f64x2);
+            vectorExtractLaneFloat64(lane, src, dest);
+        }
+    }
+    void vectorExtractLaneInt64(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(8, lane.m_value, false, src, dest); }
+    void vectorExtractLaneInt32(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(4, lane.m_value, false, src, dest); }
+    void vectorExtractLaneSignedInt16(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(2, lane.m_value, true, src, dest); }
+    void vectorExtractLaneUnsignedInt16(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(2, lane.m_value, false, src, dest); }
+    void vectorExtractLaneSignedInt8(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(1, lane.m_value, true, src, dest); }
+    void vectorExtractLaneUnsignedInt8(TrustedImm32 lane, FPRegisterID src, RegisterID dest) { vectorExtractLaneToGPR(1, lane.m_value, false, src, dest); }
+    void vectorExtractLaneFloat64(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        if (lane.m_value)
+            m_assembler.xxswapd(vsr(dest), vsr(src));
+        else if (src != dest)
+            m_assembler.xxlor(vsr(dest), vsr(src), vsr(src));
+    }
+    void vectorExtractLaneFloat32(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        // Rotate the lane's word into word 0, then single -> double format.
+        unsigned word = isaElementForLane(4, lane.m_value);
+        if (word) {
+            m_assembler.xxsldwi(vsr(vecTemp0), vsr(src), vsr(src), word);
+            m_assembler.xscvspdpn(vsr(dest), vsr(vecTemp0));
+        } else
+            m_assembler.xscvspdpn(vsr(dest), vsr(src));
+    }
+
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, RegisterID src, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdLane));
+        vectorReplaceLaneFromGPR(elementByteSize(simdLane), lane.m_value, src, dest);
+    }
+    void vectorReplaceLane(SIMDLane simdLane, TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        if (simdLane == SIMDLane::f32x4)
+            vectorReplaceLaneFloat32(lane, src, dest);
+        else {
+            ASSERT(simdLane == SIMDLane::f64x2);
+            vectorReplaceLaneFloat64(lane, src, dest);
+        }
+    }
+    void vectorReplaceLaneInt64(TrustedImm32 lane, RegisterID src, FPRegisterID dest) { vectorReplaceLaneFromGPR(8, lane.m_value, src, dest); }
+    void vectorReplaceLaneInt32(TrustedImm32 lane, RegisterID src, FPRegisterID dest) { vectorReplaceLaneFromGPR(4, lane.m_value, src, dest); }
+    void vectorReplaceLaneInt16(TrustedImm32 lane, RegisterID src, FPRegisterID dest) { vectorReplaceLaneFromGPR(2, lane.m_value, src, dest); }
+    void vectorReplaceLaneInt8(TrustedImm32 lane, RegisterID src, FPRegisterID dest) { vectorReplaceLaneFromGPR(1, lane.m_value, src, dest); }
+    void vectorReplaceLaneFloat64(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        if (lane.m_value)
+            m_assembler.xxpermdi(vsr(dest), vsr(dest), vsr(src), 0);
+        else
+            m_assembler.xxpermdi(vsr(dest), vsr(src), vsr(dest), 1);
+    }
+    void vectorReplaceLaneFloat32(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
+    {
+        // double -> single bits in word 0, then into a GPR and in as an i32 lane.
+        m_assembler.xscvdpspn(vsr(vecTemp0), vsr(src));
+        m_assembler.mfvsrd(memoryTempRegister, vsr(vecTemp0));
+        m_assembler.srdi(memoryTempRegister, memoryTempRegister, 32);
+        vectorReplaceLaneFromGPR(4, lane.m_value, memoryTempRegister, dest);
+    }
+
+    void vectorSplat(SIMDLane lane, RegisterID src, FPRegisterID dest)
+    {
+        // mtvsrwz puts the word in ISA word 1, i.e. the low-order end of
+        // doubleword 0: byte 7, halfword 3, word 1.
+        switch (lane) {
+        case SIMDLane::i8x16:
+            m_assembler.mtvsrwz(vsr(vecTemp0), src);
+            m_assembler.vspltb(vecTemp0, vecTemp0, 7);
+            copyFromVR(vecTemp0, dest);
+            return;
+        case SIMDLane::i16x8:
+            m_assembler.mtvsrwz(vsr(vecTemp0), src);
+            m_assembler.vsplth(vecTemp0, vecTemp0, 3);
+            copyFromVR(vecTemp0, dest);
+            return;
+        case SIMDLane::i32x4:
+            m_assembler.mtvsrwz(vsr(dest), src);
+            m_assembler.xxspltw(vsr(dest), vsr(dest), 1);
+            return;
+        case SIMDLane::i64x2:
+            m_assembler.mtvsrd(vsr(dest), src);
+            m_assembler.xxpermdi(vsr(dest), vsr(dest), vsr(dest), 0);
+            return;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    void vectorSplat(SIMDLane lane, FPRegisterID src, FPRegisterID dest)
+    {
+        if (lane == SIMDLane::f32x4) {
+            m_assembler.xscvdpspn(vsr(dest), vsr(src));
+            m_assembler.xxspltw(vsr(dest), vsr(dest), 0);
+            return;
+        }
+        ASSERT(lane == SIMDLane::f64x2);
+        m_assembler.xxpermdi(vsr(dest), vsr(src), vsr(src), 0);
+    }
+    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i8x16, src, dest); }
+    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i16x8, src, dest); }
+    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i32x4, src, dest); }
+    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i64x2, src, dest); }
+    void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::f32x4, src, dest); }
+    void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::f64x2, src, dest); }
+
+    void vectorDupElementInt32(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { m_assembler.xxspltw(vsr(dest), vsr(src), isaElementForLane(4, lane.m_value)); }
+    void vectorDupElementFloat32(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { vectorDupElementInt32(lane, src, dest); }
+    void vectorDupElementInt64(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { m_assembler.xxpermdi(vsr(dest), vsr(src), vsr(src), lane.m_value ? 3 : 0); }
+    void vectorDupElementFloat64(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest) { vectorDupElementInt64(lane, src, dest); }
+
+    // --- Memory lane access ------------------------------------------------
+    void vectorLoad8Lane(Address address, TrustedImm32 lane, FPRegisterID dest) { load8(address, memoryTempRegister); vectorReplaceLaneFromGPR(1, lane.m_value, memoryTempRegister, dest); }
+    void vectorLoad16Lane(Address address, TrustedImm32 lane, FPRegisterID dest) { load16(address, memoryTempRegister); vectorReplaceLaneFromGPR(2, lane.m_value, memoryTempRegister, dest); }
+    void vectorLoad32Lane(Address address, TrustedImm32 lane, FPRegisterID dest) { load32(address, memoryTempRegister); vectorReplaceLaneFromGPR(4, lane.m_value, memoryTempRegister, dest); }
+    void vectorLoad64Lane(Address address, TrustedImm32 lane, FPRegisterID dest) { load64(address, memoryTempRegister); vectorReplaceLaneFromGPR(8, lane.m_value, memoryTempRegister, dest); }
+    void vectorStore8Lane(FPRegisterID src, Address address, TrustedImm32 lane) { vectorExtractLaneToGPR(1, lane.m_value, false, src, dataTempRegister); store8(dataTempRegister, address); }
+    void vectorStore16Lane(FPRegisterID src, Address address, TrustedImm32 lane) { vectorExtractLaneToGPR(2, lane.m_value, false, src, dataTempRegister); store16(dataTempRegister, address); }
+    void vectorStore32Lane(FPRegisterID src, Address address, TrustedImm32 lane) { vectorExtractLaneToGPR(4, lane.m_value, false, src, dataTempRegister); store32(dataTempRegister, address); }
+    void vectorStore64Lane(FPRegisterID src, Address address, TrustedImm32 lane) { vectorExtractLaneToGPR(8, lane.m_value, false, src, dataTempRegister); store64(dataTempRegister, address); }
+    void vectorLoad8Splat(Address address, FPRegisterID dest) { load8(address, memoryTempRegister); vectorSplat(SIMDLane::i8x16, memoryTempRegister, dest); }
+    void vectorLoad16Splat(Address address, FPRegisterID dest) { load16(address, memoryTempRegister); vectorSplat(SIMDLane::i16x8, memoryTempRegister, dest); }
+    void vectorLoad32Splat(Address address, FPRegisterID dest) { load32(address, memoryTempRegister); vectorSplat(SIMDLane::i32x4, memoryTempRegister, dest); }
+    void vectorLoad64Splat(Address address, FPRegisterID dest) { load64(address, memoryTempRegister); vectorSplat(SIMDLane::i64x2, memoryTempRegister, dest); }
+    // v128.load32_zero / load64_zero: the loaded bits in the low lane(s), zeros elsewhere.
+    template<typename AddressType>
+    void vectorLoad32Zero(AddressType address, FPRegisterID dest)
+    {
+        load32(address, memoryTempRegister);
+        m_assembler.mtvsrwz(vsr(vecTemp0), memoryTempRegister);
+        m_assembler.xxlxor(vsr(vecTemp1), vsr(vecTemp1), vsr(vecTemp1));
+        m_assembler.xxpermdi(vsr(dest), vsr(vecTemp0), vsr(vecTemp1), 0);
+    }
+    template<typename AddressType>
+    void vectorLoad64Zero(AddressType address, FPRegisterID dest)
+    {
+        load64(address, memoryTempRegister);
+        m_assembler.mtvsrd(vsr(vecTemp0), memoryTempRegister);
+        m_assembler.xxlxor(vsr(vecTemp1), vsr(vecTemp1), vsr(vecTemp1));
+        m_assembler.xxpermdi(vsr(dest), vsr(vecTemp0), vsr(vecTemp1), 0);
+    }
+
+    // --- Bitwise -------------------------------------------------------------
+    void vectorAnd(SIMDInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { m_assembler.xxland(vsr(dest), vsr(left), vsr(right)); }
+    void vectorOr(SIMDInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { m_assembler.xxlor(vsr(dest), vsr(left), vsr(right)); }
+    void vectorXor(SIMDInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { m_assembler.xxlxor(vsr(dest), vsr(left), vsr(right)); }
+    // left & ~right
+    void vectorAndnot(SIMDInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { m_assembler.xxlandc(vsr(dest), vsr(left), vsr(right)); }
+    void vectorNot(SIMDInfo, FPRegisterID input, FPRegisterID dest) { m_assembler.xxlnor(vsr(dest), vsr(input), vsr(input)); }
+    // inputBitsAndDest = (left & mask) | (right & ~mask), mask = inputBitsAndDest
+    void vectorBitwiseSelect(FPRegisterID left, FPRegisterID right, FPRegisterID inputBitsAndDest)
+    {
+        m_assembler.xxsel(vsr(inputBitsAndDest), vsr(right), vsr(left), vsr(inputBitsAndDest));
+    }
+
+    // --- Integer arithmetic --------------------------------------------------
+    static VMXBinaryOp vmxAddOp(SIMDLane lane)
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return &PPC64Assembler::vaddubm;
+        case SIMDLane::i16x8: return &PPC64Assembler::vadduhm;
+        case SIMDLane::i32x4: return &PPC64Assembler::vadduwm;
+        case SIMDLane::i64x2: return &PPC64Assembler::vaddudm;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    static VMXBinaryOp vmxSubOp(SIMDLane lane)
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return &PPC64Assembler::vsububm;
+        case SIMDLane::i16x8: return &PPC64Assembler::vsubuhm;
+        case SIMDLane::i32x4: return &PPC64Assembler::vsubuwm;
+        case SIMDLane::i64x2: return &PPC64Assembler::vsubudm;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    static VMXBinaryOp vmxMinMaxOp(SIMDLane lane, bool isSigned, bool isMin)
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return isMin ? (isSigned ? &PPC64Assembler::vminsb : &PPC64Assembler::vminub) : (isSigned ? &PPC64Assembler::vmaxsb : &PPC64Assembler::vmaxub);
+        case SIMDLane::i16x8: return isMin ? (isSigned ? &PPC64Assembler::vminsh : &PPC64Assembler::vminuh) : (isSigned ? &PPC64Assembler::vmaxsh : &PPC64Assembler::vmaxuh);
+        case SIMDLane::i32x4: return isMin ? (isSigned ? &PPC64Assembler::vminsw : &PPC64Assembler::vminuw) : (isSigned ? &PPC64Assembler::vmaxsw : &PPC64Assembler::vmaxuw);
+        case SIMDLane::i64x2: return isMin ? (isSigned ? &PPC64Assembler::vminsd : &PPC64Assembler::vminud) : (isSigned ? &PPC64Assembler::vmaxsd : &PPC64Assembler::vmaxud);
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    static VMXBinaryOp vmxCompareEqualOp(SIMDLane lane)
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return &PPC64Assembler::vcmpequb;
+        case SIMDLane::i16x8: return &PPC64Assembler::vcmpequh;
+        case SIMDLane::i32x4: return &PPC64Assembler::vcmpequw;
+        case SIMDLane::i64x2: return &PPC64Assembler::vcmpequd;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    static VMXBinaryOp vmxCompareGreaterOp(SIMDLane lane, bool isSigned)
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return isSigned ? &PPC64Assembler::vcmpgtsb : &PPC64Assembler::vcmpgtub;
+        case SIMDLane::i16x8: return isSigned ? &PPC64Assembler::vcmpgtsh : &PPC64Assembler::vcmpgtuh;
+        case SIMDLane::i32x4: return isSigned ? &PPC64Assembler::vcmpgtsw : &PPC64Assembler::vcmpgtuw;
+        case SIMDLane::i64x2: return isSigned ? &PPC64Assembler::vcmpgtsd : &PPC64Assembler::vcmpgtud;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        if (simdInfo.lane == SIMDLane::f32x4)
+            m_assembler.xvaddsp(vsr(dest), vsr(left), vsr(right));
+        else if (simdInfo.lane == SIMDLane::f64x2)
+            m_assembler.xvadddp(vsr(dest), vsr(left), vsr(right));
+        else
+            vmxBinary(vmxAddOp(simdInfo.lane), left, right, dest);
+    }
+    void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        if (simdInfo.lane == SIMDLane::f32x4)
+            m_assembler.xvsubsp(vsr(dest), vsr(left), vsr(right));
+        else if (simdInfo.lane == SIMDLane::f64x2)
+            m_assembler.xvsubdp(vsr(dest), vsr(left), vsr(right));
+        else
+            vmxBinary(vmxSubOp(simdInfo.lane), left, right, dest);
+    }
+    void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        switch (simdInfo.lane) {
+        case SIMDLane::f32x4:
+            m_assembler.xvmulsp(vsr(dest), vsr(left), vsr(right));
+            return;
+        case SIMDLane::f64x2:
+            m_assembler.xvmuldp(vsr(dest), vsr(left), vsr(right));
+            return;
+        case SIMDLane::i16x8:
+            copyToVR(left, vecTemp0);
+            copyToVR(right, vecTemp1);
+            zeroVR(vecTemp2);
+            m_assembler.vmladduhm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+            copyFromVR(vecTemp0, dest);
+            return;
+        case SIMDLane::i32x4:
+            vmxBinary(&PPC64Assembler::vmuluwm, left, right, dest);
+            return;
+        case SIMDLane::i64x2:
+            // No doubleword vector multiply before POWER10: one mulld per lane.
+            m_assembler.mfvsrd(dataTempRegister, vsr(left));
+            m_assembler.mfvsrd(memoryTempRegister, vsr(right));
+            m_assembler.mulld(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.mtvsrd(vsr(vecTemp0), dataTempRegister);
+            m_assembler.xxswapd(vsr(vecTemp1), vsr(left));
+            m_assembler.mfvsrd(dataTempRegister, vsr(vecTemp1));
+            m_assembler.xxswapd(vsr(vecTemp1), vsr(right));
+            m_assembler.mfvsrd(memoryTempRegister, vsr(vecTemp1));
+            m_assembler.mulld(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.mtvsrd(vsr(vecTemp1), dataTempRegister);
+            m_assembler.xxpermdi(vsr(dest), vsr(vecTemp0), vsr(vecTemp1), 0);
+            return;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        if (simdInfo.lane == SIMDLane::f32x4)
+            m_assembler.xvdivsp(vsr(dest), vsr(left), vsr(right));
+        else {
+            ASSERT(simdInfo.lane == SIMDLane::f64x2);
+            m_assembler.xvdivdp(vsr(dest), vsr(left), vsr(right));
+        }
+    }
+    void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        if (simdInfo.lane == SIMDLane::i8x16)
+            vmxBinary(isSigned ? &PPC64Assembler::vaddsbs : &PPC64Assembler::vaddubs, left, right, dest);
+        else {
+            ASSERT(simdInfo.lane == SIMDLane::i16x8);
+            vmxBinary(isSigned ? &PPC64Assembler::vaddshs : &PPC64Assembler::vadduhs, left, right, dest);
+        }
+    }
+    void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        if (simdInfo.lane == SIMDLane::i8x16)
+            vmxBinary(isSigned ? &PPC64Assembler::vsubsbs : &PPC64Assembler::vsububs, left, right, dest);
+        else {
+            ASSERT(simdInfo.lane == SIMDLane::i16x8);
+            vmxBinary(isSigned ? &PPC64Assembler::vsubshs : &PPC64Assembler::vsubuhs, left, right, dest);
+        }
+    }
+    void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        vmxBinary(simdInfo.lane == SIMDLane::i8x16 ? &PPC64Assembler::vavgub : &PPC64Assembler::vavguh, left, right, dest);
+    }
+    void vectorNeg(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        if (simdInfo.lane == SIMDLane::f32x4) {
+            m_assembler.xvnegsp(vsr(dest), vsr(input));
+            return;
+        }
+        if (simdInfo.lane == SIMDLane::f64x2) {
+            m_assembler.xvnegdp(vsr(dest), vsr(input));
+            return;
+        }
+        copyToVR(input, vecTemp1);
+        zeroVR(vecTemp0);
+        (m_assembler.*vmxSubOp(simdInfo.lane))(vecTemp0, vecTemp0, vecTemp1);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        if (simdInfo.lane == SIMDLane::f32x4) {
+            m_assembler.xvabssp(vsr(dest), vsr(input));
+            return;
+        }
+        if (simdInfo.lane == SIMDLane::f64x2) {
+            m_assembler.xvabsdp(vsr(dest), vsr(input));
+            return;
+        }
+        // max_s(x, 0 - x); the most negative value maps to itself, as wasm wants.
+        copyToVR(input, vecTemp0);
+        zeroVR(vecTemp1);
+        (m_assembler.*vmxSubOp(simdInfo.lane))(vecTemp1, vecTemp1, vecTemp0);
+        (m_assembler.*vmxMinMaxOp(simdInfo.lane, true, false))(vecTemp0, vecTemp0, vecTemp1);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorPopcnt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT_UNUSED(simdInfo, simdInfo.lane == SIMDLane::i8x16);
+        vmxUnary(&PPC64Assembler::vpopcntb, input, dest);
+    }
+
+    void floatingPointVectorMinMax(bool isMin, SIMDLane lane, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        // xvmin/xvmax order -0 below +0 but return the non-NaN operand when one
+        // input is a NaN. Wasm wants a NaN, so lanes where either input is
+        // unordered take left + right instead (a quieted input NaN).
+        bool isF32 = lane == SIMDLane::f32x4;
+        ASSERT(isF32 || lane == SIMDLane::f64x2);
+        uint32_t t0 = vsr(vecTemp0), t1 = vsr(vecTemp1), t2 = vsr(vecTemp2), t3 = vsr(vecTemp3);
+        if (isMin)
+            isF32 ? m_assembler.xvminsp(t0, vsr(left), vsr(right)) : m_assembler.xvmindp(t0, vsr(left), vsr(right));
+        else
+            isF32 ? m_assembler.xvmaxsp(t0, vsr(left), vsr(right)) : m_assembler.xvmaxdp(t0, vsr(left), vsr(right));
+        isF32 ? m_assembler.xvaddsp(t1, vsr(left), vsr(right)) : m_assembler.xvadddp(t1, vsr(left), vsr(right));
+        isF32 ? m_assembler.xvcmpeqsp(t2, vsr(left), vsr(left)) : m_assembler.xvcmpeqdp(t2, vsr(left), vsr(left));
+        isF32 ? m_assembler.xvcmpeqsp(t3, vsr(right), vsr(right)) : m_assembler.xvcmpeqdp(t3, vsr(right), vsr(right));
+        m_assembler.xxland(t2, t2, t3);
+        m_assembler.xxsel(vsr(dest), t1, t0, t2);
+    }
+    void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        if (scalarTypeIsFloatingPoint(simdInfo.lane))
+            floatingPointVectorMinMax(true, simdInfo.lane, left, right, dest);
+        else
+            vmxBinary(vmxMinMaxOp(simdInfo.lane, simdInfo.signMode == SIMDSignMode::Signed, true), left, right, dest);
+    }
+    void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        if (scalarTypeIsFloatingPoint(simdInfo.lane))
+            floatingPointVectorMinMax(false, simdInfo.lane, left, right, dest);
+        else
+            vmxBinary(vmxMinMaxOp(simdInfo.lane, simdInfo.signMode == SIMDSignMode::Signed, false), left, right, dest);
+    }
+    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { vectorMin(simdInfo, left, right, dest); }
+    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest) { vectorMax(simdInfo, left, right, dest); }
+    // pmin(a, b) = b < a ? b : a;  pmax(a, b) = a < b ? b : a
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        uint32_t t0 = vsr(vecTemp0);
+        simdInfo.lane == SIMDLane::f32x4 ? m_assembler.xvcmpgtsp(t0, vsr(left), vsr(right)) : m_assembler.xvcmpgtdp(t0, vsr(left), vsr(right));
+        m_assembler.xxsel(vsr(dest), vsr(left), vsr(right), t0);
+    }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        uint32_t t0 = vsr(vecTemp0);
+        simdInfo.lane == SIMDLane::f32x4 ? m_assembler.xvcmpgtsp(t0, vsr(right), vsr(left)) : m_assembler.xvcmpgtdp(t0, vsr(right), vsr(left));
+        m_assembler.xxsel(vsr(dest), vsr(left), vsr(right), t0);
+    }
+    void vectorPmin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID) { vectorPmin(simdInfo, left, right, dest); }
+    void vectorPmax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID) { vectorPmax(simdInfo, left, right, dest); }
+
+    // --- Floating-point unary ------------------------------------------------
+    void vsxUnary(SIMDLane lane, VSXUnaryOp opF32, VSXUnaryOp opF64, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT(lane == SIMDLane::f32x4 || lane == SIMDLane::f64x2);
+        (m_assembler.*(lane == SIMDLane::f32x4 ? opF32 : opF64))(vsr(dest), vsr(input));
+    }
+    void vectorCeil(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { vsxUnary(simdInfo.lane, &PPC64Assembler::xvrspip, &PPC64Assembler::xvrdpip, input, dest); }
+    void vectorFloor(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { vsxUnary(simdInfo.lane, &PPC64Assembler::xvrspim, &PPC64Assembler::xvrdpim, input, dest); }
+    void vectorTrunc(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { vsxUnary(simdInfo.lane, &PPC64Assembler::xvrspiz, &PPC64Assembler::xvrdpiz, input, dest); }
+    // Rounds in the current mode, which JSC leaves at round-to-nearest-even.
+    void vectorNearest(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { vsxUnary(simdInfo.lane, &PPC64Assembler::xvrspic, &PPC64Assembler::xvrdpic, input, dest); }
+    void vectorSqrt(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest) { vsxUnary(simdInfo.lane, &PPC64Assembler::xvsqrtsp, &PPC64Assembler::xvsqrtdp, input, dest); }
+
+    void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID)
+    {
+        uint32_t t0 = vsr(vecTemp0);
+        m_assembler.xxlor(t0, vsr(addend), vsr(addend));
+        simdInfo.lane == SIMDLane::f32x4 ? m_assembler.xvmaddasp(t0, vsr(mul1), vsr(mul2)) : m_assembler.xvmaddadp(t0, vsr(mul1), vsr(mul2));
+        m_assembler.xxlor(vsr(dest), t0, t0);
+    }
+    // addend - mul1 * mul2
+    void vectorFusedNegMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID)
+    {
+        uint32_t t0 = vsr(vecTemp0);
+        m_assembler.xxlor(t0, vsr(addend), vsr(addend));
+        simdInfo.lane == SIMDLane::f32x4 ? m_assembler.xvnmsubasp(t0, vsr(mul1), vsr(mul2)) : m_assembler.xvnmsubadp(t0, vsr(mul1), vsr(mul2));
+        m_assembler.xxlor(vsr(dest), t0, t0);
+    }
+
+    // --- Comparisons ---------------------------------------------------------
+    void compareFloatingPointVector(DoubleCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        bool isF32 = simdInfo.lane == SIMDLane::f32x4;
+        ASSERT(isF32 || simdInfo.lane == SIMDLane::f64x2);
+        uint32_t l = vsr(left), r = vsr(right), d = vsr(dest), t0 = vsr(vecTemp0), t1 = vsr(vecTemp1);
+        auto eq = [&](uint32_t t, uint32_t a, uint32_t b) { isF32 ? m_assembler.xvcmpeqsp(t, a, b) : m_assembler.xvcmpeqdp(t, a, b); };
+        auto gt = [&](uint32_t t, uint32_t a, uint32_t b) { isF32 ? m_assembler.xvcmpgtsp(t, a, b) : m_assembler.xvcmpgtdp(t, a, b); };
+        auto ge = [&](uint32_t t, uint32_t a, uint32_t b) { isF32 ? m_assembler.xvcmpgesp(t, a, b) : m_assembler.xvcmpgedp(t, a, b); };
+        switch (cond) {
+        case DoubleEqualAndOrdered: eq(d, l, r); return;
+        case DoubleNotEqualOrUnordered: eq(t0, l, r); m_assembler.xxlnor(d, t0, t0); return;
+        case DoubleGreaterThanAndOrdered: gt(d, l, r); return;
+        case DoubleGreaterThanOrEqualAndOrdered: ge(d, l, r); return;
+        case DoubleLessThanAndOrdered: gt(d, r, l); return;
+        case DoubleLessThanOrEqualAndOrdered: ge(d, r, l); return;
+        case DoubleNotEqualAndOrdered: gt(t0, l, r); gt(t1, r, l); m_assembler.xxlor(d, t0, t1); return;
+        case DoubleEqualOrUnordered: gt(t0, l, r); gt(t1, r, l); m_assembler.xxlnor(d, t0, t1); return;
+        case DoubleGreaterThanOrUnordered: ge(t0, r, l); m_assembler.xxlnor(d, t0, t0); return;
+        case DoubleGreaterThanOrEqualOrUnordered: gt(t0, r, l); m_assembler.xxlnor(d, t0, t0); return;
+        case DoubleLessThanOrUnordered: ge(t0, l, r); m_assembler.xxlnor(d, t0, t0); return;
+        case DoubleLessThanOrEqualOrUnordered: gt(t0, l, r); m_assembler.xxlnor(d, t0, t0); return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    void compareIntegerVectorInVR(RelationalCondition cond, SIMDLane lane, VRegisterID a, VRegisterID b, VRegisterID result)
+    {
+        bool invertResult = false;
+        auto greater = [&](bool isSigned, VRegisterID x, VRegisterID y) { (m_assembler.*vmxCompareGreaterOp(lane, isSigned))(result, x, y); };
+        switch (cond) {
+        case Equal: (m_assembler.*vmxCompareEqualOp(lane))(result, a, b); break;
+        case NotEqual: (m_assembler.*vmxCompareEqualOp(lane))(result, a, b); invertResult = true; break;
+        case GreaterThan: greater(true, a, b); break;
+        case LessThan: greater(true, b, a); break;
+        case GreaterThanOrEqual: greater(true, b, a); invertResult = true; break;
+        case LessThanOrEqual: greater(true, a, b); invertResult = true; break;
+        case Above: greater(false, a, b); break;
+        case Below: greater(false, b, a); break;
+        case AboveOrEqual: greater(false, b, a); invertResult = true; break;
+        case BelowOrEqual: greater(false, a, b); invertResult = true; break;
+        }
+        if (invertResult)
+            m_assembler.vnor(result, result, result);
+    }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        compareIntegerVectorInVR(cond, simdInfo.lane, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp2, dest);
+    }
+    void compareIntegerVector(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID) { compareIntegerVector(cond, simdInfo, left, right, dest); }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest)
+    {
+        copyToVR(vector, vecTemp0);
+        zeroVR(vecTemp1);
+        compareIntegerVectorInVR(cond, simdInfo.lane, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp2, dest);
+    }
+    void compareIntegerVectorWithZero(RelationalCondition cond, SIMDInfo simdInfo, FPRegisterID vector, FPRegisterID dest, RegisterID) { compareIntegerVectorWithZero(cond, simdInfo, vector, dest); }
+
+    // --- Reductions to a GPR -------------------------------------------------
+    // dest = (dw0 | dw1 of vr) != 0
+    void vectorAnyBitSetInVR(VRegisterID vr, RegisterID dest)
+    {
+        m_assembler.mfvsrd(dest, vsr(vr));
+        m_assembler.xxswapd(vsr(vecTemp4), vsr(vr));
+        m_assembler.mfvsrd(dataTempRegister, vsr(vecTemp4));
+        m_assembler.or_(dest, dest, dataTempRegister);
+        m_assembler.neg(dataTempRegister, dest);
+        m_assembler.or_(dest, dest, dataTempRegister);
+        m_assembler.srdi(dest, dest, 63);
+    }
+    void vectorAnyTrue(FPRegisterID vec, RegisterID dest)
+    {
+        copyToVR(vec, vecTemp0);
+        vectorAnyBitSetInVR(vecTemp0, dest);
+    }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest)
+    {
+        copyToVR(vec, vecTemp0);
+        zeroVR(vecTemp1);
+        (m_assembler.*vmxCompareEqualOp(simdInfo.lane))(vecTemp0, vecTemp0, vecTemp1);
+        vectorAnyBitSetInVR(vecTemp0, dest);
+        m_assembler.xori(dest, dest, 1);
+    }
+    void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID) { vectorAllTrue(simdInfo, vec, dest); }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest)
+    {
+        // vbpermq gathers 16 selected bits into bits 48-63 of doubleword 0:
+        // control byte i selects ISA bit index c (c >= 128 gives 0) into
+        // result bit 15 - i. Put lane l's sign bit (the first ISA bit of its
+        // element) at control byte 15 - l.
+        unsigned bytes = elementByteSize(simdInfo.lane);
+        unsigned lanes = 16 / bytes;
+        uint64_t dw0 = 0, dw1 = 0;
+        for (unsigned i = 0; i < 16; ++i)
+            setISAByte(dw0, dw1, i, 128);
+        for (unsigned l = 0; l < lanes; ++l)
+            setISAByte(dw0, dw1, 15 - l, 8 * bytes * isaElementForLane(bytes, l));
+        materializeVectorBits(dw0, dw1, vsr(vecTemp1));
+        copyToVR(vec, vecTemp0);
+        m_assembler.vbpermq(vecTemp0, vecTemp0, vecTemp1);
+        m_assembler.mfvsrd(dest, vsr(vecTemp0));
+    }
+    void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID) { vectorBitmask(simdInfo, vec, dest); }
+
+    // --- Shifts --------------------------------------------------------------
+    // VMX shifts take a per-element count (modulo the element width) from the
+    // low-order bits of each element of the second operand, so a byte splat of
+    // the count serves every element size.
+    static VMXBinaryOp vmxShiftOp(SIMDLane lane, int kind) // 0 = shl, 1 = shr_u, 2 = shr_s
+    {
+        switch (lane) {
+        case SIMDLane::i8x16: return kind == 0 ? &PPC64Assembler::vslb : kind == 1 ? &PPC64Assembler::vsrb : &PPC64Assembler::vsrab;
+        case SIMDLane::i16x8: return kind == 0 ? &PPC64Assembler::vslh : kind == 1 ? &PPC64Assembler::vsrh : &PPC64Assembler::vsrah;
+        case SIMDLane::i32x4: return kind == 0 ? &PPC64Assembler::vslw : kind == 1 ? &PPC64Assembler::vsrw : &PPC64Assembler::vsraw;
+        case SIMDLane::i64x2: return kind == 0 ? &PPC64Assembler::vsld : kind == 1 ? &PPC64Assembler::vsrd : &PPC64Assembler::vsrad;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    void vectorShiftByImmediate(int kind, SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest)
+    {
+        unsigned amount = shift.m_value & (elementByteSize(simdInfo.lane) * 8 - 1);
+        if (!amount) {
+            moveVector(input, dest);
+            return;
+        }
+        copyToVR(input, vecTemp0);
+        if (amount < 16)
+            m_assembler.vspltisb(vecTemp1, amount);
+        else {
+            moveImmToScratch(amount, dataTempRegister);
+            m_assembler.mtvsrwz(vsr(vecTemp1), dataTempRegister);
+            m_assembler.vspltb(vecTemp1, vecTemp1, 7);
+        }
+        (m_assembler.*vmxShiftOp(simdInfo.lane, kind))(vecTemp0, vecTemp0, vecTemp1);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { vectorShiftByImmediate(0, simdInfo, input, shift, dest); }
+    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { vectorShiftByImmediate(1, simdInfo, input, shift, dest); }
+    void vectorSshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest) { vectorShiftByImmediate(2, simdInfo, input, shift, dest); }
+    // Per-lane counts in `shift` (only the low log2(lane bits) bits of each lane matter).
+    void vectorUshl(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { vmxBinary(vmxShiftOp(simdInfo.lane, 0), input, shift, dest); }
+    void vectorUshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { vmxBinary(vmxShiftOp(simdInfo.lane, 1), input, shift, dest); }
+    void vectorSshr(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID shift, FPRegisterID dest) { vmxBinary(vmxShiftOp(simdInfo.lane, 2), input, shift, dest); }
+
+    // --- Widening, narrowing and conversions ----------------------------------
+    // vupkh*/vmrgh* read ISA elements 0..n/2-1 and vupkl*/vmrgl* the rest. In
+    // this layout the wasm low half is doubleword 0 in reversed element order,
+    // so the unpacked result has its doublewords swapped: fix with xxswapd.
+    void vectorExtendInVR(SIMDLane resultLane, bool isSigned, bool high, VRegisterID input, VRegisterID dest)
+    {
+        if (isSigned) {
+            switch (resultLane) {
+            case SIMDLane::i16x8: high ? m_assembler.vupklsb(dest, input) : m_assembler.vupkhsb(dest, input); break;
+            case SIMDLane::i32x4: high ? m_assembler.vupklsh(dest, input) : m_assembler.vupkhsh(dest, input); break;
+            case SIMDLane::i64x2: high ? m_assembler.vupklsw(dest, input) : m_assembler.vupkhsw(dest, input); break;
+            default: RELEASE_ASSERT_NOT_REACHED();
+            }
+            return;
+        }
+        ASSERT(input != vecTemp4 && dest != vecTemp4);
+        zeroVR(vecTemp4);
+        switch (resultLane) {
+        case SIMDLane::i16x8: high ? m_assembler.vmrglb(dest, vecTemp4, input) : m_assembler.vmrghb(dest, vecTemp4, input); break;
+        case SIMDLane::i32x4: high ? m_assembler.vmrglh(dest, vecTemp4, input) : m_assembler.vmrghh(dest, vecTemp4, input); break;
+        case SIMDLane::i64x2: high ? m_assembler.vmrglw(dest, vecTemp4, input) : m_assembler.vmrghw(dest, vecTemp4, input); break;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    void vectorExtendLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        copyToVR(input, vecTemp0);
+        vectorExtendInVR(simdInfo.lane, simdInfo.signMode == SIMDSignMode::Signed, false, vecTemp0, vecTemp0);
+        m_assembler.xxswapd(vsr(dest), vsr(vecTemp0));
+    }
+    void vectorExtendHigh(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        copyToVR(input, vecTemp0);
+        vectorExtendInVR(simdInfo.lane, simdInfo.signMode == SIMDSignMode::Signed, true, vecTemp0, vecTemp0);
+        m_assembler.xxswapd(vsr(dest), vsr(vecTemp0));
+    }
+    // simdInfo.lane is the input lane: result low half from lower, high half from upper.
+    void vectorNarrow(SIMDInfo simdInfo, FPRegisterID lower, FPRegisterID upper, FPRegisterID dest, FPRegisterID)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        m_assembler.xxswapd(vsr(vecTemp0), vsr(lower));
+        m_assembler.xxswapd(vsr(vecTemp1), vsr(upper));
+        if (simdInfo.lane == SIMDLane::i16x8)
+            isSigned ? m_assembler.vpkshss(vecTemp0, vecTemp0, vecTemp1) : m_assembler.vpkshus(vecTemp0, vecTemp0, vecTemp1);
+        else {
+            ASSERT(simdInfo.lane == SIMDLane::i32x4);
+            isSigned ? m_assembler.vpkswss(vecTemp0, vecTemp0, vecTemp1) : m_assembler.vpkswus(vecTemp0, vecTemp0, vecTemp1);
+        }
+        copyFromVR(vecTemp0, dest);
+    }
+    // simdInfo.lane is the result lane.
+    void vectorExtendedMultiply(SIMDInfo simdInfo, bool high, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        if (simdInfo.lane == SIMDLane::i64x2) {
+            // Odd ISA words are lanes 0 and 2, even ones lanes 1 and 3.
+            isSigned ? m_assembler.vmulosw(vecTemp2, vecTemp0, vecTemp1) : m_assembler.vmulouw(vecTemp2, vecTemp0, vecTemp1);
+            isSigned ? m_assembler.vmulesw(vecTemp3, vecTemp0, vecTemp1) : m_assembler.vmuleuw(vecTemp3, vecTemp0, vecTemp1);
+            m_assembler.xxpermdi(vsr(dest), vsr(vecTemp2), vsr(vecTemp3), high ? 3 : 0);
+            return;
+        }
+        // Extend both (results have swapped doublewords), multiply, swap back.
+        vectorExtendInVR(simdInfo.lane, isSigned, high, vecTemp0, vecTemp0);
+        vectorExtendInVR(simdInfo.lane, isSigned, high, vecTemp1, vecTemp1);
+        if (simdInfo.lane == SIMDLane::i16x8) {
+            zeroVR(vecTemp2);
+            m_assembler.vmladduhm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        } else {
+            ASSERT(simdInfo.lane == SIMDLane::i32x4);
+            m_assembler.vmuluwm(vecTemp0, vecTemp0, vecTemp1);
+        }
+        m_assembler.xxswapd(vsr(dest), vsr(vecTemp0));
+    }
+    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { vectorExtendedMultiply(simdInfo, false, left, right, dest); }
+    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = PPC64Registers::InvalidFPRReg) { vectorExtendedMultiply(simdInfo, true, left, right, dest); }
+
+    // simdInfo.lane is the input lane.
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        copyToVR(input, vecTemp0);
+        if (simdInfo.lane == SIMDLane::i8x16) {
+            m_assembler.vspltisb(vecTemp1, 1);
+            isSigned ? m_assembler.vmulesb(vecTemp2, vecTemp0, vecTemp1) : m_assembler.vmuleub(vecTemp2, vecTemp0, vecTemp1);
+            isSigned ? m_assembler.vmulosb(vecTemp3, vecTemp0, vecTemp1) : m_assembler.vmuloub(vecTemp3, vecTemp0, vecTemp1);
+            m_assembler.vadduhm(vecTemp0, vecTemp2, vecTemp3);
+        } else {
+            ASSERT(simdInfo.lane == SIMDLane::i16x8);
+            m_assembler.vspltish(vecTemp1, 1);
+            zeroVR(vecTemp2);
+            isSigned ? m_assembler.vmsumshm(vecTemp0, vecTemp0, vecTemp1, vecTemp2) : m_assembler.vmsumuhm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        }
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorExtaddPairwise(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest, RegisterID, FPRegisterID) { vectorExtaddPairwise(simdInfo, input, dest); }
+
+    // i32x4.dot_i16x8_s
+    void vectorDotProduct(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        zeroVR(vecTemp2);
+        m_assembler.vmsumshm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorDotProduct(FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID) { vectorDotProduct(left, right, dest); }
+    // i16x8.q15mulr_sat_s: sat((a * b + 0x4000) >> 15), exactly vmhraddshs with a zero addend.
+    void vectorMulSat(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        zeroVR(vecTemp2);
+        m_assembler.vmhraddshs(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp0, dest);
+    }
+    void vectorMulSat(FPRegisterID left, FPRegisterID right, FPRegisterID dest, RegisterID, FPRegisterID) { vectorMulSat(left, right, dest); }
+    void vectorRelaxedQ15Mulr(FPRegisterID left, FPRegisterID right, FPRegisterID dest) { vectorMulSat(left, right, dest); }
+    // i16x8.relaxed_dot_i8x16_i7x16_s: wrapping sum of the two signed products per lane.
+    void vectorRelaxedDotI8x16I7x16(FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        m_assembler.vmulesb(vecTemp2, vecTemp0, vecTemp1);
+        m_assembler.vmulosb(vecTemp3, vecTemp0, vecTemp1);
+        m_assembler.vadduhm(vecTemp0, vecTemp2, vecTemp3);
+        copyFromVR(vecTemp0, dest);
+    }
+    // i32x4.relaxed_dot_i8x16_i7x16_add_s: the relaxed-dot i16 pairs, then
+    // pairwise-added to i32 and added to the addend. Same intermediate as
+    // vectorRelaxedDotI8x16I7x16, so the two relaxed ops agree.
+    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID left, FPRegisterID right, FPRegisterID addend, FPRegisterID dest, FPRegisterID, FPRegisterID)
+    {
+        copyToVR(left, vecTemp0);
+        copyToVR(right, vecTemp1);
+        m_assembler.vmulesb(vecTemp2, vecTemp0, vecTemp1);
+        m_assembler.vmulosb(vecTemp3, vecTemp0, vecTemp1);
+        m_assembler.vadduhm(vecTemp0, vecTemp2, vecTemp3);
+        m_assembler.vspltish(vecTemp1, 1);
+        copyToVR(addend, vecTemp2);
+        m_assembler.vmsumshm(vecTemp0, vecTemp0, vecTemp1, vecTemp2);
+        copyFromVR(vecTemp0, dest);
+    }
+
+    // f32x4.convert_i32x4_{s,u}
+    void vectorConvert(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT(simdInfo.lane == SIMDLane::i32x4);
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.xvcvsxwsp(vsr(dest), vsr(input));
+        else
+            m_assembler.xvcvuxwsp(vsr(dest), vsr(input));
+    }
+    // Words of lanes 0 and 1 (ISA words 1 and 0) into ISA words 0 and 2, which
+    // is where xvcv*w*dp / xvcvspdp read, then swap so lane 0 lands in dw0.
+    void vectorConvertLow(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT(simdInfo.lane == SIMDLane::i32x4);
+        uint32_t t0 = vsr(vecTemp0);
+        m_assembler.xxmrghw(t0, vsr(input), vsr(input));
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.xvcvsxwdp(t0, t0);
+        else
+            m_assembler.xvcvuxwdp(t0, t0);
+        m_assembler.xxswapd(vsr(dest), t0);
+    }
+    void vectorPromote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT_UNUSED(simdInfo, simdInfo.lane == SIMDLane::f32x4);
+        uint32_t t0 = vsr(vecTemp0);
+        m_assembler.xxmrghw(t0, vsr(input), vsr(input));
+        m_assembler.xvcvspdp(t0, t0);
+        m_assembler.xxswapd(vsr(dest), t0);
+    }
+    // t holds 32-bit results for f64 lanes 0 and 1 in ISA words 0 and 2;
+    // produce [lane1, lane0, 0, 0] in ISA words, i.e. wasm lanes 0,1 then zeros.
+    void packDoublewordResultsToLowWords(uint32_t t, FPRegisterID dest)
+    {
+        uint32_t t1 = vsr(vecTemp1), t2 = vsr(vecTemp2);
+        m_assembler.xxswapd(t1, t);
+        m_assembler.xxmrghw(t1, t1, t);
+        m_assembler.xxlxor(t2, t2, t2);
+        m_assembler.xxpermdi(vsr(dest), t1, t2, 0);
+    }
+    void vectorDemote(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT_UNUSED(simdInfo, simdInfo.lane == SIMDLane::f64x2);
+        uint32_t t0 = vsr(vecTemp0);
+        m_assembler.xvcvdpsp(t0, vsr(input));
+        packDoublewordResultsToLowWords(t0, dest);
+    }
+    // NaN lanes become 0; out-of-range lanes saturate (the hardware already does).
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
+    {
+        bool isSigned = simdInfo.signMode == SIMDSignMode::Signed;
+        uint32_t t0 = vsr(vecTemp0), t1 = vsr(vecTemp1);
+        if (simdInfo.lane == SIMDLane::f32x4) {
+            isSigned ? m_assembler.xvcvspsxws(t0, vsr(input)) : m_assembler.xvcvspuxws(t0, vsr(input));
+            m_assembler.xvcmpeqsp(t1, vsr(input), vsr(input));
+            m_assembler.xxland(vsr(dest), t0, t1);
+            return;
+        }
+        ASSERT(simdInfo.lane == SIMDLane::f64x2);
+        isSigned ? m_assembler.xvcvdpsxws(t0, vsr(input)) : m_assembler.xvcvdpuxws(t0, vsr(input));
+        m_assembler.xvcmpeqdp(t1, vsr(input), vsr(input));
+        m_assembler.xxland(t0, t0, t1);
+        packDoublewordResultsToLowWords(t0, dest);
+    }
+    void vectorTruncSat(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest, RegisterID, FPRegisterID, FPRegisterID) { vectorTruncSat(simdInfo, input, dest); }
+
+    // --- Permutes ------------------------------------------------------------
+    // i8x16.swizzle: out-of-range indices (>= 16) give 0.
+    void vectorSwizzle(FPRegisterID input, FPRegisterID control, FPRegisterID dest)
+    {
+        // Wasm byte x is ISA byte x ^ 7, so permute with control ^ 7 (vperm
+        // only looks at the low five bits), then clear lanes whose index > 15.
+        copyToVR(input, vecTemp0);
+        copyToVR(control, vecTemp1);
+        m_assembler.vspltisb(vecTemp2, 7);
+        m_assembler.vxor(vecTemp3, vecTemp1, vecTemp2);
+        m_assembler.vperm(vecTemp3, vecTemp0, vecTemp0, vecTemp3);
+        m_assembler.vspltisb(vecTemp2, 15);
+        m_assembler.vcmpgtub(vecTemp1, vecTemp1, vecTemp2);
+        m_assembler.vandc(vecTemp3, vecTemp3, vecTemp1);
+        copyFromVR(vecTemp3, dest);
+    }
+    // Two-table lookup (OMG's i8x16.shuffle): result byte i is byte control[i]
+    // of a||b, or 0 when control[i] > 31. Same ^ 7 index fixup as vectorSwizzle;
+    // vperm reads only the low five bits, so lanes with control >> 5 != 0 are cleared.
+    void vectorSwizzle2(FPRegisterID a, FPRegisterID b, FPRegisterID control, FPRegisterID dest)
+    {
+        copyToVR(a, vecTemp0);
+        copyToVR(b, vecTemp1);
+        copyToVR(control, vecTemp2);
+        m_assembler.vspltisb(vecTemp3, 7);
+        m_assembler.vxor(vecTemp4, vecTemp2, vecTemp3);
+        m_assembler.vperm(vecTemp4, vecTemp0, vecTemp1, vecTemp4);
+        m_assembler.vspltisb(vecTemp3, 5);
+        m_assembler.vsrb(vecTemp3, vecTemp2, vecTemp3);
+        zeroVR(vecTemp0);
+        m_assembler.vcmpequb(vecTemp3, vecTemp3, vecTemp0);
+        m_assembler.vand(vecTemp4, vecTemp4, vecTemp3);
+        copyFromVR(vecTemp4, dest);
+    }
+    // Lane-structured permutes (the B3 canonical shuffle forms), as vperm with
+    // a constant control. Semantics follow ARM64's UZP/ZIP/EXT/REV.
+    void vectorUnzip(SIMDInfo simdInfo, bool odd, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        unsigned size = elementByteSize(simdInfo.lane);
+        uint8_t map[16];
+        for (unsigned i = 0; i < 16 / size; ++i) {
+            for (unsigned b = 0; b < size; ++b)
+                map[i * size + b] = (2 * i + odd) * size + b;
+        }
+        vectorPermuteBytes(map, n, m, dest);
+    }
+    void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { vectorUnzip(simdInfo, false, n, m, dest); }
+    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { vectorUnzip(simdInfo, true, n, m, dest); }
+    void vectorZip(SIMDInfo simdInfo, bool higher, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        unsigned size = elementByteSize(simdInfo.lane);
+        unsigned half = 8 / size;
+        uint8_t map[16];
+        for (unsigned i = 0; i < half; ++i) {
+            unsigned source = (higher ? half + i : i) * size;
+            for (unsigned b = 0; b < size; ++b) {
+                map[2 * i * size + b] = source + b;
+                map[(2 * i + 1) * size + b] = 16 + source + b;
+            }
+        }
+        vectorPermuteBytes(map, n, m, dest);
+    }
+    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { vectorZip(simdInfo, false, n, m, dest); }
+    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest) { vectorZip(simdInfo, true, n, m, dest); }
+    void vectorExtractPair(SIMDInfo simdInfo, TrustedImm32 firstLane, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        ASSERT_UNUSED(simdInfo, simdInfo.lane == SIMDLane::i8x16);
+        uint8_t map[16];
+        for (unsigned i = 0; i < 16; ++i)
+            map[i] = (firstLane.m_value + i) & 31;
+        vectorPermuteBytes(map, n, m, dest);
+    }
+    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest)
+    {
+        unsigned size = elementByteSize(simdInfo.lane);
+        unsigned group = groupSize.m_value;
+        ASSERT(group > size && !(group % size) && !(16 % group));
+        uint8_t map[16];
+        for (unsigned g = 0; g < 16; g += group) {
+            for (unsigned j = 0; j < group / size; ++j) {
+                for (unsigned b = 0; b < size; ++b)
+                    map[g + j * size + b] = g + (group / size - 1 - j) * size + b;
+            }
+        }
+        vectorPermuteBytes(map, input, input, dest);
+    }
+
+    // ARM64- and x86-shaped forms. Nothing routes PPC64 here: BBQ and the B3
+    // lowering use the operations above on this port.
+    void vectorSshl(SIMDInfo, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorUshl8(FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorSshr8(FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorUshr8(FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorHorizontalAdd(SIMDInfo, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorUnsignedMin(SIMDInfo, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
+    void vectorUnsignedMax(SIMDInfo, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
 
 
     Jump branchTruncateDoubleToInt32(FPRegisterID src, RegisterID dest, BranchTruncateType branchType = BranchIfTruncateFailed)
