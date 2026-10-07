@@ -34,10 +34,33 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/StdLibExtras.h>
 
+#if CPU(PPC64LE) && (OS(LINUX) || OS(FUCHSIA) || OS(HURD))
+// The Linux ppc64 mcontext_t exposes the general purpose registers as a flat
+// gregset_t (48 unsigned longs), indexed by the PT_* constants the kernel uses
+// for its own struct pt_regs. Take the indices from the kernel header rather
+// than writing the numbers out: a bare 32 for the faulting PC is unreviewable
+// and would silently read a neighbouring register if the layout ever moved.
+#include <asm/ptrace.h>
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 namespace MachineContext {
+
+#if CPU(PPC64LE) && HAVE(MACHINE_CONTEXT) && (OS(LINUX) || OS(FUCHSIA) || OS(HURD))
+// Layout checks for the accessors below. Verified against glibc on a POWER9
+// Fedora box: gp_regs is 48 slots of 8 bytes, PT_NIP == 32 and PT_Rn == n, and
+// a deliberate SIGSEGV reports gp_regs[PT_NIP] equal to the address of the
+// faulting instruction itself (not the one after it).
+using PPC64LEGPRegs = decltype(mcontext_t::gp_regs);
+static_assert(std::is_array_v<PPC64LEGPRegs>, "mcontext_t::gp_regs is expected to be a flat gregset_t array.");
+static_assert(sizeof(std::remove_extent_t<PPC64LEGPRegs>) == sizeof(void*), "gp_regs slots must be pointer sized; the accessors below reinterpret_cast them to void*&.");
+static_assert(std::extent_v<PPC64LEGPRegs> > PT_NIP, "gp_regs must be long enough to hold the NIP slot.");
+// gp_regs[n] is rn for the general purpose registers, which is what lets the
+// accessors below be read against GPRInfo's PPC64LE register assignments.
+static_assert(PT_R1 == 1 && PT_R4 == 4 && PT_R7 == 7 && PT_R14 == 14 && PT_R31 == 31, "gp_regs is expected to be indexed by register number.");
+#endif
 
 template<typename T = void*> T stackPointer(const PlatformRegisters&);
 
@@ -200,7 +223,7 @@ static inline void*& stackPointerImpl(mcontext_t& machineContext)
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_SP]);
 #elif CPU(PPC64LE)
-    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[1]); // r1 = SP
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[PT_R1]); // r1 = SP
 #else
 #error Unknown Architecture
 #endif
@@ -322,7 +345,7 @@ static inline void*& framePointerImpl(mcontext_t& machineContext)
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_S0]);
 #elif CPU(PPC64LE)
-    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[31]); // r31 = FP/CFR
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[PT_R31]); // r31 = GPRInfo::callFrameRegister
 #else
 #error Unknown Architecture
 #endif
@@ -484,7 +507,7 @@ static inline void*& instructionPointerImpl(mcontext_t& machineContext)
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_PC]);
 #elif CPU(PPC64LE)
-    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[32]); // NIP = PC
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[PT_NIP]); // NIP = PC
 #else
 #error Unknown Architecture
 #endif
@@ -662,7 +685,7 @@ inline void*& argumentPointer<1>(mcontext_t& machineContext)
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_A0 + 1]);
 #elif CPU(PPC64LE)
-    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[4]); // r4 = 2nd arg
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[PT_R4]); // r4 = GPRInfo::argumentGPR1
 #else
 #error Unknown Architecture
 #endif
@@ -721,7 +744,7 @@ inline void* wasmInstancePointer(const mcontext_t& machineContext)
 #elif CPU(RISCV64)
     return reinterpret_cast<void*>((uintptr_t) machineContext.__gregs[9]);
 #elif CPU(PPC64LE)
-    return reinterpret_cast<void*>((uintptr_t) machineContext.gp_regs[14]); // r14 = regCS0 = wasmContextInstancePointer
+    return reinterpret_cast<void*>((uintptr_t) machineContext.gp_regs[PT_R14]); // r14 = regCS0 = GPRInfo::wasmContextInstancePointer
 #else
 #error Unknown Architecture
 #endif
@@ -844,7 +867,7 @@ inline void*& llintInstructionPointer(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[14]);
 #elif CPU(PPC64LE)
     static_assert(LLInt::LLIntPC == PPC64Registers::r7, "Wrong LLInt PC.");
-    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[7]); // r7 = regT4 = LLIntPC
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.gp_regs[PT_R7]); // r7 = regT4 = LLIntPC
 #else
 #error Unknown Architecture
 #endif
