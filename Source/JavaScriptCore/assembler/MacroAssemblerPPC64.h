@@ -2677,18 +2677,29 @@ public:
     // identity also yields the required ctz(0) == 32, since ~0 & -1 is all
     // ones and clz of that is 0. Verified on POWER9 hardware against
     // __builtin_ctz for 0, 1, 5, 6, 8, 0x10000, 0x80000000 and 0xFFFFFFFF.
+    // Pick an assembler temp that is not `live`, an operand still read after the
+    // temp has been written. Callers may legitimately pass dataTempRegister: BBQ's
+    // wasmScratchGPR is r11 (GPRInfo::nonPreservedNonArgumentGPR0), the same
+    // register, and it holds operands such as a materialised constant.
+    static RegisterID tempRegisterAvoiding(RegisterID live)
+    {
+        return live == dataTempRegister ? memoryTempRegister : dataTempRegister;
+    }
+
     void countTrailingZeros32(RegisterID src, RegisterID dest)
     {
-        m_assembler.addi(dataTempRegister, src, -1);           // x - 1
-        m_assembler.andc(dataTempRegister, dataTempRegister, src); // (x - 1) & ~x
-        m_assembler.cntlzw(dest, dataTempRegister);
+        RegisterID temp = tempRegisterAvoiding(src);
+        m_assembler.addi(temp, src, -1);           // x - 1
+        m_assembler.andc(temp, temp, src);         // (x - 1) & ~x
+        m_assembler.cntlzw(dest, temp);
         m_assembler.subfic(dest, dest, 32);
     }
     void countTrailingZeros64(RegisterID src, RegisterID dest)
     {
-        m_assembler.addi(dataTempRegister, src, -1);
-        m_assembler.andc(dataTempRegister, dataTempRegister, src);
-        m_assembler.cntlzd(dest, dataTempRegister);
+        RegisterID temp = tempRegisterAvoiding(src);
+        m_assembler.addi(temp, src, -1);
+        m_assembler.andc(temp, temp, src);
+        m_assembler.cntlzd(dest, temp);
         m_assembler.subfic(dest, dest, 64);
     }
 
@@ -2707,16 +2718,19 @@ public:
 
     // dest = minuend - mulLeft * mulRight. PPC64 has no integer multiply-sub,
     // so this is mullw/mulld followed by subf (subf rD, rA, rB = rB - rA).
+    // The product temp must not be the minuend, which is read after it is written.
     void multiplySub32(RegisterID mulLeft, RegisterID mulRight, RegisterID minuend, RegisterID dest)
     {
-        m_assembler.mullw(dataTempRegister, mulLeft, mulRight);
-        m_assembler.subf(dest, dataTempRegister, minuend);
+        RegisterID product = tempRegisterAvoiding(minuend);
+        m_assembler.mullw(product, mulLeft, mulRight);
+        m_assembler.subf(dest, product, minuend);
         zeroExtend32ToWordInternal(dest);
     }
     void multiplySub64(RegisterID mulLeft, RegisterID mulRight, RegisterID minuend, RegisterID dest)
     {
-        m_assembler.mulld(dataTempRegister, mulLeft, mulRight);
-        m_assembler.subf(dest, dataTempRegister, minuend);
+        RegisterID product = tempRegisterAvoiding(minuend);
+        m_assembler.mulld(product, mulLeft, mulRight);
+        m_assembler.subf(dest, product, minuend);
     }
 
     // --- Memory-destination logical read-modify-write ---------------------
