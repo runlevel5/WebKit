@@ -1908,13 +1908,13 @@ x86_64: CompareFloatingPointVectorUnordered U:G:Ptr, U:F:128, U:F:128, D:F:128
 64: CompareFloatingPointVector U:G:32, U:G:Ptr, U:F:128, U:F:128, D:F:128
     DoubleCond, SIMDInfo, Tmp, Tmp, Tmp
 
-arm64: CompareIntegerVector U:G:32, U:G:Ptr, U:F:128, U:F:128, D:F:128
+arm64 ppc64le: CompareIntegerVector U:G:32, U:G:Ptr, U:F:128, U:F:128, D:F:128
     RelCond, SIMDInfo, Tmp, Tmp, Tmp
 
 x86_64: CompareIntegerVector U:G:32, U:G:Ptr, U:F:128, U:F:128, D:F:128, S:F:128
     RelCond, SIMDInfo, Tmp, Tmp, Tmp, Tmp
 
-arm64: CompareIntegerVectorWithZero U:G:32, U:G:Ptr, U:F:128, D:F:128
+arm64 ppc64le: CompareIntegerVectorWithZero U:G:32, U:G:Ptr, U:F:128, D:F:128
     RelCond, SIMDInfo, Tmp, Tmp
 
 x86_64: CompareIntegerVectorWithZero U:G:32, U:G:Ptr, U:F:128, D:F:128, S:G:8
@@ -1962,10 +1962,10 @@ arm64: VectorPmin U:G:Ptr, U:F:128, U:F:128, D:F:128, S:F:128
 arm64: VectorPmax U:G:Ptr, U:F:128, U:F:128, D:F:128, S:F:128
     SIMDInfo, Tmp, Tmp, Tmp, Tmp
 
-x86_64: VectorPmin U:G:Ptr, U:F:128, U:F:128, D:F:128
+x86_64 ppc64le: VectorPmin U:G:Ptr, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-x86_64: VectorPmax U:G:Ptr, U:F:128, U:F:128, D:F:128
+x86_64 ppc64le: VectorPmax U:G:Ptr, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
 64: VectorNarrow U:G:Ptr, U:F:128, U:F:128, D:F:128, S:F:128
@@ -1974,7 +1974,7 @@ x86_64: VectorPmax U:G:Ptr, U:F:128, U:F:128, D:F:128
 64: VectorBitwiseSelect U:F:128, U:F:128, UD:F:128
     Tmp, Tmp, Tmp
 
-arm64: VectorNot U:G:Ptr, U:F:128, D:F:128
+arm64 ppc64le: VectorNot U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
 64: VectorAnd U:G:Ptr, U:F:128, U:F:128, D:F:128
@@ -1992,10 +1992,10 @@ arm64: VectorNot U:G:Ptr, U:F:128, D:F:128
 64: VectorUshl U:G:Ptr, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-x86_64: VectorSshr U:G:Ptr, U:F:128, U:F:128, D:F:128
+x86_64 ppc64le: VectorSshr U:G:Ptr, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-x86_64: VectorUshr U:G:Ptr, U:F:128, U:F:128, D:F:128
+x86_64 ppc64le: VectorUshr U:G:Ptr, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
 arm64: VectorSshl U:G:Ptr, U:F:128, U:F:128, D:F:128
@@ -2016,7 +2016,7 @@ x86_64: VectorSshr8 U:F:128, U:F:128, D:F:128, S:F:128, S:F:128
 64: VectorSshr8 U:G:Ptr, U:F:128, U:G:8, D:F:128
     SIMDInfo, Tmp, Imm, Tmp
 
-arm64: VectorShl8 U:G:Ptr, U:F:128, U:G:8, D:F:128
+arm64 ppc64le: VectorShl8 U:G:Ptr, U:F:128, U:G:8, D:F:128
     SIMDInfo, Tmp, Imm, Tmp
 
 arm64: VectorHorizontalAdd U:G:Ptr, U:F:128, D:F:128
@@ -2058,10 +2058,10 @@ arm64_sha3: VectorXor3 U:F:128, U:F:128, U:F:128, D:F:128
 x86_64: VectorAbsInt64 U:F:128, D:F:128, S:F:128
     Tmp, Tmp, Tmp
 
-arm64: VectorNeg U:G:Ptr, U:F:128, D:F:128
+arm64 ppc64le: VectorNeg U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
-arm64: VectorPopcnt U:G:Ptr, U:F:128, D:F:128
+arm64 ppc64le: VectorPopcnt U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
 64: VectorCeil U:G:Ptr, U:F:128, D:F:128
@@ -2073,7 +2073,7 @@ arm64: VectorPopcnt U:G:Ptr, U:F:128, D:F:128
 64: VectorTrunc U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
-arm64: VectorTruncSat U:G:Ptr, U:F:128, D:F:128
+arm64 ppc64le: VectorTruncSat U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
 x86_64: VectorTruncSat U:G:Ptr, U:F:128, D:F:128, S:G:64, S:F:128, S:F:128
@@ -2094,7 +2094,7 @@ x86_64: VectorTruncSatUnsignedFloat64 U:F:128, D:F:128, S:G:64, S:F:128
 x86_64: VectorConvertUnsigned U:F:128, D:F:128, S:F:128
     Tmp, Tmp, Tmp
 
-arm64: VectorConvertLow U:G:Ptr, U:F:64, D:F:128
+arm64 ppc64le: VectorConvertLow U:G:Ptr, U:F:64, D:F:128
     SIMDInfo, Tmp, Tmp
 
 x86_64: VectorConvertLowSignedInt32 U:F:64, D:F:128
@@ -2121,7 +2121,7 @@ x86_64: VectorConvertLowUnsignedInt32 U:F:64, D:F:128, S:G:64, S:F:128
 64: VectorDemote U:G:Ptr, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
-arm64: VectorLoad8Splat U:G:8, D:F:128
+arm64 ppc64le: VectorLoad8Splat U:G:8, D:F:128
     SimpleAddr, Tmp
 x86_64: VectorLoad8Splat U:G:8, D:F:128, S:F:128
     SimpleAddr, Tmp, Tmp
@@ -2157,16 +2157,16 @@ x86_64: VectorLoad8Splat U:G:8, D:F:128, S:F:128
 x86_64: VectorAllTrue U:G:8, U:F:128, ZD:G:32, S:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-arm64: VectorAllTrue U:G:8, U:F:128, ZD:G:32
+arm64 ppc64le: VectorAllTrue U:G:8, U:F:128, ZD:G:32
     SIMDInfo, Tmp, Tmp
 
-arm64: VectorBitmask U:G:8, U:F:128, ZD:G:32
+arm64 ppc64le: VectorBitmask U:G:8, U:F:128, ZD:G:32
     SIMDInfo, Tmp, Tmp
 
 x86_64: VectorBitmask U:G:8, U:F:128, ZD:G:32, S:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-arm64: VectorExtaddPairwise U:G:8, U:F:128, D:F:128
+arm64 ppc64le: VectorExtaddPairwise U:G:8, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp
 
 x86_64: VectorExtaddPairwise U:G:8, U:F:128, D:F:128, S:G:64, S:F:128
@@ -2181,13 +2181,13 @@ arm64: VectorAddPairwise U:G:8, U:F:128, U:F:128, D:F:128
 64: VectorAvgRound U:G:8, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-arm64: VectorMulHigh U:G:8, U:F:128, U:F:128, D:F:128
+arm64 ppc64le: VectorMulHigh U:G:8, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
 x86_64: VectorMulHigh U:G:8, U:F:128, U:F:128, D:F:128, S:F:128
     SIMDInfo, Tmp, Tmp, Tmp, Tmp
 
-arm64: VectorMulLow U:G:8, U:F:128, U:F:128, D:F:128
+arm64 ppc64le: VectorMulLow U:G:8, U:F:128, U:F:128, D:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
 x86_64: VectorMulLow U:G:8, U:F:128, U:F:128, D:F:128, S:F:128
@@ -2199,7 +2199,7 @@ arm64: VectorMulAddLow U:G:8, U:F:128, U:F:128, UD:F:128
 arm64: VectorMulAddHigh U:G:8, U:F:128, U:F:128, UD:F:128
     SIMDInfo, Tmp, Tmp, Tmp
 
-arm64: VectorMulSat U:F:128, U:F:128, D:F:128
+arm64 ppc64le: VectorMulSat U:F:128, U:F:128, D:F:128
     Tmp, Tmp, Tmp
 
 x86_64: VectorMulSat U:F:128, U:F:128, D:F:128, S:G:64, S:F:128
@@ -2208,7 +2208,7 @@ x86_64: VectorMulSat U:F:128, U:F:128, D:F:128, S:G:64, S:F:128
 arm64: VectorDotProduct U:F:128, U:F:128, D:F:128, S:F:128
     Tmp, Tmp, Tmp, Tmp
 
-x86_64: VectorDotProduct U:F:128, U:F:128, D:F:128
+x86_64 ppc64le: VectorDotProduct U:F:128, U:F:128, D:F:128
     Tmp, Tmp, Tmp
 
 64: VectorSwizzle U:F:128, U:F:128, D:F:128
@@ -2216,6 +2216,11 @@ x86_64: VectorDotProduct U:F:128, U:F:128, D:F:128
 
 arm64: VectorSwizzle2 U:F:128, U:F:128, U:F:128, D:F:128
     Tmp, Tmp*, Tmp, Tmp
+
+# PPC64LE: the same two-table lookup with no register constraint (vperm reads
+# both tables from any registers).
+ppc64le: VectorSwizzleTwoTables U:F:128, U:F:128, U:F:128, D:F:128
+    Tmp, Tmp, Tmp, Tmp as vectorSwizzle2
 
 64: VectorFusedMulAdd U:G:Ptr, U:F:128, U:F:128, U:F:128, D:F:128, S:F:128
     SIMDInfo, Tmp, Tmp, Tmp, Tmp, Tmp

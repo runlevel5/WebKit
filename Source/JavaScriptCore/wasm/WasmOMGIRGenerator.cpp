@@ -1669,7 +1669,7 @@ auto OMGIRGenerator::addArguments(const RTT& signature) -> PartialResult
                         dataLog(context.gpr(src.jsr().payloadGPR()), " / ", (int) context.gpr(src.jsr().payloadGPR()));
                     else if (src.isFPR() && width <= Width::Width64)
                         dataLog(context.fpr(src.fpr()));
-#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE) // Context::vector() exists only where SIMD does
                     else if (src.isFPR())
                         dataLog(context.vector(src.fpr()));
 #endif
@@ -4323,7 +4323,7 @@ auto OMGIRGenerator::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType
         return { };
     }
 
-    if constexpr (!isARM64())
+    if constexpr (!isARM64() && !isPPC64LE())
         UNREACHABLE_FOR_PLATFORM();
 
     Value* indexes = m_currentBlock->appendNew<Const128Value>(m_proc, origin(), imm);
@@ -5484,7 +5484,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                     dataLog(context.gpr(src.gpr()), " / ", (int) context.gpr(src.gpr()));
                 else if (src.isFPR() && width <= Width64)
                     dataLog(context.fpr(src.fpr()));
-#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE) // Context::vector() exists only where SIMD does
                 else if (src.isFPR())
                     dataLog(context.vector(src.fpr()));
 #endif
@@ -5926,7 +5926,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                         dataLog(context.gpr(arg.location.jsr().payloadGPR()), " / ", (int) context.gpr(arg.location.jsr().payloadGPR()));
                     else if (arg.location.isFPR() && arg.width <= Width::Width64)
                         dataLog(context.fpr(arg.location.fpr()));
-#if CPU(X86_64) || CPU(ARM64) // Context::vector() exists only where SIMD does
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE) // Context::vector() exists only where SIMD does
                     else if (arg.location.isFPR())
                         dataLog(context.vector(arg.location.fpr()));
 #endif
