@@ -283,6 +283,44 @@ class FPRegisterID
     end
 end
 
+# -------------------------------------------------------------------------
+# VecRegisterID operand → VSX register number (VSR 0-63, bare numeral).
+#
+# offlineasm's v0..v7 (and their _b/_h/_i/_q lane-view aliases, which name
+# the same register) map onto the VMX half of the VSX file, VSR 32-63 =
+# VMX v0-v31, never onto VSR 0-31, which alias the FPRs.  So a vector
+# transport can never clobber an ft/fa/csfr register.  IPInt cannot depend
+# on the two classes aliasing or not aliasing: x86 maps v0 to xmm0 (= ft0)
+# while arm64 maps v0 to v16 (disjoint from ft0 = d0), so any code relying
+# on either would already be broken on one of them.
+#
+# ELFv2 (§2.2.1.1): VMX v0-v19 are volatile, v20-v31 non-volatile, and
+# v2-v13 carry vector arguments/results.  Like arm64 (v16-v23, outside its
+# argument registers v0-v7), the mapping stays inside the volatile,
+# non-argument set: VMX v0, v1 (scratch) and v14-v19.
+#   v0 → VSR 32 (VMX v0)    v1 → VSR 33 (VMX v1)
+#   v2..v7 → VSR 46..51 (VMX v14..v19)
+# The register is the same for every lane view; lane width only matters
+# to arithmetic, which this backend does not lower (see pushv/loadv).
+# -------------------------------------------------------------------------
+class VecRegisterID
+    def ppc64leOperand
+        base = @name.sub(/_[bhiq]\z/, "")
+        case base
+        when "v0" then "32"
+        when "v1" then "33"
+        when "v2" then "46"
+        when "v3" then "47"
+        when "v4" then "48"
+        when "v5" then "49"
+        when "v6" then "50"
+        when "v7" then "51"
+        else
+            raise "ppc64le: unknown vector register name '#{@name}' at #{codeOriginString}"
+        end
+    end
+end
+
 # SpecialRegister (e.g. PPC64LE_EXTRA_GPRS entries with names like "r27").
 # Strip the leading "r"/"f" so we emit bare numerals (GAS convention).
 class SpecialRegister
@@ -497,6 +535,27 @@ def ppc64leLowerMalformedAddresses(list)
             next
         end
 
+        # loadv/storev: lxvd2x/stxvd2x are X-form (RA|0 + RB) with no
+        # displacement field.  Fold any non-zero displacement into a Tmp
+        # (the BaseIndex path below already produces Address(tmp, 0)), so
+        # the emitter only ever sees Address(base, 0).
+        if (node.opcode == "loadv" || node.opcode == "storev")
+            addr_pos = (node.opcode == "loadv") ? 0 : 1
+            addr = ops[addr_pos]
+            if addr.is_a?(Address) && addr.offset.value != 0
+                co  = node.codeOrigin
+                tmp = Tmp.new(co, :gpr)
+                # leap is a single addi for a 16-bit displacement (the
+                # common case: local and stack slots) and handles larger
+                # ones itself.
+                newList << Instruction.new(co, "leap", [addr, tmp])
+                new_ops = ops.dup
+                new_ops[addr_pos] = Address.new(co, tmp, Immediate.new(co, 0))
+                newList << Instruction.new(co, node.opcode, new_ops, node.annotation)
+                next
+            end
+        end
+
         # DS-form opcodes (ld/lwa/std) require 4-byte-aligned offsets.
         # Also catch any offset outside 16-bit signed range.
         # Split: ppc64le_li64 offset, tmp; addp base, tmp; Address(tmp, 0)
@@ -553,6 +612,44 @@ def ppc64leLowerMalformedAddresses(list)
         new_ops[bi_pos] = new_addr
 
         newList << Instruction.new(co, node.opcode, new_ops, node.annotation)
+    }
+    newList
+end
+
+# -------------------------------------------------------------------------
+# Compare-and-branch / compare-and-set with an IMMEDIATE first operand.
+#
+# offlineasm allows `bineq 0, t0, label` (IPInt's `if` handler is written
+# exactly so), but PPC's cmp*i forms only take the immediate second, and
+# ppc64leEmitCompareAndBranch/ppc64leEmitConditionalSet print ops[0] as a
+# register: the 0 above came out as `cmpw 0, 3`, a compare against whatever
+# r0 held -- a silent miscompile (it made every wasm `if` take its then-arm
+# on whatever r0 said).  Materialise such an operand into a Tmp first.
+# Only real comparisons qualify: badd*/bsub*/bmul* (arith-and-branch, where
+# an immediate first operand is the addend), bt* (bit tests), bo (overflow)
+# and the FP bf*/bd* forms are left alone.
+# -------------------------------------------------------------------------
+PPC64LE_INT_COMPARE_SUFFIXES = %w[eq neq lt gt lteq gteq le ge b a be ae beq aeq ult ugt ule uge].freeze
+
+def ppc64leIsIntCompare(opcode)
+    return false unless opcode =~ /\A([bc])([ipqb])([a-z]+)\z/
+    kind, suffix = $1, $3
+    return false if kind == "b" && opcode =~ /\Ab(add|sub|mul|t|o)/
+    PPC64LE_INT_COMPARE_SUFFIXES.include?(suffix)
+end
+
+def ppc64leLowerImmediateFirstCompares(list)
+    newList = []
+    list.each { |node|
+        if node.is_a?(Instruction) && ppc64leIsIntCompare(node.opcode) &&
+           node.operands.length == 3 && node.operands[0].is_a?(Immediate)
+            co  = node.codeOrigin
+            tmp = Tmp.new(co, :gpr)
+            newList << Instruction.new(co, "move", [node.operands[0], tmp])
+            newList << Instruction.new(co, node.opcode, [tmp] + node.operands[1..], node.annotation)
+        else
+            newList << node
+        end
     }
     newList
 end
@@ -801,6 +898,9 @@ class Sequence
         # pass (it emits move/addq with the original immediates) and before the
         # malformed-address passes (it leaves Address forms for the rmw path).
         result = ppc64leLowerOverflowBranches(result)
+        # Compares written with the immediate first: put it in a register
+        # (before the large-immediate pass, which then sizes the move).
+        result = ppc64leLowerImmediateFirstCompares(result)
         # Lower large immediates AFTER riscLowerTest, since riscLowerTest synthesises
         # and{i,p,q} with the original immediate (e.g. btqnz t, ~1, lbl → andq t, ~1, tmp).
         result = ppc64leLowerLargeImmediates(result)
@@ -814,8 +914,63 @@ class Sequence
         result = riscLowerMisplacedAddresses(result)
         result = assignRegistersToTemporaries(result, :gpr, PPC64LE_EXTRA_GPRS)
         result = assignRegistersToTemporaries(result, :fpr, PPC64LE_EXTRA_FPRS)
+        ppc64leMarkNearBranches(result)
         result
     end
+end
+
+# -------------------------------------------------------------------------
+# Short conditional branches where they provably reach.
+#
+# A PPC conditional branch (B-form bc) reaches only +/-32 KB, so by default
+# every compare-and-branch is emitted as an inverted bc over an unconditional
+# `b` (+/-32 MB) -- see ppc64leEmitLongBranch.  That costs an instruction per
+# branch, and IPInt handlers must fit fixed 256-byte slots: f32/f64 min/max
+# overflowed theirs by 32 bytes, all of it long-branch overhead.
+#
+# Here, on the final instruction list, a branch to a LOCAL label is marked
+# near when an upper bound on the bytes between it and the label is well
+# inside the bc range.  The bound charges every instruction node 64 bytes (no
+# single offlineasm instruction lowers to more than about ten PPC
+# instructions; the C-call stanza is seven, a 64-bit constant five) and
+# every global label its alignment (IPInt handler slots are .balign 256) or
+# 16 bytes.  Only LocalLabelReference targets qualify, and only when the
+# label is found in the same list.  If the bound were ever wrong the result
+# would still be loud, not silent: GAS rejects an out-of-range bc
+# displacement at assembly time.
+# -------------------------------------------------------------------------
+PPC64LE_NEAR_BRANCH_BYTES = 24 * 1024
+PPC64LE_MAX_BYTES_PER_INSTRUCTION = 64
+
+def ppc64leNodeByteBound(node)
+    if node.is_a?(Instruction)
+        PPC64LE_MAX_BYTES_PER_INSTRUCTION
+    elsif node.is_a?(Label)
+        align = node.instance_variable_get(:@alignTo)
+        (align && align.respond_to?(:value)) ? [align.value.to_i, 16].max : 16
+    else
+        0
+    end
+end
+
+def ppc64leMarkNearBranches(list)
+    labelIndex = {}
+    prefix = [0]
+    list.each_with_index { |node, i|
+        labelIndex[node] = i if node.is_a?(LocalLabel)
+        prefix << prefix[-1] + ppc64leNodeByteBound(node)
+    }
+    list.each_with_index { |node, i|
+        next unless node.is_a?(Instruction)
+        targets = node.operands.select { |op| op.is_a?(LocalLabelReference) }
+        next unless targets.length == 1
+        j = labelIndex[targets[0].label]
+        next unless j
+        lo, hi = [i, j].min, [i, j].max
+        if prefix[hi + 1] - prefix[lo] < PPC64LE_NEAR_BRANCH_BYTES
+            node.instance_variable_set(:@ppc64leNearBranch, true)
+        end
+    }
 end
 
 # -------------------------------------------------------------------------
@@ -842,6 +997,12 @@ PPC64LE_BRANCH_INVERSE = {
 }.freeze
 
 def ppc64leEmitLongBranch(cond, target)
+    if $ppc64leCurrentNearBranch
+        # Proven in range by ppc64leMarkNearBranches: a single bc.
+        raise "ppc64le: unknown conditional #{cond}" unless PPC64LE_BRANCH_INVERSE[cond]
+        $asm.puts "#{cond} #{target}"
+        return
+    end
     inverted = PPC64LE_BRANCH_INVERSE[cond] or raise "ppc64le: unknown conditional #{cond}"
     $ppc64leLongBranchCounter += 1
     skip = ".Lppc64le_lb_#{$ppc64leLongBranchCounter}"
@@ -860,6 +1021,28 @@ end
 #   ori   dest, dest, value@l
 # -------------------------------------------------------------------------
 def ppc64leEmitLI64(dest, value)
+    if value.is_a?(Integer)
+        # Shorter forms for constants that fit in 32 bits, producing exactly
+        # the same 64-bit register value as the general sequence below.
+        # lis sign-extends its 16-bit field into the upper word, so
+        #   signed 32-bit values:   lis hi ; ori lo        (1-2 instructions)
+        #   unsigned 32-bit values: lis hi ; ori lo ; clrldi 32  (2-3)
+        # (clrldi = rldicl d,d,0,32 zeroes the upper word).  Hardware-checked
+        # on the POWER9 box: 0xcf000000, INT32_MIN, INT32_MAX, 0xffffffff,
+        # 0x10002 and -0x1edcc all materialise to the same value as the
+        # five-instruction form.
+        v = value & 0xffffffffffffffff
+        sv = v >= (1 << 63) ? v - (1 << 64) : v
+        if (-0x80000000..0xffffffff).include?(sv)
+            lo = sv & 0xffff
+            hi = (sv >> 16) & 0xffff
+            hi -= 0x10000 if hi >= 0x8000
+            $asm.puts "lis #{dest}, #{hi}"
+            $asm.puts "ori #{dest}, #{dest}, #{lo}" if lo != 0
+            $asm.puts "clrldi #{dest}, #{dest}, 32" if sv > 0x7fffffff
+            return
+        end
+    end
     $asm.puts "lis #{dest}, #{value}@highest"
     $asm.puts "ori #{dest}, #{dest}, #{value}@higher"
     $asm.puts "rldicr #{dest}, #{dest}, 32, 31"
@@ -873,6 +1056,7 @@ end
 # -------------------------------------------------------------------------
 def ppc64leEmitCompareAndBranch(cond, size, signed, ops)
     # ops: [src1, src2, label] or [src1, imm, label]
+    raise "ppc64le: compare with an immediate first operand reached the emitter (#{ops[0].value}); ppc64leLowerImmediateFirstCompares should have moved it to a register" if ops[0].is_a?(Immediate)
     ra  = ops[0].ppc64leOperand
     rbl = ops[1]
     lbl = ops[2].asmLabel
@@ -1015,6 +1199,7 @@ def ppc64leEmitFPBranch(cond, ops)
 end
 
 def ppc64leEmitConditionalSet(cond, size, signed, ops)
+    raise "ppc64le: compare with an immediate first operand reached the emitter (#{ops[0].value}); ppc64leLowerImmediateFirstCompares should have moved it to a register" if ops[0].is_a?(Immediate)
     ra  = ops[0].ppc64leOperand
     rbl = ops[1]
     dst = ops[2].ppc64leOperand
@@ -1098,6 +1283,7 @@ class Instruction
     def lowerPPC64LE
         $asm.comment codeOriginString
         operands = self.operands
+        $ppc64leCurrentNearBranch = (instance_variable_get(:@ppc64leNearBranch) == true)
         case opcode
 
         # ------------------------------------------------------------------
@@ -1938,7 +2124,15 @@ class Instruction
         #   cfr[8]  = saved lr (CallerFrameAndPC::returnPC)
         # ------------------------------------------------------------------
         when "push"
-            if operands.length == 1
+            if operands.length > 2 && operands.length.even?
+                # `push a, b, c, d` = `push a, b` then `push c, d`, exactly as
+                # arm64.rb's each_slice(2) stp sequence lays it out (c at sp+0,
+                # d at sp+8, a at sp+16, b at sp+24); the matching
+                # `pop d, c, b, a` below undoes it pair by pair.
+                operands.each_slice(2) { |pair|
+                    Instruction.new(codeOrigin, "push", pair, annotation).lowerPPC64LE
+                }
+            elsif operands.length == 1
                 reg = operands[0]
                 if reg.is_a?(RegisterID) && reg.name == "lr"
                     # push lr: save lr to r0, allocate 8 bytes, store
@@ -1970,7 +2164,12 @@ class Instruction
             end
 
         when "pop"
-            if operands.length == 1
+            if operands.length > 2 && operands.length.even?
+                # Inverse of the multi-operand push above (arm64 each_slice(2)).
+                operands.each_slice(2) { |pair|
+                    Instruction.new(codeOrigin, "pop", pair, annotation).lowerPPC64LE
+                }
+            elsif operands.length == 1
                 reg = operands[0]
                 if reg.is_a?(RegisterID) && reg.name == "lr"
                     $asm.puts "ld 0, 0(1)"
@@ -2037,19 +2236,55 @@ class Instruction
         #   stxvd2x 1,0,1 → 7c200f98    lxvd2x 1,0,1 → 7c200e98
         #   addi 1,1,-16  → 3821fff0    addi 1,1,16  → 38210010
         # ------------------------------------------------------------------
+        #
+        # VecRegisterID operands (v0..v7 → VSR 32+, see class VecRegisterID)
+        # take the same path: IPInt uses them as a pure 16-byte transport
+        # (local.get/set/tee, global.get/set, select), and a stxvd2x/lxvd2x
+        # pair is bit-exact for any 16 bytes because the per-doubleword
+        # byte swap is undone on the way back.  The EA+0 doubleword is VSR
+        # doubleword 0 for VSR 32+ exactly as for VSR 0-31, so a slot moved
+        # through a v register and then read with lfd/ld at +0 sees the
+        # same 8 bytes.  Hardware-checked on the POWER9 box: 16 distinct
+        # bytes round-tripped through VSR 32 and VSR 46 unchanged, and a
+        # double at +0 copied via VSR 32 then lxvd2x'd into FPR 1 read back
+        # equal.  `as -mpower8`: lxvd2x 32,0,4 → 7c002699,
+        # stxvd2x 32,0,4 → 7c002799, lxvd2x 51,3,4 → 7e632699.
         when "pushv"
             operands.each { | op |
-                raise "ppc64le: pushv expects an FPR/vector register at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(SpecialRegister)
+                raise "ppc64le: pushv expects an FPR/vector register, got #{op.class} #{op.respond_to?(:name) ? op.name : op.inspect} at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(VecRegisterID) or op.is_a?(SpecialRegister)
                 $asm.puts "addi 1, 1, -16"
                 $asm.puts "stxvd2x #{op.ppc64leOperand}, 0, 1"
             }
 
         when "popv"
             operands.each { | op |
-                raise "ppc64le: popv expects an FPR/vector register at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(SpecialRegister)
+                raise "ppc64le: popv expects an FPR/vector register, got #{op.class} #{op.respond_to?(:name) ? op.name : op.inspect} at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(VecRegisterID) or op.is_a?(SpecialRegister)
                 $asm.puts "lxvd2x #{op.ppc64leOperand}, 0, 1"
                 $asm.puts "addi 1, 1, 16"
             }
+
+        # ------------------------------------------------------------------
+        # 128-bit load/store: loadv addr, vreg / storev vreg, addr
+        #
+        # Same 16-byte transport as pushv/popv, at an arbitrary address.
+        # ppc64leLowerMalformedAddresses has already folded any displacement
+        # or index into the base, so only Address(base, 0) reaches here,
+        # emitted as the X-form `lxvd2x XT, 0, base` (RA=0 means "no
+        # register", EA = (base)).  The register operand may be a v register
+        # (VSR 32+) or an FPR (VSR 0-31; mINT/argumINT move float argument
+        # registers this way), never anything else.
+        # ------------------------------------------------------------------
+        when "loadv", "storev"
+            isLoad = (opcode == "loadv")
+            reg  = isLoad ? operands[1] : operands[0]
+            addr = isLoad ? operands[0] : operands[1]
+            unless reg.is_a?(VecRegisterID) or reg.is_a?(FPRegisterID)
+                raise "ppc64le: #{opcode} expects a vector/FPR register, got #{reg.class} at #{codeOriginString}"
+            end
+            unless addr.is_a?(Address) && addr.offset.value == 0
+                raise "ppc64le: #{opcode} address must be lowered to [reg] first, got #{addr.class} at #{codeOriginString}"
+            end
+            $asm.puts "#{isLoad ? 'lxvd2x' : 'stxvd2x'} #{reg.ppc64leOperand}, 0, #{addr.base.ppc64leOperand}"
 
         # ------------------------------------------------------------------
         # Control flow
@@ -2439,26 +2674,39 @@ class Instruction
 
         # ------------------------------------------------------------------
         # Floating-point operations (basic)
+        #
+        # Float (f32) values live in FPRs in DOUBLE format on PPC: lfs
+        # widens on load, stfs narrows on store, and the A-form "s"
+        # arithmetic (fadds/fsubs/fmuls/fdivs/fsqrts) takes double-format
+        # operands and rounds the result to single precision.  So the *f
+        # arithmetic must use the "s" forms -- fadd would round to double and
+        # leave a value that is not a representable float in the register,
+        # which a later comparison or conversion would observe.  This is
+        # what MacroAssemblerPPC64::addFloat & co. emit too.
+        #
+        # f0 is reserved as the backend's FP scratch: no offlineasm FPR
+        # maps to it (ft0-ft7 are f1-f8, csfr0-7 f14-f21, Tmps f9-f12) and
+        # it is volatile in ELFv2.
         # ------------------------------------------------------------------
         when "addf", "addd"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "fadd #{dst}, #{dst}, #{src}"
+            $asm.puts "fadd#{opcode == "addf" ? "s" : ""} #{dst}, #{dst}, #{src}"
 
         when "subf", "subd"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "fsub #{dst}, #{dst}, #{src}"
+            $asm.puts "fsub#{opcode == "subf" ? "s" : ""} #{dst}, #{dst}, #{src}"
 
         when "mulf", "muld"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "fmul #{dst}, #{dst}, #{src}"
+            $asm.puts "fmul#{opcode == "mulf" ? "s" : ""} #{dst}, #{dst}, #{src}"
 
         when "divf", "divd"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
-            $asm.puts "fdiv #{dst}, #{dst}, #{src}"
+            $asm.puts "fdiv#{opcode == "divf" ? "s" : ""} #{dst}, #{dst}, #{src}"
 
         when "absf", "absd"
             dst = operands[1].ppc64leOperand
@@ -2504,6 +2752,98 @@ class Instruction
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
             $asm.puts "fmr #{dst}, #{src}"
+
+        # Bitwise and/or on FP registers (f32/f64 min/max merge the sign of
+        # +0/-0 this way).  xxland/xxlor (VSX, v2.06) operate on the full
+        # VSR, and FPR n is doubleword 0 of VSR n, so the VSR number is the
+        # FPR number.  This is correct for floats too: the double-format
+        # image of a float keeps its sign in bit 0 and equal floats have
+        # equal images, so and/or of two equal-magnitude images is the
+        # image of the and/or'd float.
+        when "andf", "andd", "orf", "ord"
+            dst = operands[1].ppc64leOperand
+            src = operands[0].ppc64leOperand
+            ins = opcode.start_with?("and") ? "xxland" : "xxlor"
+            $asm.puts "#{ins} #{dst}, #{dst}, #{src}"
+
+        # double <-> float.  frsp rounds to single precision (the FPR keeps
+        # the double-format image).  A float in an FPR already IS a double, so
+        # widening is value-preserving with any move -- but fmr would also
+        # preserve a signalling NaN, and x86 cvtss2sd, arm64 fcvt and wasm's
+        # f64.promote_f32 (whose result must be an arithmetic NaN) all quiet
+        # it.  frsp does exactly that: on a value that is already a float it
+        # is exact (the input is representable), and it quiets SNaNs keeping
+        # the payload.  Hardware-checked: 0x7fa00000 -> 0x7ffc000000000000,
+        # 0x7f800001 -> 0x7ff8000020000000, 0x7fc00000 -> 0x7ff8000000000000,
+        # and 1.0, the smallest denormal, -0.0, FLT_MAX and -inf unchanged.
+        # (Caught by the wasm spec suite's conversions.wast.)
+        when "cd2f", "cf2d"
+            $asm.puts "frsp #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
+
+        # Round to integral value, result stays floating point.  frip/frim/
+        # friz (v2.02) are ceil/floor/trunc.  "round" is offlineasm's
+        # round-half-to-even (arm64 frintn, x86 roundss/sd $0); PPC's frin
+        # rounds half AWAY from zero, so use xsrdpic instead, which rounds
+        # per FPSCR[RN] -- round-to-nearest-even, which JSC never changes.
+        # All four are exact for float inputs (an integer nearest a float is
+        # itself a float).  Hardware-checked: xsrdpic gives 0.5->0, 1.5->2,
+        # 2.5->2, -0.5->-0, -2.5->-2.
+        when "ceilf", "ceild"
+            $asm.puts "frip #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
+        when "floorf", "floord"
+            $asm.puts "frim #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
+        when "truncatef", "truncated"
+            $asm.puts "friz #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
+        when "roundf", "roundd"
+            $asm.puts "xsrdpic #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
+
+        # Raw bit moves between a GPR and a float (arm64 fmov Sd, Wn / Wd, Sn).
+        # The FPR holds the double-format image, so these are conversions,
+        # not copies: xscvspdpn/xscvdpspn (v2.07, POWER8) convert between the
+        # single-format word and the double image WITHOUT signalling, so NaN
+        # payloads (including signalling NaNs) and denormals survive exactly.
+        # xscvspdpn reads word 0 of the VSR, hence the sldi; mfvsrwz reads
+        # word 1 and zero-extends, matching the 32-bit-write convention.
+        # This is GCC -mcpu=power8's own memcpy(float<->uint32) sequence.
+        # Hardware-checked on the POWER9 box for 1.0, -0.0, the smallest
+        # denormal, a signalling NaN (0x7f800001), a payload qNaN, -inf,
+        # 0x4f000000/0xcf000000 and 0x007fffff: the FPR image equals lfs's
+        # and ff2i(fi2f(x)) == x with garbage in the GPR's upper word.
+        # Scratch: r0 for fi2f, f0 (VSR 0) for ff2i.
+        when "fi2f"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "sldi 0, #{src}, 32"
+            $asm.puts "mtvsrd #{dst}, 0"
+            $asm.puts "xscvspdpn #{dst}, #{dst}"
+        when "ff2i"
+            src = operands[0].ppc64leOperand
+            dst = operands[1].ppc64leOperand
+            $asm.puts "xscvdpspn 0, #{src}"
+            $asm.puts "mfvsrwz #{dst}, 0"
+
+        # FP -> integer, truncating toward zero (arm64 fcvtz{u,s}).  Callers
+        # range-check first (wasm trunc traps, trunc_sat saturates
+        # explicitly, as on x86), so only in-range values reach these and
+        # the out-of-range behaviour of fcti* never matters.  The convert
+        # happens in f0 so the source survives; the integer moves out with
+        # mfvsrwz (zero-extending, 32-bit results) or mfvsrd (64-bit).
+        # fctiwuz/fctiduz are v2.06.  Float sources need nothing extra: the
+        # FPR already holds the double image.  Hardware-checked: fctiwuz
+        # 4e9 = 4000000000, fctiwz -3.9 = -3 (zero-extended word),
+        # fctiduz 1.8e19 = 18000000000000000000.
+        when "truncatef2i", "truncated2i"
+            $asm.puts "fctiwuz 0, #{operands[0].ppc64leOperand}"
+            $asm.puts "mfvsrwz #{operands[1].ppc64leOperand}, 0"
+        when "truncatef2is"
+            $asm.puts "fctiwz 0, #{operands[0].ppc64leOperand}"
+            $asm.puts "mfvsrwz #{operands[1].ppc64leOperand}, 0"
+        when "truncatef2q", "truncated2q"
+            $asm.puts "fctiduz 0, #{operands[0].ppc64leOperand}"
+            $asm.puts "mfvsrd #{operands[1].ppc64leOperand}, 0"
+        when "truncatef2qs", "truncated2qs"
+            $asm.puts "fctidz 0, #{operands[0].ppc64leOperand}"
+            $asm.puts "mfvsrd #{operands[1].ppc64leOperand}, 0"
 
         # Integer-to-float conversions.
         # Semantics per the ARM64 reference backend: the "s" suffix means
