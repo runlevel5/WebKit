@@ -565,6 +565,40 @@ void BBQJIT::emitShuffleMove(Vector<Value, N, OverflowHandler>& srcVector, Vecto
     statusVector[index] = ShuffleStatus::Moved;
 }
 
+#if CPU(PPC64LE)
+// ELFv2 makes the caller extend an argument narrower than 64 bits to a full
+// register (sign- or zero-extension by the C type) and lets the callee rely on
+// it. BBQ keeps i32 values zero-extended and materialises i32 constants
+// zero-extended, which is right for unsigned parameters but not for a negative
+// int32_t (e.g. operationWasmRefTest's abstract heap types). Re-extend each
+// narrow integer argument in its GPR according to the operation's C type.
+template<typename Func>
+static void extendNarrowCCallArgumentsForELFv2(CCallHelpers& jit, const CallInformation& callInfo, size_t argumentCount)
+{
+    using Traits = FunctionTraits<Func>;
+    [&]<size_t... I>(std::index_sequence<I...>) {
+        ([&] {
+            using RawArg = std::remove_cvref_t<typename Traits::template ArgumentType<I>>;
+            using Arg = typename std::conditional_t<std::is_enum_v<RawArg>, std::underlying_type<RawArg>, std::type_identity<RawArg>>::type;
+            if constexpr (std::is_integral_v<Arg> && sizeof(Arg) < sizeof(uint64_t)) {
+                if (I >= argumentCount || I >= callInfo.params.size())
+                    return;
+                auto location = callInfo.params[I].location;
+                if (!location.isGPR())
+                    return;
+                GPRReg reg = location.jsr().payloadGPR();
+                if constexpr (std::is_same_v<Arg, bool> || sizeof(Arg) == 1)
+                    std::is_signed_v<Arg> ? jit.signExtend8To64(reg, reg) : jit.zeroExtend8To32(reg, reg);
+                else if constexpr (sizeof(Arg) == 2)
+                    std::is_signed_v<Arg> ? jit.signExtend16To64(reg, reg) : jit.zeroExtend16To32(reg, reg);
+                else
+                    std::is_signed_v<Arg> ? jit.signExtend32ToPtr(reg, reg) : jit.zeroExtend32ToWord(reg, reg);
+            }
+        }(), ...);
+    }(std::make_index_sequence<Traits::arity>());
+}
+#endif
+
 template<typename Func>
 void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)
 {
@@ -585,6 +619,9 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)
     // Preserve caller-saved registers and other info
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
+#if CPU(PPC64LE)
+    extendNarrowCCallArgumentsForELFv2<Func>(m_jit, callInfo, arguments.size());
+#endif
 
     // Materialize address of native function and call register
     void* taggedFunctionPtr = tagCFunctionPtr<void*, OperationPtrTag>(function);
@@ -615,6 +652,9 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments, Value& r
     // Preserve caller-saved registers and other info
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
+#if CPU(PPC64LE)
+    extendNarrowCCallArgumentsForELFv2<Func>(m_jit, callInfo, arguments.size());
+#endif
 
     // Materialize address of native function and call register
     void* taggedFunctionPtr = tagCFunctionPtr<void*, OperationPtrTag>(function);
