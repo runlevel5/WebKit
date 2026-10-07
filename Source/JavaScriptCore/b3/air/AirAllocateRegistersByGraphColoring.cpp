@@ -2206,6 +2206,17 @@ private:
                     }
 
                     Width spillWidth = m_tmpWidth.requiredWidth(tmp);
+#if CPU(PPC64LE)
+                    // A PPC64 FPR holds a float in double format, so for the FP bank the spill
+                    // width is not a question of how many low bits matter: stfd/lfd and stfs/lfs
+                    // use different memory encodings. defWidth() is conservatively 64 for any
+                    // non-ZDef def (e.g. a Patchpoint result), which made a Float tmp spill with
+                    // MoveDouble while patchpoint generators, and every other reader of a Float
+                    // in memory, use the 4-byte single encoding. Spill FP tmps by their use
+                    // width so a Float always lives in memory as a float.
+                    if (bank == FP)
+                        spillWidth = std::max(m_tmpWidth.useWidth(tmp), Width32);
+#endif
                     Opcode move = Oops;
                     switch (stackSlotMinimumWidth(spillWidth)) {
                     case 4:
