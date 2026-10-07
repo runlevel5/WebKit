@@ -1811,7 +1811,7 @@ end
     subp cfr, t0, t0
 
 .stackHeightOK:
-    if X86_64 or ARM64
+    if X86_64 or ARM64 or PPC64LE
         # We need to start zeroing from sp as it has been adjusted after saving callee saves.
         move sp, t2
         move t0, sp
