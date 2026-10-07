@@ -695,6 +695,15 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
     for (auto reg = ARMRegisters::d16; reg <= ARMRegisters::d31; reg = MacroAssembler::nextFPRegister(reg))
         fprSetBuilder.remove(reg);
 #endif
+#if CPU(PPC64LE)
+    // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21 (fpRegCS0-7)
+    // as VM callee-saves (removed just below). Nothing saves f22-f31 at a C-to-VM
+    // entry and BBQ's prologue does not save them either, so BBQ code using one
+    // would hand the C caller of vmEntry a corrupted register. Air excludes them
+    // for the same reason (see AirCode.cpp); keep BBQ consistent with it.
+    for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
+        fprSetBuilder.remove(reg);
+#endif
     // TODO: handle callee-saved registers better.
     RegisterSet::vmCalleeSaveRegisters().forEach([&](Reg reg) {
         fprSetBuilder.remove(reg);
