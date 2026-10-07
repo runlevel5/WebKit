@@ -827,6 +827,12 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 - **`JSTests/stress`: 80,818 pairs, 4 FAIL, 0 new** against `/home/tle/stress-baseline-fails.txt` (still the
   8-entry list): the 3 `waitasync-*-multi-workers` in `ftl-no-cjit-small-pool` and
   `js-to-wasm-callee-has-correct-prototype`.
+- **Wasm tail calls on (290df0de3344, bd54ebe8e31e): `JSTests/wasm.yaml` 13,460 pairs, 41 FAIL, all SIMD**
+  (simd-multimemory, gc/struct-new-default-v128, ipint-multimem-oob, and two tail-call tests that use v128:
+  tail-call-should-not-clobber-caller-origin, omg-tail-call-clobber-scratch-register). BBQ loads LR with
+  mtlr before the shuffle; OMG shuffles the return PC to the new frame's slot and loads LR from it; IPInt
+  already had a PPC64 arm. Stress gate 4 FAIL, 0 new. B3 CCall uint32_t arguments are now zero-extended
+  by the typed creators (feef685f97f6). The block below is the state before this.
 - **`JSTests/wasm.yaml` runs end to end: 13,460 pairs, 374 FAIL**, all of them in two deliberate
   configuration gaps: 347 need wasm tail calls (forced off on PPC64: the tail-call*/return_call* tests,
   the tail-call spec suites, `try_table.wast`, `compile-unreachable-catch.js`) and 27 need SIMD (off on
