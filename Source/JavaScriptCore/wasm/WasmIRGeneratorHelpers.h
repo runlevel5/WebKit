@@ -35,6 +35,7 @@
 #include "JSWebAssemblyException.h"
 #include "JSWebAssemblyInstance.h"
 #include "LinkBuffer.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "ProbeContext.h"
 #include "WasmCallee.h"
 #include "WasmCompilationContext.h"
@@ -160,6 +161,12 @@ static inline void emitThrowImpl(CCallHelpers& jit, unsigned exceptionIndex)
 
     jit.move(MacroAssembler::TrustedImm32(exceptionIndex), GPRInfo::argumentGPR1);
     jit.move(MacroAssembler::stackPointerRegister, GPRInfo::argumentGPR2);
+    // The payload sits at sp. On PPC64 the C call's linkage area is at sp too
+    // (the callee saves CR at sp+8 and LR at sp+16, the call sequence saves the
+    // TOC at sp+24), so give the call its own slow-path extent below the
+    // payload. operationWasmThrow does not return here, so sp is not restored.
+    if constexpr (!!maxFrameExtentForSlowPathCall)
+        jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
     jit.callOperation<OperationPtrTag>(operationWasmThrow);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
