@@ -222,6 +222,9 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
     jit.untagPtr(callerSP, MacroAssembler::linkRegister);
     jit.validateUntaggedPtr(MacroAssembler::linkRegister);
 #endif
+#elif CPU(PPC64LE)
+    // linkRegister is an r0 placeholder on PPC64: commit the return PC to LR with mtlr.
+    jit.restoreReturnAddressBeforeReturn(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newStackOffset - Checked<int32_t>(sizeof(Register))));
 #else
     UNREACHABLE_FOR_PLATFORM();
 #endif

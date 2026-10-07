@@ -5646,6 +5646,9 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         ASSERT(!calleeSaves.find(MacroAssembler::linkRegister));
         entry.dst = ShuffleLocation::fromGPR(MacroAssembler::linkRegister);
 #else
+        // On PPC64 LR is a special-purpose register that the shuffle cannot target, so the
+        // return PC goes to the new frame's return PC slot as on x86_64, and is loaded into
+        // LR from there once the shuffle is done (see below).
         entry.dst = ShuffleLocation::fromStack(newReturnPCOffset);
 #endif
         entries.append(entry);
@@ -5847,6 +5850,13 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     ASSERT(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::abs(newFPOffsetFromSP)) == static_cast<size_t>(std::abs(newFPOffsetFromSP)));
 
     auto newSPAtPrologueOffsetFromSP = newFPOffsetFromSP + prologueStackPointerDelta();
+
+#if CPU(PPC64LE)
+    // The callee's prologue spills LR, not a stack slot, as its return PC (the frame header
+    // is [fp] = caller fp, [fp+8] = return PC, as on ARM64). Commit the shuffled return PC
+    // to LR with mtlr; nothing from here to the jump makes a call, and only calls write LR.
+    jit.restoreReturnAddressBeforeReturn(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newReturnPCOffset));
+#endif
 
 #if CPU(ARM) || CPU(ARM64) || CPU(RISCV64)
     // the return PC should already be in the linkRegister from the shuffle above.
