@@ -713,7 +713,8 @@ macro preserveWasmFPRArgumentRegistersImpl(fprBaseOffset)
     forEachWasmArgumentFPR(macro (index, fpr1, fpr2)
         if ARM64 or ARM64E
             storepairv fpr1, fpr2, fprBaseOffset + index * VectorRegisterSize[sp]
-        elsif X86_64
+        elsif X86_64 or PPC64LE
+            # PPC64LE: full VSRs, since a wasm FPR argument may be a v128.
             storev fpr1, fprBaseOffset + (index + 0) * VectorRegisterSize[sp]
             storev fpr2, fprBaseOffset + (index + 1) * VectorRegisterSize[sp]
         else
@@ -727,7 +728,7 @@ macro restoreWasmFPRArgumentRegistersImpl(fprBaseOffset)
     forEachWasmArgumentFPR(macro (index, fpr1, fpr2)
         if ARM64 or ARM64E
             loadpairv fprBaseOffset + index * VectorRegisterSize[sp], fpr1, fpr2
-        elsif X86_64
+        elsif X86_64 or PPC64LE
             loadv fprBaseOffset + (index + 0) * VectorRegisterSize[sp], fpr1
             loadv fprBaseOffset + (index + 1) * VectorRegisterSize[sp], fpr2
         else
