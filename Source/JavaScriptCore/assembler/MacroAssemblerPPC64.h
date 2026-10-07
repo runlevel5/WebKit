@@ -1287,6 +1287,19 @@ public:
     Jump branchAdd32(ResultCondition cond, RegisterID src, RegisterID dest) { return branchAdd32(cond, src, dest, dest); }
     Jump branchAdd32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
     {
+        if (cond == Carry) {
+            // Unsigned carry-out of the 32-bit add is bit 32 of the sum of the
+            // zero-extended halves. Read both inputs into the scratches first
+            // (dest, a or b may alias, and the immediate overloads pass a
+            // scratch in).
+            m_assembler.rldicl(dataTempRegister, a, 0, 32);
+            m_assembler.rldicl(memoryTempRegister, b, 0, 32);
+            m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
+            m_assembler.rldicl(dest, dataTempRegister, 0, 32);              // wrapped result, zero-extended
+            m_assembler.rldicl(dataTempRegister, dataTempRegister, 32, 63); // (sum >> 32) & 1
+            m_assembler.cmpdi(0, dataTempRegister, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));              // != 0 → carry
+        }
         if (cond == Overflow) {
             // Read both inputs into the scratches before anything else: the
             // Address and TrustedImm32 overloads materialise their operand
@@ -3145,6 +3158,8 @@ public:
     // agree in sign but the result differs: (origLeft ^ result) & (src ^ result) < 0.
     Jump branchAdd64(ResultCondition cond, RegisterID src, RegisterID dest)
     {
+        if (cond == Carry)
+            return branchAdd64(cond, dest, src, dest);
         if (cond == Overflow) {
             m_assembler.mr(dataTempRegister, dest);              // origLeft
             m_assembler.addc(dest, dest, src);                   // addc keeps XER.CA for setCarry recovery
@@ -3159,6 +3174,16 @@ public:
     }
     Jump branchAdd64(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
     {
+        if (cond == Carry) {
+            // Unsigned carry-out of the 64-bit add: addc sets XER.CA, which no
+            // branch can test directly, so materialise it (li 0; addze) and
+            // branch if it is set. addc reads both inputs before writing, so
+            // dest may alias either.
+            m_assembler.addc(dest, a, b);
+            setCarry(dataTempRegister);
+            m_assembler.cmpdi(0, dataTempRegister, 0);
+            return Jump(m_assembler.emitUnlinkedBranch(4, 2));  // != 0 → carry
+        }
         if (cond == Overflow) {
             // Save both operands first: dest may alias either. addc keeps
             // XER.CA correct for the B3 CheckAdd setCarry recovery.
