@@ -838,15 +838,6 @@ void Options::notifyOptionsChanged()
 #endif
 #endif
 
-#if CPU(PPC64LE)
-    // Wasm tail calls are not ported to PPC64: the BBQ and OMG call-frame shuffles for
-    // return_call only have X86_64 and ARM arms and hit UNREACHABLE_FOR_PLATFORM()
-    // otherwise, so a module using return_call would crash the process when compiled.
-    // With the option off the parser rejects those opcodes with a CompileError instead.
-    // This overrides --useWasmTailCalls=true on purpose.
-    Options::useWasmTailCalls() = false;
-#endif
-
 #if !CPU(ARM64)
     Options::useRandomizingExecutableIslandAllocation() = false;
 #endif
