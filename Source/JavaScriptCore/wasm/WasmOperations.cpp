@@ -814,7 +814,7 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
                 *std::bit_cast<double*>(buffer + index) = context.fpr(value.fpr());
                 break;
             case B3::V128:
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
                 dataLogLnIf(verbose, "Vector FPR for value ", index, " ", value.fpr(), " = ", context.vector(value.fpr()));
                 *std::bit_cast<v128_t*>(buffer + index) = context.vector(value.fpr());
 #else
@@ -1225,7 +1225,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
 #endif
         } else if (value.isFPR()) {
             if (type.isVector()) {
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
                 context.vector(value.fpr()) = *std::bit_cast<v128_t*>(bufferSlot);
 #else
                 UNREACHABLE_FOR_PLATFORM();
