@@ -3064,6 +3064,25 @@ private:
             }
             ASSERT(spillSlot<bank>(tmp));
         });
+#if CPU(PPC64LE)
+        // FP spill slots that some instruction reads. The width rule below only
+        // protects readers; a slot nothing reads (say the slot of a dead result
+        // of a call returning many values) may be written in place at any width,
+        // and must be, or every such result needs a register at the same time.
+        UncheckedKeyHashSet<StackSlot*> fpSlotsRead;
+        if constexpr (bank == FP) {
+            for (BasicBlock* block : m_code) {
+                for (Inst& inst : *block) {
+                    inst.forEachArg([&] (Arg& arg, Arg::Role role, Bank argBank, Width) {
+                        if (argBank != FP || !arg.isTmp() || arg.isReg() || !Arg::isAnyUse(role))
+                            return;
+                        if (StackSlot* slot = spillSlot<bank>(arg.tmp()))
+                            fpSlotsRead.add(slot);
+                    });
+                }
+            }
+        }
+#endif
         for (BasicBlock* block : m_code) {
             Point positionOfHead = this->positionOfHead(block);
             for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
@@ -3162,7 +3181,7 @@ private:
                         // other width (e.g. an argument's MoveDouble def of a
                         // tmp only ever used as a float) goes through a
                         // register and an explicit spill move instead.
-                        if (bank == FP && bytesForWidth(width) != stackSlotMinimumWidth(spillWidthForFP(arg.tmp()))) {
+                        if (bank == FP && fpSlotsRead.contains(spilled) && bytesForWidth(width) != stackSlotMinimumWidth(spillWidthForFP(arg.tmp()))) {
                             m_stats[bank].numInPlaceSpillGiveUpSpillWidth++;
                             return;
                         }

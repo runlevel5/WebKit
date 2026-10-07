@@ -2053,6 +2053,25 @@ private:
             m_stats[bank].numSpillStackSlots++;
         }
 
+#if CPU(PPC64LE)
+        // FP spill slots that some instruction reads; see the width rule below.
+        // A slot nothing reads may be written in place at any width.
+        UncheckedKeyHashSet<StackSlot*> fpSlotsRead;
+        if constexpr (bank == FP) {
+            for (BasicBlock* block : m_code) {
+                for (Inst& inst : *block) {
+                    inst.forEachArg([&] (Arg& arg, Arg::Role role, Bank argBank, Width) {
+                        if (argBank != FP || !arg.isTmp() || arg.isReg() || !Arg::isAnyUse(role))
+                            return;
+                        auto entry = stackSlots.find(arg.tmp());
+                        if (entry != stackSlots.end())
+                            fpSlotsRead.add(entry->value);
+                    });
+                }
+            }
+        }
+#endif
+
         // Rewrite the program to get rid of the spilled Tmp.
         InsertionSet insertionSet(m_code);
         for (BasicBlock* block : m_code) {
@@ -2128,7 +2147,7 @@ private:
                         // encodings, so never touch it in place at another width.
                         if (bank == FP) {
                             spillWidth = std::max(m_tmpWidth.useWidth(arg.tmp()), Width32);
-                            if (bytesForWidth(width) != stackSlotMinimumWidth(spillWidth))
+                            if (fpSlotsRead.contains(stackSlotEntry->value) && bytesForWidth(width) != stackSlotMinimumWidth(spillWidth))
                                 return;
                         }
 #endif
