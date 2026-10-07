@@ -848,20 +848,23 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
   not be spilled in place because 546ea37c38d2's width rule also blocked slots nothing reads — fixed by
   applying that rule only to slots some instruction reads (big-tuple*.js, simd-big-tuple.js).
 - **`$isSIMDPlatform` includes ppc64le** (ELF machine "powerpc64"). JSTests/wasm.yaml then has
-  17,218 pairs; every remaining failure is a `wasm-no-jit` or `wasm-no-wasm-jit` variant of a test
-  that needs SIMD, i.e. needs IPInt SIMD. The wasm-simd (`--forceAllFunctionsToUseSIMD`) variants and
-  the SIMD spec-test modes are all green.
-- **Open:** IPInt SIMD (6F below). Nothing has run on POWER8 silicon; the sequences avoid the words
+  17,218 pairs; before IPInt SIMD the 240 failures were all `wasm-no-jit`/`wasm-no-wasm-jit` variants
+  of SIMD tests. With IPInt SIMD (6F): 17,218 PASS, 0 FAIL.
+- **IPInt SIMD: done (6F below).** Nothing has run on POWER8 silicon; the sequences avoid the words
   POWER8 leaves undefined (xvcvdpsp, xvcvdpsxws/uxws, xscvdpspn) but that is checked by reading only.
 
-### 6F. IPInt SIMD (not started; a large lift)
+### 6F. IPInt SIMD — done 2026-10-08
 
-256 SIMD handlers in InPlaceInterpreter64.asm are `ipintSIMDOp` traps on PPC64LE; 213 of them have
-per-architecture `emit` bodies (ARM64/x86_64 only), so each needs a hand-written PPC64 body within its
-512-byte `alignIPInt` slot. The MacroAssemblerPPC64 sequences are the reference (same lane layout:
-IPInt's pushv/popv are stxvd2x/lxvd2x). offlineasm v0-v7 map to VSR 32,33,46-51 (VMX-addressable).
-Then drop the `useWasmIPIntSIMD() = false` override in Options.cpp. This is what the ~240 remaining
-wasm-no-jit / wasm-no-wasm-jit SIMD failures need.
+All 256 SIMD handlers run on PPC64LE: 212 got an `elsif PPC64LE` body of POWER8 VMX/VSX `emit`s
+(plus the 10 `simdLoad*` macros), the 43 generic offlineasm handlers are used as is, and
+`_ipint_simd_prefix` dispatches through `ipint_simd_dispatch_base` like x86_64. Register model in the
+comment above `ipintSIMDOp`: offlineasm v0/v1/v2 = VMX 0/1/14 (VSR 32/33/46), VMX 2-7 scratch, same
+lane layout as the JIT. Every handler fits its 512-byte slot (IPInt::initialize() validates the
+stride at startup). `useWasmIPIntSIMD` is no longer forced off, so `--useJIT=false` keeps
+`useWasmSIMD`. Verified: all 57 simd-spec-tests with `--useJIT=0` and with the wasm JITs off; a
+differential test (`power9:/home/tle/simd/diff/`: 508 functions covering every SIMD opcode, every
+lane index, special float/integer values, 30 inputs each) gives identical memory images under
+IPInt-only, BBQ and eager OMG. JSTests/wasm.yaml: 17,218 pairs, 0 FAIL.
 
 ### Status — 2026-10-07, Phase 6 gate (supersedes the block below)
 
