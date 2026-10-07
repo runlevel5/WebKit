@@ -712,6 +712,8 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             *access.operator()<uint64_t>(registerSpace, offset) = unboxedValue;
         } else if (rep.location.isFPR()) {
             auto offset = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(rep.location.fpr()) * bytesForWidth(Width::Width64);
+            if (returnType.kind == TypeKind::F32)
+                unboxedValue = f32FPRSlotBits(std::bit_cast<float>(static_cast<uint32_t>(unboxedValue)));
             *access.operator()<uint64_t>(registerSpace, offset) = unboxedValue;
         } else
             *access.operator()<uint64_t>(callFrame, rep.location.offsetFromFP()) = unboxedValue;
@@ -801,6 +803,12 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
         } else if (value.isFPR()) {
             switch (value.type().kind()) {
             case B3::Float:
+                // The OSR entry reads a Float slot as 4 bytes; an FPR holds it in
+                // its register format (the double image on PPC64).
+                dataLogLnIf(verbose, "FPR for value ", index, " ", value.fpr(), " = ", context.fpr(value.fpr()));
+                *std::bit_cast<uint64_t*>(buffer + index) = 0;
+                *std::bit_cast<float*>(buffer + index) = loadF32FromFPRSlot(&context.fpr(value.fpr()));
+                break;
             case B3::Double:
                 dataLogLnIf(verbose, "FPR for value ", index, " ", value.fpr(), " = ", context.fpr(value.fpr()));
                 *std::bit_cast<double*>(buffer + index) = context.fpr(value.fpr());
@@ -1222,6 +1230,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
 #else
                 UNREACHABLE_FOR_PLATFORM();
 #endif
+            } else if (type.kind() == B3::Float) {
+                // The buffer holds the f32's 4-byte encoding; the FPR wants its
+                // register format (the double image on PPC64).
+                *std::bit_cast<uint64_t*>(&context.fpr(value.fpr())) = f32FPRSlotBits(std::bit_cast<float>(static_cast<uint32_t>(*bufferSlot)));
             } else
                 context.fpr(value.fpr()) = *std::bit_cast<double*>(bufferSlot);
         } else if (value.isStack()) {
@@ -1496,8 +1508,11 @@ JSC_DEFINE_JIT_OPERATION(operationIterateResults, void, (JSWebAssemblyInstance* 
         auto rep = wasmCallInfo.results[index];
         if (rep.location.isGPR())
             registerResults[registerResultOffsets.find(rep.location.jsr().payloadGPR())->offset() / sizeof(uint64_t)] = unboxedValue;
-        else if (rep.location.isFPR())
+        else if (rep.location.isFPR()) {
+            if (returnType.kind == TypeKind::F32)
+                unboxedValue = f32FPRSlotBits(std::bit_cast<float>(static_cast<uint32_t>(unboxedValue)));
             registerResults[registerResultOffsets.find(rep.location.fpr())->offset() / sizeof(uint64_t)] = unboxedValue;
+        }
         else
             calleeFramePointer[rep.location.offsetFromFP() / sizeof(uint64_t)] = unboxedValue;
     }
