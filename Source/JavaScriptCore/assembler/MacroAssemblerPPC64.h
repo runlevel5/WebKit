@@ -1815,7 +1815,12 @@ public:
     }
     void convertFloatToDouble(FPRegisterID src, FPRegisterID dest)
     {
-        moveDouble(src, dest);      // already double format in the FPR
+        // An FPR already holds a float in double format, so a plain move would be
+        // value-preserving, but it would leave a signalling NaN signalling: lfs
+        // widens an sNaN bit for bit. wasm's f64.promote_f32 (and the x86/ARM64
+        // conversions JSC otherwise relies on) quiet it. frsp does, and is exact
+        // for every other value, since the source is single-representable.
+        m_assembler.frsp(dest, src);
     }
     void convertDoubleToFloat(FPRegisterID src, FPRegisterID dest)
     {
@@ -1925,7 +1930,7 @@ public:
     void truncateDoubleToUint64(FPRegisterID src, RegisterID dest, FPRegisterID, FPRegisterID) { truncateDoubleToUint64(src, dest); }
 
     // A single-precision value in a PPC64 FPR is held in double format (see
-    // convertFloatToDouble, which is a plain move), and every float is exactly
+    // convertFloatToDouble), and every float is exactly
     // representable as a double, so truncating a float uses the same
     // instructions as truncating the equivalent double.
     void truncateFloatToInt32(FPRegisterID src, RegisterID dest)  { truncateDoubleToInt32(src, dest); }
