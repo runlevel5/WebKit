@@ -6639,13 +6639,34 @@ class YarrGenerator final : public YarrJITInfo {
         registers.add(ARMRegisters::r8, IgnoreVectors);
         registers.add(ARMRegisters::r10, IgnoreVectors);
 #elif CPU(RISCV64)
+#elif CPU(PPC64LE)
+        // Same register roles and conditions as x86_64 above: these five are
+        // ELFv2 callee-saved, and the generated code is called directly from C++.
+        if (m_pattern.m_saveInitialStartValue)
+            registers.add(m_regs.initialStart, IgnoreVectors);
+
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+        if (m_containsNestedSubpatterns)
+            registers.add(m_regs.remainingMatchCount, IgnoreVectors);
+#endif
+
+        if (mayCall() || m_callFrameSizeInBytes) {
+            registers.add(m_regs.regUnicodeInputAndTrail, IgnoreVectors);
+            registers.add(m_regs.unicodeAndSubpatternIdTemp, IgnoreVectors);
+            registers.add(m_regs.endOfStringAddress, IgnoreVectors);
+        } else if (m_pattern.hasDuplicateNamedCaptureGroups())
+            registers.add(m_regs.unicodeAndSubpatternIdTemp, IgnoreVectors);
+#else
+#error "Yarr JIT: name the callee-saved registers this CPU's YarrJITDefaultRegisters uses"
 #endif
         return registers;
     }
 
     void generateEnter()
     {
-#if CPU(X86_64) || CPU(ARM_THUMB2) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM_THUMB2) || CPU(RISCV64) || CPU(PPC64LE)
+        // PPC64: frameAddress() and the callee saves are fp-relative, and the
+        // return address lives in LR, so always build the frame.
         m_jit.emitFunctionPrologue();
 #elif CPU(ARM64)
         // JITCage code is doing prologue and epilogue in thunk.
@@ -6679,7 +6700,7 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
 
         m_jit.emitRestoreCalleeSavesFor(&m_calleeSaves);
-#if CPU(X86_64) || CPU(ARM_THUMB2) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM_THUMB2) || CPU(RISCV64) || CPU(PPC64LE)
         m_jit.emitFunctionEpilogue();
 #elif CPU(ARM64)
         // JITCage code is doing prologue and epilogue in thunk.

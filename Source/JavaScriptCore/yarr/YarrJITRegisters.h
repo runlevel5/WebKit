@@ -158,7 +158,7 @@ public:
     static constexpr GPRReg returnRegister = RISCV64Registers::x10;
     static constexpr GPRReg returnRegister2 = RISCV64Registers::x11;
 #elif CPU(PPC64LE)
-    // ELFv2 argument GPRs r3-r10 carry incoming Yarr arguments.
+    // ELFv2 argument GPRs r3-r7 carry the incoming Yarr arguments.
     static constexpr GPRReg input = PPC64Registers::r3;
     static constexpr GPRReg index = PPC64Registers::r4;
     static constexpr GPRReg length = PPC64Registers::r5;
@@ -166,17 +166,23 @@ public:
     static constexpr GPRReg matchingContext = PPC64Registers::r7;
     static constexpr GPRReg freelistRegister = InvalidGPRReg;
 
-    // Scratch registers — pick callee-saved r14-r24 to survive across JIT calls.
+    // Scratch registers. ELFv2 has only eight volatile GPRs that are free to
+    // use (r3-r10; r0 is the linkRegister placeholder and r11/r12 are the
+    // MacroAssembler's own scratches), and five of them carry arguments. The
+    // rest come from the ELFv2 callee-saved r24-r28, which the generated code
+    // saves and restores itself (calleeSaveRegisters() below), exactly like
+    // x86_64's rbx/r12-r15. They stay clear of the JSC-reserved r20-r23,
+    // r29/r30 (the JIT's non-preserved scratches) and r31 (fp).
     static constexpr GPRReg regT0 = PPC64Registers::r8;
     static constexpr GPRReg regT1 = PPC64Registers::r9;
     static constexpr GPRReg regT2 = PPC64Registers::r10;
-    static constexpr GPRReg remainingMatchCount = PPC64Registers::r28;
-    static constexpr GPRReg regUnicodeInputAndTrail = PPC64Registers::r29;
-    static constexpr GPRReg unicodeAndSubpatternIdTemp = PPC64Registers::r30;
-    static constexpr GPRReg initialStart = PPC64Registers::r27;
-    static constexpr GPRReg endOfStringAddress = PPC64Registers::r17;
+    static constexpr GPRReg initialStart = PPC64Registers::r24;
+    static constexpr GPRReg remainingMatchCount = PPC64Registers::r25;
+    static constexpr GPRReg regUnicodeInputAndTrail = PPC64Registers::r26;
+    static constexpr GPRReg unicodeAndSubpatternIdTemp = PPC64Registers::r27;
+    static constexpr GPRReg endOfStringAddress = PPC64Registers::r28;
 
-    // ELFv2 return GPRs are r3 (low) / r4 (high).
+    // ELFv2 returns a two-word aggregate (UGPRPair) in r3/r4.
     static constexpr GPRReg returnRegister = PPC64Registers::r3;
     static constexpr GPRReg returnRegister2 = PPC64Registers::r4;
 #endif
