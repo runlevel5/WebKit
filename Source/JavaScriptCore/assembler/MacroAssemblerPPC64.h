@@ -2103,6 +2103,16 @@ public:
         emitDoubleConditionCRop(bits);
         setFromCR0Bit(bits.bi, bits.bo != 4, dest);
     }
+    // The generic MacroAssembler::compareDouble branches around a move, which
+    // mispredicts on data-dependent comparisons; take the CR0 bit directly.
+    void compareDouble(DoubleCondition cond, FPRegisterID left, FPRegisterID right, RegisterID dest)
+    {
+        compareFloat(cond, left, right, dest);
+    }
+    void compareDoubleWithZero(DoubleCondition, FPRegisterID, RegisterID)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+    }
 
     // --- Width extensions (Air SignExtend/ZeroExtend opcodes) -----------
     void signExtend8To64(RegisterID src, RegisterID dest)  { m_assembler.extsb(dest, src); }
