@@ -1207,6 +1207,22 @@ public:
     }
 
     // ResultCondition-based test branch: and the operands, test CR0.
+    // andi. has already set CR0 from its result, a value in [0, 0xffff]: EQ
+    // answers Zero/NonZero, and LT is clear, which is also the right answer
+    // for Signed/PositiveOrZero at 32 or 64 bits. No compare needed.
+    Jump branchOnAndiResult(ResultCondition cond)
+    {
+        switch (cond) {
+        case Zero:           return Jump(m_assembler.emitUnlinkedBranch(12, 2));
+        case NonZero:        return Jump(m_assembler.emitUnlinkedBranch(4, 2));
+        case Signed:         return Jump(m_assembler.emitUnlinkedBranch(12, 0));
+        case PositiveOrZero: return Jump(m_assembler.emitUnlinkedBranch(4, 0));
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            return Jump();
+        }
+    }
+
     Jump branchTestImpl32(ResultCondition cond, RegisterID valueLow32)
     {
         // valueLow32 has the 32-bit test value zero-extended.
@@ -1243,7 +1259,7 @@ public:
         }
         if (isUInt16(uint32_t(mask.m_value))) {
             m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
-            return branchTestImpl32(cond, dataTempRegister);
+            return branchOnAndiResult(cond);
         }
         moveImmToScratch(uint32_t(mask.m_value), dataTempRegister);
         return branchTest32(cond, reg, dataTempRegister);
@@ -1260,7 +1276,7 @@ public:
             return branchTest64Impl(cond, reg);
         if (mask.m_value >= 0 && isUInt16(mask.m_value)) {
             m_assembler.andi_(dataTempRegister, reg, uint16_t(mask.m_value));
-            return branchTest64Impl(cond, dataTempRegister);
+            return branchOnAndiResult(cond);
         }
         moveImmToScratch(int64_t(mask.m_value), dataTempRegister);
         return branchTest64(cond, reg, dataTempRegister);
