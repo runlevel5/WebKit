@@ -247,8 +247,20 @@ MetaAllocator::FreeSpacePtr MetaAllocator::findAndRemoveFreeSpace(size_t sizeInB
 
         uintptr_t lastPageForLeftAllocation = (nodeStartAsInt + sizeInBytes - 1) >> m_logPageSize;
         uintptr_t firstPageForRightAllocation = (nodeStartAsInt + nodeSizeInBytes - sizeInBytes) >> m_logPageSize;
-        
-        if (lastPageForLeftAllocation - firstPage + 1 <= lastPage - firstPageForRightAllocation + 1) {
+
+        bool allocateOnLeft = lastPageForLeftAllocation - firstPage + 1 <= lastPage - firstPageForRightAllocation + 1;
+#if CPU(PPC64LE)
+        // On PPC64 a direct branch reaches only +/-32 MB. Taking the right end
+        // of the big free chunk whenever that touches fewer pages (with 64 KB
+        // pages, most of the time) splits JIT code between both ends of the
+        // executable pool, so once the pool is larger than 32 MB calls between
+        // the two halves need the far li64/mtctr form, which is slower and
+        // cannot be repatched safely while another thread may execute it.
+        // Keep the code packed from the bottom instead.
+        allocateOnLeft = true;
+#endif
+
+        if (allocateOnLeft) {
             // Allocate in the left side of the returned chunk, and slide the node to the right.
             result = node->m_start;
             
