@@ -105,6 +105,12 @@ static constexpr size_t fixedExecutableMemoryPoolSize = 16 * MB;
 #endif
 #elif CPU(X86_64)
 static constexpr size_t fixedExecutableMemoryPoolSize = 1 * GB;
+#elif CPU(PPC64LE)
+// Every PPC64 jump and call slot can reach any address (MacroAssemblerPPC64::nearJumpRange), so
+// branch range does not bound the pool. The 32 MB fallback below fills up in a JetStream2-sized
+// run, and as it fills, memoryPressureMultiplier() raises every tier-up threshold until hot code
+// stays in the lower tiers.
+static constexpr size_t fixedExecutableMemoryPoolSize = 1 * GB;
 #else
 static constexpr size_t fixedExecutableMemoryPoolSize = 32 * MB;
 #endif
