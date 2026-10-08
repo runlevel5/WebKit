@@ -746,6 +746,10 @@ public:
                 masm->m_assembler.linkJumpThunk(m_label, label.dataLocation(), m_type, m_condition, m_bitNumber, m_compareRegister);
             else
                 masm->m_assembler.linkJumpThunk(m_label, label.dataLocation(), m_type, m_condition);
+#elif CPU(PPC64LE)
+            // Recorded for branch compaction, which can then shrink the slot
+            // to a single b when the thunk is in reach.
+            masm->m_assembler.linkJumpThunk(m_label, label.dataLocation());
 #else
             Jump target = *this;
             masm->addLinkTask([=](auto& linkBuffer) {

@@ -161,9 +161,20 @@ public:
 
     AssemblerBuffer& buffer() LIFETIME_BOUND { return m_buffer; }
 
+    // A watchpoint label may later be overwritten in place by replaceWithJump,
+    // which needs maxJumpReplacementSize() bytes. As on ARM64 and x86_64, any
+    // label taken inside that shadow is pushed past it with nops, so nothing
+    // another path can still branch to is overwritten. Jump and branch slots
+    // started inside the shadow are emitted at fixed size, so branch
+    // compaction cannot pull a later label back into it either.
     AssemblerLabel label()
     {
-        return m_buffer.label();
+        AssemblerLabel result = m_buffer.label();
+        while (static_cast<int>(result.offset()) < m_indexOfTailOfLastWatchpoint) [[unlikely]] {
+            insn(PPC_NOP);
+            result = m_buffer.label();
+        }
+        return result;
     }
 
     AssemblerLabel labelIgnoringWatchpoints()
@@ -171,12 +182,14 @@ public:
         return m_buffer.label();
     }
 
-    // labelForWatchpoint — used by AbstractMacroAssembler to emit a label
-    // that watchpoint patching will be aligned to.  Phase 1 stub: same as
-    // label(); refine when we add watchpoint patching support.
     AssemblerLabel labelForWatchpoint()
     {
-        return label();
+        AssemblerLabel result = m_buffer.label();
+        if (static_cast<int>(result.offset()) != m_indexOfLastWatchpoint)
+            result = label();
+        m_indexOfLastWatchpoint = result.offset();
+        m_indexOfTailOfLastWatchpoint = result.offset() + maxJumpReplacementSize();
+        return result;
     }
 
     // debugOffset — diagnostic helper used by AssemblerBuffer dumps.
@@ -3228,7 +3241,9 @@ public:
     // Every MacroAssembler jump, conditional branch, and call reserves a
     // FIXED 8-instruction (32-byte) slot.  At link/relink time the slot is
     // rewritten in place to the shortest form that reaches the target and
-    // padded with nops.  No branch compaction; correctness first.
+    // padded with nops.  Jumps and branches linked inside their own buffer or
+    // to a thunk are instead shrunk by branch compaction (see JumpType below);
+    // calls and fixed-size (patchable) slots keep this layout.
     //
     //   Unconditional jump slot        Conditional branch slot
     //   [0] marker or b/li64...        [0] bc BO,BI (offset 0 when unlinked)
@@ -3257,6 +3272,12 @@ public:
     static constexpr uint32_t MARKER_JUMP = 0x6000FB01u;
     static constexpr uint32_t MARKER_CALL = 0x6000FB02u;
     static constexpr uint32_t MARKER_BRANCH_TAIL = 0x6000FB03u;
+    static constexpr uint32_t MARKER_JUMP_FIXED = 0x6000FB04u;
+    static constexpr uint32_t MARKER_BRANCH_TAIL_FIXED = 0x6000FB05u;
+    // Written over the marker once a slot has been recorded for linking, so
+    // that linking the same slot twice is caught instead of corrupting the
+    // compaction bookkeeping.
+    static constexpr uint32_t MARKER_RECORDED = 0x6000FB06u;
 
     static constexpr RegisterID scratchRegister() { return PPC64Registers::r12; }
 
@@ -3302,11 +3323,25 @@ public:
 
     // --- Emission of unlinked slots -----------------------------------
 
+    // A slot must keep its full size through linking when it may be
+    // repatched later (patchableJump and friends), when some caller
+    // overwrites the code around it in place assuming its pre-link size
+    // (FixedSizeJumpScope), or when it starts inside a watchpoint's
+    // replacement shadow (see label()). Every other slot that is linked
+    // inside its own buffer is shrunk to its short form by branch compaction.
+    bool nextJumpMustBeFixedSize() const
+    {
+        return m_fixedSizeJumpDepth || static_cast<int>(m_buffer.codeSize()) < m_indexOfTailOfLastWatchpoint;
+    }
+
+    void beginFixedSizeJumps() { ++m_fixedSizeJumpDepth; }
+    void endFixedSizeJumps() { ASSERT(m_fixedSizeJumpDepth); --m_fixedSizeJumpDepth; }
+
     // Returns the label of the slot start; Jump carries it.
     AssemblerLabel emitUnlinkedJump()
     {
         AssemblerLabel result = m_buffer.label();
-        insn(MARKER_JUMP);
+        insn(nextJumpMustBeFixedSize() ? MARKER_JUMP_FIXED : MARKER_JUMP);
         for (unsigned i = 1; i < JUMP_SLOT_INSNS; ++i)
             insn(PPC_NOP);
         return result;
@@ -3316,8 +3351,9 @@ public:
     AssemblerLabel emitUnlinkedBranch(uint32_t bo, uint32_t bi)
     {
         AssemblerLabel result = m_buffer.label();
+        bool fixedSize = nextJumpMustBeFixedSize();
         insn(insnBc(bo, bi, 0));            // offset 0 = unlinked
-        insn(MARKER_BRANCH_TAIL);
+        insn(fixedSize ? MARKER_BRANCH_TAIL_FIXED : MARKER_BRANCH_TAIL);
         for (unsigned i = 2; i < JUMP_SLOT_INSNS; ++i)
             insn(PPC_NOP);
         return result;
@@ -3336,10 +3372,12 @@ public:
 
     // --- In-place slot rewriters ---------------------------------------
 
-    static void applyJumpSlot(uint32_t* location, void* to)
+    // The slot writers take the address the slot will execute at separately
+    // from the address they write to: branch compaction links into a staging
+    // buffer that is copied to executable memory afterwards.
+    static void computeJumpSlot(uint32_t (&words)[JUMP_SLOT_INSNS], const uint32_t* executableAt, const void* to)
     {
-        intptr_t offset = intptr_t(to) - intptr_t(location);
-        uint32_t words[JUMP_SLOT_INSNS];
+        intptr_t offset = intptr_t(to) - intptr_t(executableAt);
         for (auto& w : words) w = PPC_NOP;
         if (fitsBranch26(offset))
             words[0] = insnB(int32_t(offset), 0);
@@ -3352,6 +3390,12 @@ public:
             words[5] = insnMtctr(scratchRegister());
             words[6] = insnBctr();
         }
+    }
+
+    static void applyJumpSlot(uint32_t* location, void* to)
+    {
+        uint32_t words[JUMP_SLOT_INSNS];
+        computeJumpSlot(words, location, to);
         machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
     }
 
@@ -3374,20 +3418,16 @@ public:
         return true;
     }
 
-    static void applyBranchSlot(uint32_t* location, void* to)
+    static void computeBranchSlot(uint32_t (&words)[JUMP_SLOT_INSNS], const uint32_t* executableAt, uint32_t bo, uint32_t bi, const void* to)
     {
-        uint32_t bo, bi;
-        bool ok = extractBranchCondition(location, bo, bi);
-        RELEASE_ASSERT(ok);
-        intptr_t offset = intptr_t(to) - intptr_t(location);
-        uint32_t words[JUMP_SLOT_INSNS];
+        intptr_t offset = intptr_t(to) - intptr_t(executableAt);
         for (auto& w : words) w = PPC_NOP;
         if (fitsBranch16(offset))
             words[0] = insnBc(bo, bi, int32_t(offset));
         else {
             // Inverted bc skips the whole slot; stanza does the far jump.
             words[0] = insnBc(bo ^ 0x8, bi, JUMP_SLOT_INSNS * sizeof(uint32_t));
-            intptr_t offset1 = intptr_t(to) - intptr_t(location + 1);
+            intptr_t offset1 = intptr_t(to) - intptr_t(executableAt + 1);
             if (fitsBranch26(offset1))
                 words[1] = insnB(int32_t(offset1), 0);
             else {
@@ -3400,6 +3440,15 @@ public:
                 words[7] = insnBctr();
             }
         }
+    }
+
+    static void applyBranchSlot(uint32_t* location, void* to)
+    {
+        uint32_t bo, bi;
+        bool ok = extractBranchCondition(location, bo, bi);
+        RELEASE_ASSERT(ok);
+        uint32_t words[JUMP_SLOT_INSNS];
+        computeBranchSlot(words, location, bo, bi, to);
         machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
     }
 
@@ -3452,6 +3501,7 @@ public:
 
     // Fill with the preferred PPC NOP (ori 0,0,0 = 0x60000000 per Power ISA
     // v2.07B Book II §3.2).  Required by AbstractMacroAssembler::fillNops.
+    template<RepatchingInfo copy = memcpyRepatch>
     static void fillNops(void* base, size_t size)
     {
         uint32_t* ptr = static_cast<uint32_t*>(base);
@@ -3459,16 +3509,204 @@ public:
         RELEASE_ASSERT(!(size % sizeof(uint32_t)));
         uint32_t nop = 0x60000000u;
         for (size_t i = 0, n = size / sizeof(uint32_t); i < n; ++i)
-            machineCodeCopy<memcpyRepatch>(&ptr[i], &nop, sizeof(uint32_t));
+            machineCodeCopy<copy>(&ptr[i], &nop, sizeof(uint32_t));
+    }
+
+    // ==================================================================
+    // Branch compaction (ENABLE(BRANCH_COMPACTION), as on ARM64).
+    //
+    // A jump or branch linked inside its own buffer (Jump::link/linkTo) or to
+    // a thunk (Jump::linkThunk) is not written into its slot here. It is
+    // recorded, and LinkBuffer::copyCompactAndLinkCode shrinks the slot to the
+    // shortest form that reaches the target while copying the code out:
+    //
+    //   LinkJumpShort    b target                       4 bytes
+    //   LinkBranchShort  bc target                      4 bytes  (±32 KB)
+    //   LinkBranchMedium bc !cond,+8 ; b target         8 bytes  (±32 MB)
+    //   LinkFull         the whole 8-instruction slot  32 bytes
+    //
+    // Slots marked fixed-size (patchable ones, see nextJumpMustBeFixedSize)
+    // always get LinkFull. A LinkRecord's from() is the END of its slot, which
+    // is what the generic compaction loop expects: the short form is written
+    // so that it ends where the slot did.
+    // ==================================================================
+
+    enum JumpType : uint8_t {
+        JumpNoCondition,
+        JumpCondition,
+        JumpNoConditionFixedSize,
+        JumpConditionFixedSize,
+    };
+
+    enum JumpLinkType : uint8_t {
+        LinkInvalid,
+        LinkJumpShort,
+        LinkBranchShort,
+        LinkBranchMedium,
+        LinkFull,
+    };
+
+    class LinkRecord {
+    public:
+        LinkRecord(intptr_t from, intptr_t to, JumpType type, uint32_t bo, uint32_t bi, bool isThunk)
+            : m_from(from)
+            , m_to(to)
+            , m_type(type)
+            , m_bo(static_cast<uint8_t>(bo))
+            , m_bi(static_cast<uint8_t>(bi))
+            , m_isThunk(isThunk)
+        {
+        }
+
+        intptr_t from() const { return m_from; }
+        void setFrom(const PPC64Assembler*, intptr_t from) { m_from = from; }
+        intptr_t to(const PPC64Assembler*) const { return m_to; }
+        JumpType type() const { return m_type; }
+        JumpLinkType linkType() const { return m_linkType; }
+        void setLinkType(JumpLinkType linkType) { ASSERT(m_linkType == LinkInvalid); m_linkType = linkType; }
+        uint32_t bo() const { return m_bo; }
+        uint32_t bi() const { return m_bi; }
+        bool isThunk() const { return m_isThunk; }
+
+    private:
+        intptr_t m_from;
+        intptr_t m_to;
+        JumpType m_type;
+        JumpLinkType m_linkType { LinkInvalid };
+        uint8_t m_bo;
+        uint8_t m_bi;
+        bool m_isThunk;
+    };
+
+    Vector<LinkRecord, 0, UnsafeVectorOverflow>& jumpsToLink() LIFETIME_BOUND
+    {
+        std::ranges::sort(m_jumpsToLink, { }, &LinkRecord::from);
+        return m_jumpsToLink;
+    }
+
+    static constexpr bool canCompact(JumpType type)
+    {
+        return type == JumpNoCondition || type == JumpCondition;
+    }
+
+    static constexpr int linkSize(JumpLinkType linkType)
+    {
+        switch (linkType) {
+        case LinkJumpShort:
+        case LinkBranchShort:
+            return sizeof(uint32_t);
+        case LinkBranchMedium:
+            return 2 * sizeof(uint32_t);
+        case LinkInvalid:
+        case LinkFull:
+            break;
+        }
+        return JUMP_SLOT_INSNS * sizeof(uint32_t);
+    }
+
+    static int jumpSizeDelta(JumpType, JumpLinkType linkType)
+    {
+        return JUMP_SLOT_INSNS * sizeof(uint32_t) - linkSize(linkType);
+    }
+
+    // `from` is the end of the full-size slot in executable memory, before
+    // this slot is compacted; the branch itself will end up somewhere in
+    // [from - 32, from - 4]. A forward `to` is an upper bound (later slots
+    // can only shrink), a backward one is exact. Require the short form to
+    // reach from both ends of that window.
+    static JumpLinkType computeJumpType(LinkRecord& record, const uint8_t* from, const uint8_t* to)
+    {
+        JumpLinkType linkType = LinkFull;
+        if (canCompact(record.type())) {
+            intptr_t nearest = intptr_t(to) - intptr_t(from - sizeof(uint32_t));
+            intptr_t farthest = intptr_t(to) - intptr_t(from - JUMP_SLOT_INSNS * sizeof(uint32_t));
+            if (record.type() == JumpNoCondition) {
+                if (fitsBranch26(nearest) && fitsBranch26(farthest))
+                    linkType = LinkJumpShort;
+            } else if (fitsBranch16(nearest) && fitsBranch16(farthest))
+                linkType = LinkBranchShort;
+            else if (fitsBranch26(nearest) && fitsBranch26(farthest))
+                linkType = LinkBranchMedium;
+        }
+        record.setLinkType(linkType);
+        return linkType;
+    }
+
+    // `from` is where the (possibly compacted) slot ends in the buffer being
+    // written, `fromInstruction` where it ends in executable memory.
+    template<RepatchingInfo copy>
+    static void link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction, uint8_t* to)
+    {
+        JumpLinkType linkType = record.linkType();
+        if (linkType == LinkInvalid)
+            linkType = LinkFull; // Compaction was off for this LinkBuffer.
+        int size = linkSize(linkType);
+        uint32_t* writeAt = reinterpret_cast<uint32_t*>(from - size);
+        const uint32_t* executableAt = reinterpret_cast<const uint32_t*>(fromInstruction - size);
+        bool isBranch = record.type() == JumpCondition || record.type() == JumpConditionFixedSize;
+        uint32_t words[JUMP_SLOT_INSNS];
+        switch (linkType) {
+        case LinkJumpShort: {
+            intptr_t offset = intptr_t(to) - intptr_t(executableAt);
+            RELEASE_ASSERT(!isBranch && fitsBranch26(offset));
+            words[0] = insnB(int32_t(offset), 0);
+            break;
+        }
+        case LinkBranchShort: {
+            intptr_t offset = intptr_t(to) - intptr_t(executableAt);
+            RELEASE_ASSERT(isBranch && fitsBranch16(offset));
+            words[0] = insnBc(record.bo(), record.bi(), int32_t(offset));
+            break;
+        }
+        case LinkBranchMedium: {
+            intptr_t offset = intptr_t(to) - intptr_t(executableAt + 1);
+            RELEASE_ASSERT(isBranch && fitsBranch26(offset));
+            words[0] = insnBc(record.bo() ^ 0x8, record.bi(), 2 * sizeof(uint32_t));
+            words[1] = insnB(int32_t(offset), 0);
+            break;
+        }
+        case LinkInvalid:
+        case LinkFull:
+            if (isBranch)
+                computeBranchSlot(words, executableAt, record.bo(), record.bi(), to);
+            else
+                computeJumpSlot(words, executableAt, to);
+            break;
+        }
+        machineCodeCopy<copy>(writeAt, words, size);
     }
 
     // In-buffer link (both labels inside m_buffer; used by Jump::link).
     void linkJump(AssemblerLabel from, AssemblerLabel to)
     {
         RELEASE_ASSERT(from.isSet() && to.isSet());
-        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(m_buffer.data()) + from.offset());
-        void* target = reinterpret_cast<uint8_t*>(m_buffer.data()) + to.offset();
-        applyJumpOrBranchSlot(location, target);
+        recordJump(from, to.offset(), /* isThunk */ false);
+    }
+
+    // Jump::linkThunk: the target is outside the buffer but already known.
+    void linkJumpThunk(AssemblerLabel from, void* to)
+    {
+        RELEASE_ASSERT(from.isSet());
+        recordJump(from, reinterpret_cast<intptr_t>(to), /* isThunk */ true);
+    }
+
+    void recordJump(AssemblerLabel from, intptr_t to, bool isThunk)
+    {
+        uint32_t* slot = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(m_buffer.data()) + from.offset());
+        intptr_t end = from.offset() + JUMP_SLOT_INSNS * sizeof(uint32_t);
+        if (isBcInsn(slot[0])) {
+            RELEASE_ASSERT(slot[1] == MARKER_BRANCH_TAIL || slot[1] == MARKER_BRANCH_TAIL_FIXED);
+            JumpType type = slot[1] == MARKER_BRANCH_TAIL ? JumpCondition : JumpConditionFixedSize;
+            uint32_t bo = (slot[0] >> 21) & 0x1F;
+            uint32_t bi = (slot[0] >> 16) & 0x1F;
+            slot[1] = MARKER_RECORDED;
+            m_jumpsToLink.append(LinkRecord(end, to, type, bo, bi, isThunk));
+            return;
+        }
+        RELEASE_ASSERT(slot[0] == MARKER_JUMP || slot[0] == MARKER_JUMP_FIXED);
+        JumpType type = slot[0] == MARKER_JUMP ? JumpNoCondition : JumpNoConditionFixedSize;
+        slot[0] = MARKER_RECORDED;
+        m_jumpsToLink.append(LinkRecord(end, to, type, 0, 0, isThunk));
     }
 
     static void linkJump(void* code, AssemblerLabel from, void* to)
@@ -3553,9 +3791,20 @@ public:
 
     static void replaceWithJump(void* from, void* to)
     {
-        // Watchpoint sites reserve maxJumpReplacementSize bytes (label()
-        // padding), so a full jump slot always fits.
+        // Every replacement site has maxJumpReplacementSize bytes that stay
+        // that size through branch compaction: watchpoint labels pad the
+        // following label past it and keep the slots inside it at full size,
+        // and the other users (inline caches, JIT math ICs, direct tail calls)
+        // reserve it with nops or fixed-size jumps. Write only as much as the
+        // target needs, though: a plain b leaves the rest of the shadow alone.
         uint32_t* location = static_cast<uint32_t*>(from);
+        intptr_t offset = intptr_t(to) - intptr_t(location);
+        if (fitsBranch26(offset)) {
+            uint32_t word = insnB(int32_t(offset), 0);
+            machineCodeCopy<memcpyRepatch>(location, &word, sizeof(word));
+            cacheFlush(location, sizeof(word));
+            return;
+        }
         applyJumpSlot(location, to);
         cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
     }
@@ -3626,6 +3875,10 @@ public:
 
 private:
     AssemblerBuffer m_buffer;
+    Vector<LinkRecord, 0, UnsafeVectorOverflow> m_jumpsToLink;
+    int m_indexOfLastWatchpoint { INT_MIN };
+    int m_indexOfTailOfLastWatchpoint { INT_MIN };
+    unsigned m_fixedSizeJumpDepth { 0 };
 };
 
 } // namespace JSC
