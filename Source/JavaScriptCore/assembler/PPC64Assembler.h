@@ -3278,9 +3278,23 @@ public:
     //
     // Rewrite forms for jumps/branches (anchor = the slot's branch insn):
     //   near:   b target                      (±32MB)
-    //   far:    li64 r12, target (5 insns); mtctr r12; bctr
+    //   far:    nop; li64 r12, target (5 insns); mtctr r12; bctr
     // Conditional slots put an inverted bc over the stanza when the target
-    // does not fit the bc's own ±32KB reach.
+    // does not fit the bc's own ±32KB reach. See computeJumpSlot and
+    // applyCallSlot for the exact layouts and which rewrites are atomic.
+    //
+    // Concurrent repatching. The Power ISA (Book II, "Concurrent
+    // Modification and Execution of Instructions") only allows b/bl/nop-class
+    // words to change under a thread that may be executing them; anything
+    // else can execute as a mix of old and new. Wasm tier-up retargets wasm
+    // calls and tail calls while other threads run them, so those sites must
+    // change by a single b/bl store. A target out of b reach is then reached
+    // through a jump island (ENABLE(JUMP_ISLANDS), as on ARM64):
+    // ExecutableAllocator splits the pool into regions of nearJumpRange,
+    // each ending in an area of islands within b reach of the region, and
+    // an island is a whole jump slot (fillNearTailCall). Every other site is
+    // repatched only by the thread that owns it, or with that thread
+    // stopped, and keeps the inline far form, which costs no extra branch.
     // ==================================================================
 
     static constexpr unsigned JUMP_SLOT_INSNS = 8;
@@ -3378,17 +3392,51 @@ public:
 
     // Returns the label AFTER the slot (= the return address), which is
     // JSC's convention for Call labels; getCallReturnOffset uses it.
-    AssemblerLabel emitUnlinkedCall()
+    AssemblerLabel emitUnlinkedCall(bool threadSafe = false)
     {
         insn(MARKER_CALL);
-        for (unsigned i = 1; i < JUMP_SLOT_INSNS - 1; ++i)
+        for (unsigned i = 1; i < JUMP_SLOT_INSNS - 2; ++i)
             insn(PPC_NOP);
+        insn(threadSafe ? THREAD_SAFE_CALL_TAG : PPC_NOP); // see applyNearCallSlot
         insn(insnBctrl());                  // placeholder; rewritten at link
         return m_buffer.label();
     }
 
     // --- In-place slot rewriters ---------------------------------------
 
+    // Rewrite a slot in place. Words other than the branch are written
+    // first, and only where they change; the branch word goes last, as one
+    // aligned 4-byte store. Retargeting a b/bl therefore writes exactly one
+    // word, which the Power ISA allows under a concurrently executing thread
+    // (b/bl/nop are patch class). Changing the stanza of a far form writes
+    // several words and is only safe where no other thread runs the slot.
+    static void writeSlot(uint32_t* location, const uint32_t (&words)[JUMP_SLOT_INSNS], unsigned branchIndex)
+    {
+        RELEASE_ASSERT(roundUpToMultipleOf<sizeof(uint32_t)>(location) == location);
+        for (unsigned i = 0; i < JUMP_SLOT_INSNS; ++i) {
+            if (i != branchIndex && location[i] != words[i])
+                writeWord(&location[i], words[i]);
+        }
+        if (location[branchIndex] != words[branchIndex])
+            writeWord(&location[branchIndex], words[branchIndex]);
+    }
+
+    static void writeWord(uint32_t* location, uint32_t word)
+    {
+        static constexpr RepatchingInfo memcpyRepatchAtomic = RepatchingInfo { RepatchingFlag::Memcpy, RepatchingFlag::Atomic };
+        machineCodeCopy<memcpyRepatchAtomic>(location, &word, sizeof(word));
+    }
+
+    // Unconditional jump slots (jumps, patchable jumps, near tail calls):
+    //   near: [0] b target           [1..7] left as they are (never reached)
+    //   far:  [0] nop  [1..5] li64 r12,target  [6] mtctr r12  [7] bctr
+    // Word [0] is always a nop or a b, so moving to a target a b reaches --
+    // or to a jump island, see prepareForAtomicRelinkJumpConcurrently -- is
+    // the single store of [0], from either form. Moving to the far form
+    // writes the stanza while [0] still holds the old b, then [0] = nop, so
+    // a near -> far change is atomic as well; only far -> far rewrites a live
+    // stanza.
+    //
     // The slot writers take the address the slot will execute at separately
     // from the address they write to: branch compaction links into a staging
     // buffer that is copied to executable memory afterwards.
@@ -3399,13 +3447,13 @@ public:
         if (fitsBranch26(offset))
             words[0] = insnB(int32_t(offset), 0);
         else {
-            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
-            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
-            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
-            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
-            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
-            words[5] = insnMtctr(scratchRegister());
-            words[6] = insnBctr();
+            words[1] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+            words[2] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+            words[3] = insnRldicr32_31(scratchRegister(), scratchRegister());
+            words[4] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+            words[5] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+            words[6] = insnMtctr(scratchRegister());
+            words[7] = insnBctr();
         }
     }
 
@@ -3413,7 +3461,10 @@ public:
     {
         uint32_t words[JUMP_SLOT_INSNS];
         computeJumpSlot(words, location, to);
-        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+        if (isBInsn(words[0]))
+            writeWord(location, words[0]);
+        else
+            writeSlot(location, words, 0);
     }
 
     // Extract (bo, bi) from a conditional slot in ANY of its states.
@@ -3466,40 +3517,83 @@ public:
         RELEASE_ASSERT(ok);
         uint32_t words[JUMP_SLOT_INSNS];
         computeBranchSlot(words, location, bo, bi, to);
-        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+        // Retargeting within the bc + b form writes only the b in [1]. Other
+        // changes of form write [0] and the stanza and are not atomic;
+        // conditional slots are never repatched while another thread may run
+        // them (only wasm tier-up does that, on calls and tail calls).
+        writeSlot(location, words, isBInsn(words[1]) ? 1 : 0);
     }
 
-    // location = slot START (callLabel - 8 insns).  The branch stays in
-    // slot [7] so the return address is always location + 32.
+    // Call slots. location = slot START (callLabel - 8 insns); the branch
+    // stays in [7] so the return address is always location + 32.
+    //
+    // call() form, for C functions and for any target out of b reach:
+    //   [0..4] li64 r12,target  [5] nop      [6] nop  [7] bl target
+    //   [0..4] li64 r12,target  [5] mtctr r12 [6] nop  [7] bctrl
+    // nearCall() form, for JIT code in b reach:
+    //   [0..6] nops                                    [7] bl target
+    // JIT code never reads r12 on entry -- only an ELFv2 C function computes
+    // its TOC from it -- so a near call need not materialise it, and
+    // retargeting it between JIT targets is the single store of [7].
+    //
+    // threadSafePatchableNearCall() (wasm calls, which tier-up retargets while
+    // other threads run them) tags [6] with an executed no-op, `oris 0,0,0`,
+    // and never takes the far form: a target out of b reach is called through
+    // a jump island, so the slot keeps its single bl.
+    static constexpr uint32_t THREAD_SAFE_CALL_TAG = 0x64000000u; // oris 0,0,0
+
     static void applyCallSlot(uint32_t* location, void* to)
     {
         intptr_t offset = intptr_t(to) - intptr_t(location + 7);
         uint32_t words[JUMP_SLOT_INSNS];
         for (auto& w : words) w = PPC_NOP;
-        if (fitsBranch26(offset)) {
-            // Even for a near (relative) call we must materialize r12 = target.
-            // ELFv2 callees reached at their global entry recompute the TOC as
-            // r2 = addis/addi(r12, .TOC.-func), so r12 must equal the callee's
-            // entry address. A bare `bl` leaves r12 stale, giving the callee a
-            // wrong TOC — which crashes the moment the callee makes a TOC-
-            // relative or PLT call (e.g. operationCompareStringEq -> resolveRope).
-            // The 8-insn slot has room: li64 r12,target in [0..4], then bl at [7].
-            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
-            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
-            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
-            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
-            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+        // Even for a near (relative) call we must materialize r12 = target.
+        // ELFv2 callees reached at their global entry recompute the TOC as
+        // r2 = addis/addi(r12, .TOC.-func), so r12 must equal the callee's
+        // entry address. A bare `bl` leaves r12 stale, giving the callee a
+        // wrong TOC — which crashes the moment the callee makes a TOC-
+        // relative or PLT call (e.g. operationCompareStringEq -> resolveRope).
+        words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+        words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+        words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
+        words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+        words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+        if (fitsBranch26(offset))
             words[7] = insnB(int32_t(offset), 1);   // bl target (relative)
-        } else {
-            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
-            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
-            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
-            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
-            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+        else {
             words[5] = insnMtctr(scratchRegister());
             words[7] = insnBctrl();
         }
-        machineCodeCopy<memcpyRepatch>(location, words, sizeof(words));
+        writeSlot(location, words, 7);
+    }
+
+    static void applyNearCallSlot(uint32_t* location, void* to)
+    {
+        bool threadSafe = location[6] == THREAD_SAFE_CALL_TAG;
+        void* target = nullptr;
+        if (isJITPC(to)) {
+            if (fitsBranch26(intptr_t(to) - intptr_t(location + 7)))
+                target = to;
+#if ENABLE(JUMP_ISLANDS)
+            else if (threadSafe && isJITPC(location)) {
+                // Not concurrent (the code is not running yet, or the caller
+                // owns it): this replaces islands made earlier for the site.
+                target = ExecutableAllocator::singleton().getJumpIslandToUsingMemcpy(location + 7, to);
+                RELEASE_ASSERT(fitsBranch26(intptr_t(target) - intptr_t(location + 7)));
+            }
+#endif
+        }
+        if (!target) {
+            RELEASE_ASSERT(!threadSafe || !isJITPC(to));
+            applyCallSlot(location, to);
+            return;
+        }
+        uint32_t words[JUMP_SLOT_INSNS];
+        for (auto& w : words) w = PPC_NOP;
+        if (threadSafe)
+            words[6] = THREAD_SAFE_CALL_TAG;
+        words[7] = insnB(int32_t(intptr_t(target) - intptr_t(location + 7)), 1);
+        writeSlot(location, words, 7);
     }
 
     // Dispatch: a jump-flavored location can be an unconditional slot (its
@@ -3741,6 +3835,13 @@ public:
         applyCallSlot(location, to);
     }
 
+    static void linkNearCall(void* code, AssemblerLabel from, void* to)
+    {
+        RELEASE_ASSERT(from.isSet());
+        uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(code) + from.offset()) - JUMP_SLOT_INSNS;
+        applyNearCallSlot(location, to);
+    }
+
     // `where` is the label AFTER a 5-instruction li64 (moveWithPatch).
     static void linkPointer(void* code, AssemblerLabel where, void* valuePtr)
     {
@@ -3758,8 +3859,18 @@ public:
         cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
     }
 
-    // `from` is the return address of a call slot.
+    // `from` is the return address of a near call slot
+    // (AbstractMacroAssembler::repatchNearCall).
     static void relinkCall(void* from, void* to)
+    {
+        uint32_t* location = static_cast<uint32_t*>(from) - JUMP_SLOT_INSNS;
+        applyNearCallSlot(location, to);
+        cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
+    }
+
+    // `from` is the return address of a call() slot
+    // (MacroAssemblerPPC64::repatchCall).
+    static void relinkCCall(void* from, void* to)
     {
         uint32_t* location = static_cast<uint32_t*>(from) - JUMP_SLOT_INSNS;
         applyCallSlot(location, to);
@@ -3769,6 +3880,71 @@ public:
     static void relinkTailCall(void* from, void* to)
     {
         relinkJump(from, to);
+    }
+
+#if ENABLE(JUMP_ISLANDS)
+    // Wasm tier-up retargets near calls and tail calls that other threads may
+    // be running. The island must exist before the branch is rewritten, and
+    // islands already reachable from the site must survive (a thread may be
+    // in one), so this allocates fresh ones without freeing; the repatch that
+    // follows then writes a single b/bl to the returned address.
+    // `from` is the branch itself: a tail call's jump slot start.
+    static void* prepareForAtomicRelinkJumpConcurrently(void* from, void* to)
+    {
+        if (fitsBranch26(intptr_t(to) - intptr_t(from)) || !isJITPC(from) || !isJITPC(to))
+            return to;
+        void* island = ExecutableAllocator::singleton().getJumpIslandToConcurrently(from, to);
+        RELEASE_ASSERT(fitsBranch26(intptr_t(island) - intptr_t(from)));
+        return island;
+    }
+
+    // `from` is the return address; the bl is the slot's last word.
+    static void* prepareForAtomicRelinkCallConcurrently(void* from, void* to)
+    {
+        return prepareForAtomicRelinkJumpConcurrently(static_cast<uint32_t*>(from) - 1, to);
+    }
+#endif
+
+    // Jump island hooks for ExecutableAllocator. A PPC64 island is a whole
+    // jump slot (JUMP_SLOT_INSNS words): `b target` when that reaches, else
+    // li64 r12,target; mtctr r12; bctr. One island therefore reaches any
+    // target, so ExecutableAllocator never chains them (ARM64 chains single
+    // b's region by region, which in a 1 GB pool of 28 MB regions would be
+    // up to 36 taken branches per call). The far form clobbers r12 and CTR,
+    // exactly as the far slot form at the site always has: r12 is the
+    // MacroAssembler scratch and CTR is never live across a jump, call or
+    // tail call. An island is written before any branch to it is published
+    // and is never rewritten while reachable (concurrent repatching
+    // allocates fresh ones), so it need not be patch-class.
+    static constexpr size_t jumpIslandSize = JUMP_SLOT_INSNS * sizeof(uint32_t);
+
+    static bool canEmitJump(void*, void*)
+    {
+        return true;
+    }
+
+    template<RepatchingInfo repatch>
+    static void fillNearTailCall(void* from, void* to)
+    {
+        static_assert((*repatch).contains(RepatchingFlag::Flush));
+        uint32_t* location = static_cast<uint32_t*>(from);
+        RELEASE_ASSERT(roundUpToMultipleOf<sizeof(uint32_t)>(location) == location);
+        uint32_t words[JUMP_SLOT_INSNS];
+        for (auto& w : words) w = PPC_NOP;
+        intptr_t offset = intptr_t(to) - intptr_t(location);
+        if (fitsBranch26(offset))
+            words[0] = insnB(int32_t(offset), 0);
+        else {
+            words[0] = insnLis(scratchRegister(), uint16_t(uint64_t(to) >> 48));
+            words[1] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 32));
+            words[2] = insnRldicr32_31(scratchRegister(), scratchRegister());
+            words[3] = insnOris(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to) >> 16));
+            words[4] = insnOri(scratchRegister(), scratchRegister(), uint16_t(uint64_t(to)));
+            words[5] = insnMtctr(scratchRegister());
+            words[6] = insnBctr();
+        }
+        machineCodeCopy<noFlush(repatch)>(location, words, sizeof(words));
+        cacheFlush(location, sizeof(words));
     }
 
     // `where` points AT a 5-instruction li64 sequence.
@@ -3832,9 +4008,8 @@ public:
         uint32_t* location = static_cast<uint32_t*>(from);
         intptr_t offset = intptr_t(to) - intptr_t(location);
         if (fitsBranch26(offset)) {
-            uint32_t word = insnB(int32_t(offset), 0);
-            machineCodeCopy<memcpyRepatch>(location, &word, sizeof(word));
-            cacheFlush(location, sizeof(word));
+            writeWord(location, insnB(int32_t(offset), 0));
+            cacheFlush(location, sizeof(uint32_t));
             return;
         }
         applyJumpSlot(location, to);

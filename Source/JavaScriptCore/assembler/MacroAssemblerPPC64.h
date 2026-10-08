@@ -87,17 +87,15 @@ public:
     static constexpr unsigned numGPRs = 32;
     static constexpr unsigned numFPRs = 32;
 
-    // Every patchable jump, branch and call on PPC64 is emitted as a full
-    // 8-instruction slot. The linker writes a plain b/bl (±32 MB) or bc
-    // (±32 KB) when the displacement happens to fit, and otherwise
-    // materialises the whole 64-bit target and branches through CTR -- see
-    // applyJumpSlot, applyBranchSlot and applyCallSlot. A patched branch can
-    // therefore reach anywhere, and nearCallThunk/jumpThunk go through those
-    // same slots. This bound describes the reach of the slot, not of the
-    // cheap form, so it is unlimited; it is what caps the executable pool
-    // size while JUMP_ISLANDS is off, and 32 MB was an unnecessary cap that
-    // aborted startup for any larger --jitMemoryReservationSize.
-    static constexpr size_t nearJumpRange = std::numeric_limits<size_t>::max();
+    // The reach of a direct branch (b/bl: -32 MB .. +32 MB - 4). Every
+    // patchable jump, branch and call is a full 8-instruction slot, linked to
+    // a plain b/bl when that reaches and to an inline far form (li64 r12;
+    // mtctr; bctr/bctrl) otherwise. Wasm calls and tail calls, which are
+    // retargeted while other threads run them, reach out-of-range targets
+    // through jump islands instead (ENABLE(JUMP_ISLANDS)), so that they
+    // change by a single b/bl store; ExecutableAllocator splits the pool into
+    // regions of this size for that. See PPC64Assembler's linking notes.
+    static constexpr size_t nearJumpRange = 32 * MB;
 
     // Scratch pool per ELFv2: r11 is the environment / PLT-call scratch,
     // r12 is the function-entry / static-chain scratch. Both are volatile
@@ -4368,11 +4366,15 @@ public:
         return Call(m_assembler.emitUnlinkedJump(), Call::LinkableNearTail);
     }
 
-    // Thread-safe patchable variants. nearCall/nearTailCall already emit a
-    // fixed-size slot at a constant offset, which is what the "thread safe"
-    // contract needs, so these are the same emission (as on ARM64, where
-    // threadSafePatchableNearTailCall is likewise identical to nearTailCall).
-    Call threadSafePatchableNearCall() { return nearCall(); }
+    // Thread-safe patchable variants (wasm calls, which tier-up retargets
+    // while other threads run them). A tail call is a jump slot, whose [0] is
+    // always a single b or nop, so any slot retargets with one store. A call
+    // slot is tagged so that it never takes the far form, which could not be
+    // retargeted with one store (PPC64Assembler::applyNearCallSlot).
+    Call threadSafePatchableNearCall()
+    {
+        return Call(m_assembler.emitUnlinkedCall(/* threadSafe */ true), Call::LinkableNear);
+    }
     Call threadSafePatchableNearTailCall() { return nearTailCall(); }
 
     Call call(PtrTag tag)
@@ -4388,8 +4390,8 @@ public:
         // locationOf(slowPathCall) to repatch it. Flagging it Near made locationOf
         // return a bogus location (RELEASE builds silently repatched the wrong PC →
         // code corruption; the exact fallout was ASLR/layout-sensitive). Only
-        // nearCall() is LinkableNear. On PPC both link via the same applyCallSlot,
-        // so the flag only affects location/repatch routing, not the emitted slot.
+        // nearCall() is LinkableNear. Both emit the same slot; the flag picks the
+        // linked form (see linkCall below) as well as location/repatch routing.
         return Call(label, Call::Linkable);
     }
 
@@ -5436,12 +5438,12 @@ public:
     template<PtrTag callTag, PtrTag destTag>
     static void repatchCall(CodeLocationCall<callTag> call, CodeLocationLabel<destTag> destination)
     {
-        PPC64Assembler::relinkCall(call.dataLocation(), destination.taggedPtr());
+        PPC64Assembler::relinkCCall(call.dataLocation(), destination.taggedPtr());
     }
     template<PtrTag callTag, PtrTag destTag>
     static void repatchCall(CodeLocationCall<callTag> call, CodePtr<destTag> destination)
     {
-        PPC64Assembler::relinkCall(call.dataLocation(), destination.taggedPtr());
+        PPC64Assembler::relinkCCall(call.dataLocation(), destination.taggedPtr());
     }
     template<PtrTag resultTag, PtrTag locationTag>
     static CodePtr<resultTag> readCallTarget(CodeLocationCall<locationTag> call)
@@ -5454,16 +5456,16 @@ public:
     template<PtrTag tag>
     static void linkCall(void* code, Call call, CodePtr<tag> function)
     {
-        // Every call() / nearCall() emits the same 8-insn emitUnlinkedCall slot, so
-        // it must be linked with applyCallSlot (which writes the target + mtctr + bctrl,
-        // or a bl when in range). Only a tail call is a jump. The Near flag merely
-        // distinguishes location/repatch routing (locationOf vs locationOfNearCall) —
-        // it does NOT change how the slot is linked. The old `!Near → linkPointer`
-        // branch was dead while call() wrongly returned LinkableNear; once call()
-        // became Linkable it wrote a bctrl-less li64 pointer into an 8-insn call slot
-        // (→ fall-through to pc=0). Route all non-tail calls through applyCallSlot.
+        // Every call() / nearCall() emits the same 8-insn emitUnlinkedCall slot;
+        // only a tail call is a jump. call() keeps r12 = target (C callees need
+        // it, and readCallTarget reads it back) via applyCallSlot. nearCall()
+        // targets JIT code and gets the r12-less form that can be retargeted
+        // with a single bl write (applyNearCallSlot). Never link a call slot
+        // with linkPointer: that writes a bctrl-less li64 (fall-through to pc=0).
         if (call.isFlagSet(Call::Tail))
             PPC64Assembler::linkJump(code, call.m_label, function.untaggedPtr());
+        else if (call.isFlagSet(Call::Near))
+            PPC64Assembler::linkNearCall(code, call.m_label, function.untaggedPtr());
         else
             PPC64Assembler::linkCall(code, call.m_label, function.untaggedPtr());
     }

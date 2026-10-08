@@ -748,7 +748,7 @@
 #endif
 
 #if !defined(ENABLE_JUMP_ISLANDS) && ENABLE(JIT)
-#if (CPU(ARM64) && CPU(ADDRESS64)) || CPU(ARM_THUMB2)
+#if (CPU(ARM64) && CPU(ADDRESS64)) || CPU(ARM_THUMB2) || CPU(PPC64LE)
 #define ENABLE_JUMP_ISLANDS 1
 #endif
 #endif

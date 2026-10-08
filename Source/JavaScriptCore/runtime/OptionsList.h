@@ -607,7 +607,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useUnlinkedCodeBlockJettisoning, false, Normal, "If true, UnlinkedCodeBlock can be jettisoned."_s) \
     v(Bool, forceOSRExitToLLInt, false, Normal, "If true, we always exit to the LLInt. If false, we exit to whatever is most convenient."_s) \
     v(Unsigned, getByValICMaxNumberOfIdentifiers, 4, Normal, "Number of identifiers we see in the LLInt that could cause us to bail on generating an IC for get_by_val."_s) \
-    v(Bool, useRandomizingExecutableIslandAllocation, false, Normal, "For the arm64 ExecutableAllocator, if true, select which region to use randomly. This is useful for testing that jump islands work."_s) \
+    v(Bool, useRandomizingExecutableIslandAllocation, false, Normal, "For the arm64 and ppc64le ExecutableAllocator, if true, select which region to use randomly. This is useful for testing that jump islands work."_s) \
     v(Bool, exposeProfilersOnGlobalObject, false, Normal, "If true, we will expose functions to enable/disable both the sampling profiler and the super sampler"_s) \
     v(Bool, allowUnsupportedTiers, false, Normal, "If true, we will not disable DFG or FTL when an experimental feature is enabled."_s) \
     v(Bool, returnEarlyFromInfiniteLoopsForFuzzing, false, Normal, nullptr) \
