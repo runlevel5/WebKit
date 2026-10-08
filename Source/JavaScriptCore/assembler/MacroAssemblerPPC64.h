@@ -5422,6 +5422,11 @@ public:
     {
         PPC64Assembler::replaceWithJump(instructionStart.dataLocation(), destination.dataLocation());
     }
+    template<PtrTag tag>
+    static void replaceWithVMHalt(CodeLocationLabel<tag> instructionStart)
+    {
+        PPC64Assembler::replaceWithVMHalt(instructionStart.dataLocation());
+    }
     template<PtrTag startTag>
     static void replaceWithNops(CodeLocationLabel<startTag> instructionStart, size_t memoryToFillWithNopsInBytes)
     {

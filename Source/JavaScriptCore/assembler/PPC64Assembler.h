@@ -3798,11 +3798,26 @@ public:
         return reinterpret_cast<uint8_t*>(location + 7) + offset;
     }
 
+    // Signal-based VM traps: VMTraps installs this at every DFG/FTL
+    // invalidation point of the code block on top of the stack and catches
+    // the fault with its Signal::AccessFault (SIGSEGV/SIGBUS) handler, which
+    // matches the faulting PC against the installed sites. It must therefore
+    // fault with SIGSEGV, not trap: `trap` (tw 31,0,0) raises SIGTRAP, which
+    // nothing handles. `ld r0,0(0)` loads from absolute address 0 (RA=0 means
+    // a zero base, not r0), which is never mapped (vm.mmap_min_addr), and it
+    // writes no memory — like ARM64's `dc zva` of address 0 and RISCV64's
+    // `sd zero,0(zero)`.
+    //
+    // The word is written while the only thread that runs this code (the
+    // VM's mutator) is suspended (VMTraps::SignalSender via sendMessage), and
+    // the kernel's return to that thread is context synchronizing, so the
+    // replaced instruction need not be of the concurrent-modification class.
     static void replaceWithVMHalt(void* where)
     {
         uint32_t* location = static_cast<uint32_t*>(where);
-        uint32_t trap = 0x7FE00008u;        // trap (tw 31,0,0) — Power ISA v2.07B §3.3.10.1
-        machineCodeCopy<memcpyRepatch>(location, &trap, sizeof(uint32_t));
+        RELEASE_ASSERT(roundUpToMultipleOf<sizeof(uint32_t)>(location) == location);
+        uint32_t halt = 0xE8000000u;        // ld r0,0(0)
+        machineCodeCopy<memcpyRepatch>(location, &halt, sizeof(uint32_t));
         cacheFlush(location, sizeof(uint32_t));
     }
 
