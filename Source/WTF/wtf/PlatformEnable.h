@@ -911,8 +911,6 @@
 /* Enable JIT'ing Regular Expressions that have nested parenthesis . */
 #if ENABLE(YARR_JIT) && (CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE))
 #define ENABLE_YARR_JIT_ALL_PARENS_EXPRESSIONS 1
-#endif
-#if ENABLE(YARR_JIT) && (CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
 #define ENABLE_YARR_JIT_REGEXP_TEST_INLINE 1
 #endif
 
