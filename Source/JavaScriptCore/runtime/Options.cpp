@@ -855,7 +855,7 @@ void Options::notifyOptionsChanged()
 #endif
 #endif
 
-#if !CPU(ARM64)
+#if !CPU(ARM64) && !CPU(PPC64LE)
     Options::useRandomizingExecutableIslandAllocation() = false;
 #endif
 

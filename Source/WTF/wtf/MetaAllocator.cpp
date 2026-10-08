@@ -253,10 +253,11 @@ MetaAllocator::FreeSpacePtr MetaAllocator::findAndRemoveFreeSpace(size_t sizeInB
         // On PPC64 a direct branch reaches only +/-32 MB. Taking the right end
         // of the big free chunk whenever that touches fewer pages (with 64 KB
         // pages, most of the time) splits JIT code between both ends of the
-        // executable pool, so once the pool is larger than 32 MB calls between
-        // the two halves need the far li64/mtctr form, which is slower and
-        // cannot be repatched safely while another thread may execute it.
-        // Keep the code packed from the bottom instead.
+        // free space, so calls between the two clusters are more likely to
+        // need the slower far li64/mtctr form. Keep the code packed from the
+        // bottom instead. This is only about locality: sites that are
+        // repatched while other threads run them reach far targets through
+        // jump islands (see PPC64Assembler).
         allocateOnLeft = true;
 #endif
 
