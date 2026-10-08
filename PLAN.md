@@ -812,7 +812,7 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    POWER9-only instructions avoided by hand, and the SIMD sequences read only the result words POWER8
    defines for `xvcvdpsp`, `xvcvdpsxws`/`uxws` and `xscvdpspn`), but none of that has executed on POWER8.
    Needs real POWER8 hardware or a faithful emulator; run the full stress and wasm gates there.
-2. **Benchmark.** No throughput has been measured on any tier. Compare against the LLInt and against
+2. **Benchmark.** *(2026-10-08: first measurement done — see "Status — benchmarks".)* No throughput had been measured on any tier. Compare against the LLInt and against
    ARM64 on identical workloads (target: DFG ≥ 5× LLInt, FTL ≥ 2× DFG). Known PPC64 overheads to
    quantify: VMX SIMD ops copy operands through v0–v5; IPInt handler slots are 512 bytes (double
    ARM64's); 64-bit constants still take up to 5 instructions; branch compaction only shrinks jumps that
@@ -869,6 +869,46 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — benchmarks (Phase 7 item 2), 2026-10-08
+
+- **Method.** One Release binary (60d6aa39968a) in four configurations: LLInt (`--useJIT=0`), Baseline
+  (`--useDFGJIT=0`), DFG (`--useFTLJIT=0`), FTL. `Tools/Scripts/run-jsc-benchmarks --vms` (tier set by
+  `JSC_*` env, invocations interleaved at random), each job pinned to its own 2-core group, performance
+  governor. Microbenchmarks 3 invocations, the classic suites 4, ARES-6 5 (LLInt 3), JetStream2 1.
+  Median per benchmark, geomean per suite; spread = geomean of each invocation index alone. 55
+  microbenchmarks read `testLoopCount`, which jsc.cpp scales by tier (100/1000/10000), so they are excluded.
+  ARM64 reference: an M1 Pro running the macOS system jsc (older source, laptop not idle) through the same
+  harness — approximate. Raw data, scripts and `SUMMARY.txt` in power9:/home/tle/bench/.
+- **Tier ratios** (DFG/LLInt, FTL/DFG; M1 in brackets): microbenchmarks 5.34× (5.33–5.36), 1.17×
+  (1.170–1.174) [4.03×, 1.20×]; SunSpider 7.15× (6.64–7.48), 0.92× [5.62×, 0.97×]; LongSpider 13.5×,
+  1.55× [10.8×, 1.41×]; V8Spider 14.8×, 1.13× [13.5×, 1.29×]; Octane 12.4× (12.4–14.8), 1.43× (1.21–1.43)
+  [12.3×, 1.68×]; TailBench 14.6×, 1.90× [8.7×, 1.52×]; ARES-6 8.5×, 1.40×. JetStream2 scores: Baseline
+  23.8, DFG 30.8, FTL 33.0 (LLInt not run: its first test alone exceeded 23 minutes).
+- **Targets.** DFG ≥ 5× LLInt is met everywhere (microbenchmarks only just). FTL ≥ 2× DFG is met nowhere,
+  but the ARM64 reference does not meet it on these suites either (0.97–1.68×); PPC64's FTL/DFG is inside
+  that range. The PPC64 LLInt is relatively slow (P9/M1 time ratio 3.45 for the LLInt vs 2.4–2.7 for the
+  JIT tiers), which inflates every ratio over LLInt.
+- **Outliers, diagnosed:**
+  1. *Executable pool is 32 MB* — PPC64 falls through to the generic default in ExecutableAllocator.cpp
+     (ARM64 128/512 MB, x86_64 1 GB). A long run fills it and `memoryPressureMultiplier()` raises every
+     tier-up threshold: in JetStream2's FTL run float-mm.c took 27 min (27 s on its own) and Baseline beat
+     DFG and FTL on several tests. With `--jitMemoryReservationSize=1GB`: 33.0 → 70.5, wall 2,640 s → 208 s.
+  2. *Int32 `/` and `%` never reach the integer paths* — `DFGFixupPhase::fixupArithDivInt32` gates on
+     x86/ARM64/ARMv7, so `%` calls `fmod` (36% of megamorphic-own-load) and `(a/b)|0` divides in double
+     and exits on every non-integral quotient (integer-divide: 12 recompiles, ~246k OSR exits). Hits every
+     `i % n` loop: megamorphic-*, polymorphic-*, switch-*, call-or-not-call, …
+  3. *Checked int32 add is 11 instructions*, 5 of them seeding XER.CA for a B3 recovery that runs only for
+     `x + x`; ~60% of the samples of an empty FTL counted loop (new-array-constant-size-zero-fill-*).
+  4. C++ runtime paths that are slow in every tier (u16/typed-array `indexOf`, `Array.prototype.sort`):
+     likely scalar fallbacks where ARM64/x86 use SIMD. Not investigated.
+- **Profiling.** `perf` + `--useJITDump`; JSC names the dump `jit-<tid>-<pid>.dump`, which `perf inject`
+  silently ignores, so `/home/tle/bench/jitdump2map.py` turns it into `/tmp/perf-<pid>.map` and extracts
+  code for objdump. Of the suspected overheads: 64-bit constants (2–4 instructions) and uncompacted
+  patchable slots appear only off the hot paths; the polling VM-trap checks (item 3) show up twice per
+  loop iteration; `andi.` is followed by a redundant `cmpdi`; the ELFv2 TOC save/restore is 2 instructions
+  per C call. VMX v0–v5 staging and the 512-byte IPInt slots are wasm-only and were not measured.
+- **Not measured:** wasm throughput; JetStream2 in the LLInt; a same-source ARM64 build; POWER8.
 
 ### Status — 2026-10-08, sampling profiler and branch compaction (supersedes the stress figures below)
 
