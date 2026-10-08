@@ -2164,9 +2164,9 @@ public:
 
     // --- Carry access for the B3 CheckAdd recovery path -----------------
     // Valid after an instruction that maintains XER.CA: the branchAdd64
-    // emitters use addc, and branchAdd32's overflow form seeds CA via the
-    // addic trick when both operands are the same register (x + x, the only
-    // case whose recovery calls this), precisely so this recovery works.
+    // overflow emitters use addc, and branchAdd32's overflow form seeds CA via
+    // the addic trick, when both operands are the same register (x + x, the
+    // only case whose recovery calls this), precisely so this recovery works.
     void setCarry(RegisterID dest)
     {
         m_assembler.addi(dest, PPC64Registers::r0, 0); // li dest, 0
@@ -4148,6 +4148,8 @@ public:
     {
         if (cond == Carry)
             return branchAdd64(cond, dest, src, dest);
+        if (cond == Overflow && src != dest && canUseBranchAdd64Overflow(src, dest, dest))
+            return branchAdd64Overflow(dest, src, dest);
         if (cond == Overflow) {
             m_assembler.mr(dataTempRegister, dest);              // origLeft
             m_assembler.addc(dest, dest, src);                   // addc keeps XER.CA for setCarry recovery
@@ -4172,6 +4174,8 @@ public:
             m_assembler.cmpdi(0, dataTempRegister, 0);
             return Jump(m_assembler.emitUnlinkedBranch(4, 2));  // != 0 → carry
         }
+        if (cond == Overflow && a != b && canUseBranchAdd64Overflow(a, b, dest))
+            return branchAdd64Overflow(a, b, dest);
         if (cond == Overflow) {
             // Save both operands first: dest may alias either. addc keeps
             // XER.CA correct for the B3 CheckAdd setCarry recovery.
@@ -4186,6 +4190,30 @@ public:
         }
         add64(a, b, dest);
         return branchTest64Impl(resultConditionForArith(cond), dest);
+    }
+    // Signed 64-bit overflow iff (a ^ result) & (b ^ result) is negative. With
+    // a != b no carry is needed (only the B3 recovery of x + x reads XER.CA), so
+    // this uses add rather than addc, and the record-form and. instead of a
+    // separate cmpdi; dest still holds the wrapped sum when the branch is taken,
+    // as the recovery expects. dest may alias a or b (not both, since a != b):
+    // the operand it aliases is read last. Not used when an operand or dest is
+    // one of the scratch registers the sequence writes.
+    static bool canUseBranchAdd64Overflow(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        auto isScratch = [](RegisterID r) { return r == dataTempRegister || r == memoryTempRegister; };
+        return !isScratch(a) && !isScratch(b) && !isScratch(dest);
+    }
+    Jump branchAdd64Overflow(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        ASSERT(a != b);
+        if (dest == a)
+            std::swap(a, b);
+        m_assembler.add(dataTempRegister, a, b);                       // result
+        m_assembler.xor_(memoryTempRegister, a, dataTempRegister);     // a ^ result
+        m_assembler.xor_(dest, b, dataTempRegister);                   // b ^ result (b may be dest)
+        m_assembler.and_rc(memoryTempRegister, memoryTempRegister, dest);
+        m_assembler.mr(dest, dataTempRegister);
+        return Jump(m_assembler.emitUnlinkedBranch(12, 0));            // LT (negative) => overflow
     }
     Jump branchAdd64(ResultCondition cond, TrustedImm32 imm, RegisterID dest)
     {

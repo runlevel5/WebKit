@@ -1064,6 +1064,13 @@ public:
         insn(xForm(31, rs, ra, rb, /*XO*/ 28, /*Rc*/ 0));
     }
 
+    // and. — AND, record form (Rc=1): CR0 <- signed compare of the result with 0.
+    // Verified with as -mpower8: and. 3,4,5 → 0x7c832839 (bytes 39 28 83 7c)
+    void and_rc(RegisterID ra, RegisterID rs, RegisterID rb)
+    {
+        insn(xForm(31, rs, ra, rb, /*XO*/ 28, /*Rc*/ 1));
+    }
+
     // or_ — OR. Opcode 31, XO=444, Rc=0.
     // Verified: or 3,4,5 → 0x7c832b78 (bytes 78 2b 83 7c)
     void or_(RegisterID ra, RegisterID rs, RegisterID rb)
