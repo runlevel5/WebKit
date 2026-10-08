@@ -195,6 +195,7 @@ inline bool optimizeForARMv7IDIVSupported();
 inline bool optimizeForARM64();
 inline bool optimizeForX86();
 inline bool optimizeForX86_64();
+inline bool optimizeForPPC64LE();
 inline bool hasSensibleDoubleToInt();
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
