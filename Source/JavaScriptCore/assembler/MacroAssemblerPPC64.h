@@ -1335,14 +1335,19 @@ public:
             // Exact 64-bit sum. dest is safe to write now that a and b have
             // been consumed, even when it aliases one of them.
             m_assembler.add(dest, dataTempRegister, memoryTempRegister);
-            // Seed XER.CA with the unsigned 32-bit carry-out; the B3 CheckAdd
-            // recovery reads it via setCarry. Derived from the zero-extended
-            // halves rather than assuming the inputs arrive zero-extended.
-            m_assembler.rldicl(dataTempRegister, dataTempRegister, 0, 32);
-            m_assembler.rldicl(memoryTempRegister, memoryTempRegister, 0, 32);
-            m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
-            m_assembler.rldicl(dataTempRegister, dataTempRegister, 32, 63); // (sum >> 32) & 1
-            m_assembler.addic(dataTempRegister, dataTempRegister, -1);      // CA := carry
+            // Seed XER.CA with the unsigned 32-bit carry-out, derived from the
+            // zero-extended halves rather than assuming the inputs arrive
+            // zero-extended. Only the B3 CheckAdd recovery of x + x reads it (via
+            // setCarry, for the bit the doubling shifted out), and that recovery
+            // runs only when every operand is the same register, so a != b skips
+            // it: on every other checked add it was dead work on the hot path.
+            if (a == b) {
+                m_assembler.rldicl(dataTempRegister, dataTempRegister, 0, 32);
+                m_assembler.rldicl(memoryTempRegister, memoryTempRegister, 0, 32);
+                m_assembler.add(dataTempRegister, dataTempRegister, memoryTempRegister);
+                m_assembler.rldicl(dataTempRegister, dataTempRegister, 32, 63); // (sum >> 32) & 1
+                m_assembler.addic(dataTempRegister, dataTempRegister, -1);      // CA := carry
+            }
             // Overflow iff the wrapped 32-bit result differs from the exact sum.
             m_assembler.extsw(memoryTempRegister, dest);
             m_assembler.cmpd(0, memoryTempRegister, dest);
@@ -2143,7 +2148,8 @@ public:
     // --- Carry access for the B3 CheckAdd recovery path -----------------
     // Valid after an instruction that maintains XER.CA: the branchAdd64
     // emitters use addc, and branchAdd32's overflow form seeds CA via the
-    // addic trick, precisely so this recovery works.
+    // addic trick when both operands are the same register (x + x, the only
+    // case whose recovery calls this), precisely so this recovery works.
     void setCarry(RegisterID dest)
     {
         m_assembler.addi(dest, PPC64Registers::r0, 0); // li dest, 0
