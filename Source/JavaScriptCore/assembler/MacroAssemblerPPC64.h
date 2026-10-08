@@ -111,6 +111,37 @@ public:
 
     static constexpr RegisterID InvalidGPRReg = PPC64Registers::InvalidGPRReg;
 
+    // Branch compaction: see the comment above PPC64Assembler::JumpType.
+    using LinkRecord = Assembler::LinkRecord;
+    using JumpType = Assembler::JumpType;
+    using JumpLinkType = Assembler::JumpLinkType;
+
+    Vector<LinkRecord, 0, UnsafeVectorOverflow>& jumpsToLink() LIFETIME_BOUND { return m_assembler.jumpsToLink(); }
+    static bool canCompact(JumpType jumpType) { return Assembler::canCompact(jumpType); }
+    static JumpLinkType computeJumpType(LinkRecord& record, const uint8_t* from, const uint8_t* to) { return Assembler::computeJumpType(record, from, to); }
+    static int jumpSizeDelta(JumpType jumpType, JumpLinkType jumpLinkType) { return Assembler::jumpSizeDelta(jumpType, jumpLinkType); }
+
+    template<RepatchingInfo repatch>
+    ALWAYS_INLINE static void link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction, uint8_t* to) { return Assembler::link<repatch>(record, from, fromInstruction, to); }
+
+    // While one of these is alive, every jump and branch is emitted at its
+    // full 32-byte size and stays that size through linking. Code that will
+    // later be overwritten in place by a jump slot, on the assumption that it
+    // is at least as long as it was when it was emitted, needs this; so does
+    // any jump that will be repatched (patchableJump and friends use it).
+    class FixedSizeJumpScope {
+        WTF_MAKE_NONCOPYABLE(FixedSizeJumpScope);
+    public:
+        explicit FixedSizeJumpScope(MacroAssemblerPPC64& masm)
+            : m_masm(masm)
+        {
+            m_masm.m_assembler.beginFixedSizeJumps();
+        }
+        ~FixedSizeJumpScope() { m_masm.m_assembler.endFixedSizeJumps(); }
+    private:
+        MacroAssemblerPPC64& m_masm;
+    };
+
     RegisterID scratchRegister()
     {
         RELEASE_ASSERT(m_allowScratchRegister);
@@ -5344,6 +5375,7 @@ public:
     static void replaceWithNops(CodeLocationLabel<startTag> instructionStart, size_t memoryToFillWithNopsInBytes)
     {
         PPC64Assembler::fillNops(instructionStart.dataLocation(), memoryToFillWithNopsInBytes);
+        PPC64Assembler::cacheFlush(instructionStart.dataLocation(), memoryToFillWithNopsInBytes);
     }
     template<PtrTag callTag, PtrTag destTag>
     static void repatchCall(CodeLocationCall<callTag> call, CodeLocationLabel<destTag> destination)
