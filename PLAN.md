@@ -643,11 +643,30 @@ wrong operand count (`UMulHigh64`). Note Air opcode gates live on individual for
 
 **Verification**: `JSC_dumpAirGraph=1` on the same test on ARM64 and PPC64 — the Air IR should be **structurally** similar. Air passes FTL through the full B3 optimizer, so correctness bugs here are extremely subtle. Use `--useConcurrentJIT=0 --validateAir=1 --validateB3=1` as the default dev flags.
 
-## Phase 6 — WASM (IPInt entry + BBQ/OMG) — ACTIVE
+## Phase 6 — WASM (IPInt + BBQ + OMG) — ✅ DONE 2026-10-08
 
 Gate: `Tools/Scripts/run-jsc-stress-tests JSTests/wasm.yaml` green (1,777 test files, 27 groups).
 
-### Status — 2026-08-27
+### GATE MET — 2026-10-08
+
+- **`JSTests/wasm.yaml`: 17,218 / 17,218 pairs pass** (the count grew from 13,434 once
+  `$isSIMDPlatform` admitted ppc64le and the SIMD variants started running).
+- **`JSTests/stress`: 80,818 pairs, 0 FAIL** with wasm, the Yarr JIT and the sampling profiler on.
+- Every wasm tier runs and is on by default: **IPInt** (the mandatory entry tier, including SIMD),
+  **BBQ** and **OMG**, with **SIMD**, **tail calls** and **wide arithmetic** (add128/sub128/mul_wide).
+  Every configuration resolves coherently, including JIT-less (`--useJIT=false`), where IPInt is the
+  engine.
+- Signal-based bounds checking works: `useWasmFastMemory` and `useWasmFaultSignalHandler` are on, and
+  the out-of-bounds tests pass. Faulting-PC extraction comes from `runtime/MachineContext.h`, whose
+  PPC64LE accessors index `gp_regs` by the kernel's `PT_*` names with layout `static_assert`s.
+- The path here, in order: BBQ/OMG MacroAssembler surface → IPInt port (vector transport, f32 in
+  double format, doubled 512-byte handler slots) → the register-budget fixes (Air given r24–r30; the
+  JIT's non-preserved scratches moved off the MacroAssembler's r11/r12) → nine ELFv2 linkage-area
+  fixes → tail calls → SIMD on VSX in all three tiers. Details are in the dated status blocks under
+  "Immediate next actions", newest first.
+- **Not proven:** nothing has run on POWER8 silicon (see Phase 7), and no performance has been measured.
+
+### (historical) Status — 2026-08-27
 
 Builds and links with `ENABLE_WEBASSEMBLY_BBQJIT/OMGJIT=1`. `typeof WebAssembly` is `object`.
 Options resolve coherently: `useWasm=true useBBQJIT=true useOMGJIT=true useWasmIPInt=false`.
@@ -747,24 +766,23 @@ handlers that ARM64 writes with load/store-pair. Expect overflow to be a real, r
 *Gate: `JSTests/wasm.yaml` green in the `wasm-bbq`, `wasm-omg`, `wasm-no-jit` and `wasm-no-wasm-jit`
 variants.*
 
-### Remaining Phase 6 items (unchanged)
+### Phase 6 items — all resolved (2026-10-08)
 
 1. ~~`WasmCallingConvention.cpp` needs a PPC64 entry~~ — **it does not.** The file is arch-generic: it
    builds its register vectors from `GPRInfo::numberOfArgumentRegisters` / `toArgumentRegister()` and
    the FPR equivalents, and already excludes `macroClobberedGPRs()` from its scratch set. (Independently
    confirmed by `InPlaceInterpreter.asm`, which sets `NumberOfWasmArgumentGPRs = 8` for PPC64LE.)
-2. **WASM SIMD is on (BBQ + OMG); IPInt SIMD is not.** See "Status — wasm SIMD" below. The
+2. ~~WASM SIMD~~ — **done**: on in IPInt, BBQ and OMG (see "Status — wasm SIMD" and "6F" below). The
    `PPC64_UNSUPPORTED()` vector stubs are gone except seven ARM64/x86-shaped forms nothing routes
    PPC64 to (`vectorHorizontalAdd`, `vectorUnsigned{Min,Max}`, `vectorSshl`, the 5-operand x86
    shifts). `PPC64_UNIMPLEMENTED` = a hole that should be filled (only the Float16 family remains);
    `PPC64_UNSUPPORTED` = deliberately off here, so hitting one means **a gate leaked**.
-3. **WASM traps**: implement the signal-based trap handler. Nothing in WTF references `PT_NIP` or
-   `gp_regs`, and the only `CPU(PPC64)` branch in `PlatformRegisters.h` is the legacy Darwin/Mach path
-   (`ppc_thread_state64_t`), not Linux — on Linux we take `HAVE(MACHINE_CONTEXT)`. Faulting-PC
-   extraction needs writing.
-4. `add128`/`sub128`/`I64MulWide` in BBQ need `add64AndSetFlags`/`addCarry64`/`sub64AndSetFlags`/
-   `subBorrow64`, which PPC64 lacks. `useWasmWideArithmetic` defaults to **false**, so these are latent;
-   the ARM64 branch shape would port directly if it is ever enabled.
+3. ~~WASM traps~~ — **works**. The faulting PC comes from `runtime/MachineContext.h` (Linux takes
+   `HAVE(MACHINE_CONTEXT)`, not `PlatformRegisters.h`'s legacy Darwin/Mach PPC branch), whose PPC64LE
+   accessors already existed and now use `PT_*` names with layout `static_assert`s (c2460939e090).
+   `useWasmFastMemory` and `useWasmFaultSignalHandler` are on and the out-of-bounds tests pass.
+4. ~~`add128`/`sub128`/`I64MulWide`~~ — **done** in IPInt, BBQ and OMG (f7deb73b3140); the
+   `#if X86_64/#elif ARM64` gates around them now end in `#error`.
 
 ### Risks specific to this phase
 
@@ -785,12 +803,38 @@ variants.*
 /tmp/k/syn3.sh
 ```
 
-## Phase 7 — Hardening
+## Phase 7 — Hardening — NEXT
 
-1. Address-sanitized + UBSAN builds pass.
-2. Stress-test concurrent JIT (`--useConcurrentJIT=1`) — memory ordering is looser on PPC than ARM; audit every atomic for correct `sync`/`lwsync`/`isync` placement. PPC uses `lwsync` for acquire/release; full `sync` only for seq-cst.
-3. JIT cage / `USE(JIT_CAGE)` currently relies on ARM64 PAC + specific mmap tricks. Decide: either disable JIT cage on PPC64LE (simplest) or port it (significant). Default off for v1.
-4. Benchmark against LLInt and against ARM64 JIT on identical workload. Target: DFG ≥ 5× LLInt, FTL ≥ 2× DFG.
+Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
+
+1. **POWER8 silicon validation — the largest open risk.** Every result in this file comes from a POWER9
+   box. The code keeps to Power ISA v2.07B by construction (every encoding checked with `as -mpower8`,
+   POWER9-only instructions avoided by hand, and the SIMD sequences read only the result words POWER8
+   defines for `xvcvdpsp`, `xvcvdpsxws`/`uxws` and `xscvdpspn`), but none of that has executed on POWER8.
+   Needs real POWER8 hardware or a faithful emulator; run the full stress and wasm gates there.
+2. **Benchmark.** No throughput has been measured on any tier. Compare against the LLInt and against
+   ARM64 on identical workloads (target: DFG ≥ 5× LLInt, FTL ≥ 2× DFG). Known PPC64 overheads to
+   quantify: VMX SIMD ops copy operands through v0–v5; IPInt handler slots are 512 bytes (double
+   ARM64's); 64-bit constants still take up to 5 instructions; branch compaction only shrinks jumps that
+   are not later repatched.
+3. **Signal-based VM traps.** `ENABLE_SIGNAL_BASED_VM_TRAPS` (`WTF/wtf/PlatformEnable.h`) covers
+   x86_64, ARM64 and RISCV64 only, so PPC64 uses polling for watchdog and termination traps — correct,
+   but slower. `MachineContext` is now solid enough to try enabling it.
+4. **Build and run testmasm, testb3 and testair.** They are not targets in the JSCOnly configuration
+   used here, so the backend (including the new branch-compaction linker and the 1–5 instruction
+   immediate sequences) has only been exercised through jsc.
+5. **Debug (`ASSERT_ENABLED`) build.** Every gate so far ran on Release; assertion-only paths are
+   unexercised.
+6. **Address-sanitized + UBSAN builds pass.**
+7. **Concurrent JIT under stress** (`--useConcurrentJIT=1`, the default, but stress it deliberately).
+   Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
+   118542349276 and 08abfedb7fbd). Still worth a litmus-test pass over every atomic path.
+8. **JIT cage / `USE(JIT_CAGE)`** relies on ARM64 PAC and specific mmap tricks. Default off for PPC64LE.
+9. **Smaller gaps:** the `PPC64_UNIMPLEMENTED` Float16 family; Yarr's SIMD Boyer-Moore and
+   multi-character compare optimizations (off on PPC64) and the RegExp inline size limit (500 bytes,
+   tuned for denser code); `--sampleCCode` C-frame attribution (GCC does not keep r31 as a frame
+   pointer); the Yarr JIT/interpreter Unicode disagreements (see the RegExp status block — confirm
+   against current upstream ARM64 before calling them upstream bugs).
 
 ## Testing strategy (applies to every phase)
 
@@ -808,15 +852,23 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 - **Link register.** LR is not a GPR on PPC; every call clobbers it. Baseline/DFG call sequences must save LR into the frame before making nested calls. This differs sharply from ARM64 (where LR is just x30) and from RISCV64.
 - **Condition register.** PPC compares write to CR fields, not GPRs. Lower MacroAssembler's `branch32(...)`-style API to `cmpd` + `bc` via a specific CR field; adopt SM's convention of CR0 for the fast path and stick to it.
 - **Scratch-register pool.** r11/r12 as primary, r16 as pool-base, r0 **not** usable as a load/store base. See Lessons section — this is the top source of SM bugs.
-- **Memory ordering.** ARM64 has acquire/release loads/stores as primitives; PPC needs explicit `lwsync` / `isync` / full `sync` fences. DFG/FTL concurrent-JIT assumptions need audit. PPC uses `lwsync` for acquire/release; full `sync` only for seq-cst.
-- **Compare-exchange reservation leak on fail path.** SM has this open and unsolved — all three workarounds pessimise the success path. Design the PPC64 `compareExchange` macro with separate success/fail exits so the fail path can be enlarged without regressing success.
+- **Memory ordering.** ARM64 has acquire/release loads/stores as primitives; PPC needs explicit `lwsync` / `isync` / full `sync` fences. *(2026-10-08: two real bugs found and fixed — every offlineasm fence compiled to `nop`, and LL/SC was only acquire/release where ARM64's is RCsc. See Phase 7 item 7.)*
+- **Compare-exchange reservation leak on fail path.** SM has this open and unsolved — all three workarounds pessimise the success path. Design the PPC64 `compareExchange` macro with separate success/fail exits so the fail path can be enlarged without regressing success. *(2026-10-08: strong CAS no longer stores back after a mismatch, dbfbd4ce1268. ARM64's `atomicStrongCAS` has the same retry-after-mismatch shape — upstream candidate.)*
 - **Executable memory.** ~~Use `__builtin___clear_cache`~~ — **RESOLVED, and the advice was wrong**: that
   builtin emits nothing at all on ppc64le. The flush is now hand-written; see the Linking architecture
   note above. This was almost certainly the cause of a long tail of "flaky" failures on this port.
-- **POWER8 validation gap.** Runtime-gated POWER8-forced testing is not equivalent to real POWER8 silicon. Unguarded POWER9 instructions pass the forced test and crash on real P8. Acquire POWER8 hardware or qemu-power8 access before claiming POWER8 support.
+- **ELFv2 linkage-area clobbers — the most frequent bug class in this port** (16 fixed). A callee writes CR at sp+8, LR at sp+16 and the TOC at sp+24 in the *caller's* frame, and the MacroAssembler C call does not move sp, so any live data in [sp, sp+32) across a C call is corrupted. Air now always reserves the area (bd76611822cf); every new C-call site still needs checking.
+- **POWER8 validation gap — still open, now the top risk** (Phase 7 item 1). Runtime-gated POWER8-forced testing is not equivalent to real POWER8 silicon. Unguarded POWER9 instructions pass the forced test and crash on real P8. Acquire POWER8 hardware or qemu-power8 access before claiming POWER8 support.
 - **mimalloc + 64K pages.** Default on for RISCV64 and ARM64. 64K pages are standard on Linux PPC64LE (not 4K). Confirm upstream mimalloc supports PPC64LE page sizes; if not, default `USE_MIMALLOC=OFF` for PPC64LE initially.
 
-## Immediate next actions (updated 2026-08-27)
+## Immediate next actions (updated 2026-10-08)
+
+**Where it stands:** Phases 0–6 are done. On the POWER9 box `JSTests/stress` is 80,818 / 0 FAIL and
+`JSTests/wasm.yaml` 17,218 / 0 FAIL, with every JS tier, every wasm tier (with SIMD and tail calls),
+the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** — POWER8 validation
+first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
+older blocks are kept for history and their numbers are superseded by the ones above them.
+
 
 ### Status — 2026-10-08, sampling profiler and branch compaction (supersedes the stress figures below)
 
@@ -1000,20 +1052,19 @@ handful of others. None of the commits since the last 0-FAIL run touch Air, so t
 correction, not a regression. The reference failure list lives on the box at
 `/home/tle/stress-baseline-fails.txt`; the regression gate is now "nothing that passes in the baseline may
 fail", via `comm -13` against that file, not "expect 0".
-**Phase 6 (WASM) is the active front, and the decision is to do a full IPInt port** — see the staged
-6A–6E plan in Phase 6 above. Everything BBQ/OMG needs at the MacroAssembler level is already landed;
+**(Historical, 2026-08-27.) Phase 6 (WASM) was the active front, and the decision was a full IPInt port**
+— see the staged 6A–6E plan in Phase 6 above; all of it has since landed. Everything BBQ/OMG needs at the MacroAssembler level is already landed;
 what remains is offlineasm assembly.
 
-1. **6A — get `InPlaceInterpreter64.asm` assembling for ppc64le.** In progress. The include gate is
+1. ~~6A~~ — done. *get `InPlaceInterpreter64.asm` assembling for ppc64le.* The include gate is
    flipped; `LLIntOffsetsExtractor` has to be rebuilt first because the file adds new constant
    references (`buildOffsetsMap` throws otherwise, which is not an obvious error message). First real
    blocker is `InPlaceInterpreter64.asm:80`, the `else error end` in `nextIPIntInstruction()`.
-2. **6B — port the entry path** (`ipint_entry`, argumINT, prologue OSR). First milestone with
+2. ~~6B~~ — done. *port the entry path* (`ipint_entry`, argumINT, prologue OSR). First milestone with
    executable wasm, because immediate tier-up means only this subset runs.
-3. **6C — audit the ~730 silent arch gates** before believing any green result.
-4. **6D/6E — opcode handlers, mINT/uINT, and the 256-byte stride validation.**
-5. **Write the WASM trap handler** — faulting-PC extraction from `ucontext` (`PT_NIP` /
-   `uc_mcontext.gp_regs`) does not exist yet for Linux PPC64.
+3. ~~6C~~ — done. *audit the ~730 silent arch gates.*
+4. ~~6D/6E~~ — done (handler slots are 512 bytes on PPC64LE).
+5. ~~WASM trap handler~~ — works; see Phase 6 item 3.
 6. ~~Port the Yarr JIT~~ — done 2026-10-08, on by default with every Yarr JIT feature ARM64/x86_64
    have except the SIMD/wide-compare optimizations (see the RegExp status block above).
 7. **Re-run the earlier tier gates against the current tree.** Baseline and DFG were declared green
@@ -1036,7 +1087,10 @@ matters on any ABI where `{double; Exception*}` is not a homogeneous float aggre
 from silently compiling wasm atomics into no-ops. (An earlier version of this list also proposed gating
 `IPInt::initialize()` on `Options::useWasmIPInt()`. That was wrong and has been reverted: IPInt is the
 mandatory wasm entry tier, so its dispatch bases must be initialised whenever wasm is on, and the gate would
-make ARM64/x86 abort under `--useWasmIPInt=false`.)
+make ARM64/x86 abort under `--useWasmIPInt=false`.) Added 2026-10-08: ARM64's `atomicStrongCAS` retrying
+after a mismatch (fixed for PPC64 in dbfbd4ce1268); IPInt loading the `ref.test`/`ref.cast` heap type
+zero-extended instead of sign-extended (f07ad8f22f05, no PPC prefix); and possibly the Yarr Unicode
+JIT/interpreter disagreements, once confirmed on current upstream ARM64.
 
 ### Build-workflow traps on the power9 box (cost two debugging rounds on 2026-08-26 — read this first)
 
