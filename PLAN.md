@@ -817,9 +817,8 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    quantify: VMX SIMD ops copy operands through v0–v5; IPInt handler slots are 512 bytes (double
    ARM64's); 64-bit constants still take up to 5 instructions; branch compaction only shrinks jumps that
    are not later repatched.
-3. **Signal-based VM traps.** `ENABLE_SIGNAL_BASED_VM_TRAPS` (`WTF/wtf/PlatformEnable.h`) covers
-   x86_64, ARM64 and RISCV64 only, so PPC64 uses polling for watchdog and termination traps — correct,
-   but slower. `MachineContext` is now solid enough to try enabling it.
+3. ~~**Signal-based VM traps.**~~ *Done 2026-10-09 (240a9558eb0c) — see "Status — signal-based VM
+   traps".* `ENABLE_SIGNAL_BASED_VM_TRAPS` covered x86_64, ARM64 and RISCV64 only, so PPC64 polled.
 4. **Build and run testmasm, testb3 and testair.** They are not targets in the JSCOnly configuration
    used here, so the backend (including the new branch-compaction linker and the 1–5 instruction
    immediate sequences) has only been exercised through jsc.
@@ -874,6 +873,30 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — signal-based VM traps (Phase 7 item 3), 2026-10-09
+
+- **On for PPC64LE** (240a9558eb0c). DFG/FTL emit InvalidationPoints instead of polling CheckTraps; the
+  VMTraps signal sender suspends the mutator (SIGUSR1), reads pc/sp/r31 from its mcontext, and writes a
+  halt at each invalidation point of the optimized code block on top of the stack; the AccessFault
+  handler matches the faulting PC and jettisons, which turns the halt into the branch to the OSR exit.
+- **The one real bug:** the PPC64 halt was `trap`, i.e. SIGTRAP, which VMTraps does not handle — enabling
+  the flag as-is would have killed the process on the first watchdog fire in optimized code. Now
+  `ld r0,0(0)` (SIGSEGV at NULL). The halt is written with the mutator suspended (no concurrent
+  execution of that word) and is followed by the hand-written icache flush; the kernel's return to the
+  thread is context synchronizing. MacroAssemblerPPC64 needed the `replaceWithVMHalt` wrapper.
+- **Tests:** 64 watchdog/termination tests × 50 copies (all variants): 9,550 / 0 FAIL. Custom
+  infinite-loop shapes × 6 configs × 100 runs, random 1–400 ms watchdog: 3,000 / 0; strace shows the
+  SIGSEGV halt taken in 185 / 200 sampled runs. Gates: stress 80,818 / 0, wasm.yaml 17,218 / 0.
+  Harness: `power9:/home/tle/traps/` (`rep.sh`, `suite.sh`, `traps.yaml`).
+- **Performance** (same binary, `JSC_usePollingTraps=true` vs default): microbenchmarks 1.025×
+  (1.022–1.028), 204 clear wins; LongSpider 1.041×, Octane 1.046×, V8Spider 1.078×, SunSpider 1.019×,
+  TailBench 1.015× (spreads in `bench/SUMMARY.txt`, stage 3); JetStream2 unchanged within noise.
+  Reproducible losses: mul-immediate-sub 0.81× (B3 now unrolls the loop and the unrolled body keeps three
+  `mullw` where the rolled loop folds them into one — a B3 phase-ordering effect, not a trap cost) and
+  seven at 0.87–0.98× not diagnosed (C++-bound or ~20 ms runs).
+- **Not verified:** POWER8; a trap landing while a far (8-instruction) jump slot is being rewritten is
+  the same pre-existing hazard as Phase 7 item 10 (jettison targets are in-block OSR exits, so `b` range).
 
 ### Status — benchmarks (Phase 7 item 2), 2026-10-08
 
