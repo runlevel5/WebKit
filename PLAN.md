@@ -835,6 +835,11 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    tuned for denser code); `--sampleCCode` C-frame attribution (GCC does not keep r31 as a frame
    pointer); the Yarr JIT/interpreter Unicode disagreements (see the RegExp status block — confirm
    against current upstream ARM64 before calling them upstream bugs).
+10. **Jump islands for PPC64.** Once more than 32 MB of JIT code is live, a call or tail call can
+   need the far (`li64`/`mtctr`/`bctr`) slot form, and rewriting that while another thread runs it
+   is not safe (Power ISA concurrent-modification rules allow only `b`/`nop`-class changes); wasm
+   tier-up does exactly that. `ENABLE(JUMP_ISLANDS)` (ARM64) keeps every patched site a single `b`
+   to an island within range. See "Status — benchmarks".
 
 ## Testing strategy (applies to every phase)
 
@@ -909,6 +914,29 @@ older blocks are kept for history and their numbers are superseded by the ones a
   loop iteration; `andi.` is followed by a redundant `cmpdi`; the ELFv2 TOC save/restore is 2 instructions
   per C call. VMX v0–v5 staging and the 512-byte IPInt slots are wasm-only and were not measured.
 - **Not measured:** wasm throughput; JetStream2 in the LLInt; a same-source ARM64 build; POWER8.
+- **Fixes landed (2026-10-09), each A/B-measured against the build before it:**
+  - Int32 `/` and `%` reach the integer DFG/FTL paths (ebe13e6fc6b8): integer-divide 7.2×,
+    megamorphic-* 1.8×, switch-string-* 1.7–2.0×; microbenchmark geomean 1.023×; LongSpider 1.035×.
+  - Codegen series 08c2adf7c351..235ab23067f5: carry seed only for `x + x` (counted loops 1.2–1.35×),
+    `isel` for CR→GPR (dependent compare→0/1 13 → 4 cycles; one benchmark clearly faster),
+    branch-free `compareDouble` (to-number-boolean 2.41×), shorter checked int64 add
+    (check-mul-constant 1.14×), no `cmpdi` after `andi.` (1–9% on loop-heavy code). Together:
+    microbenchmark geomean 1.026× (per-invocation 1.028–1.031), 184 clear wins; the only loss that
+    reproduces (for-in-string-array −9%) is a code-layout effect, shown by padding with nops.
+  - 1 GB executable pool (e8b53e438fec) after packing JIT allocations at the bottom of it
+    (ea64462f3a80): JetStream2 FTL 32 → 88 (2.7×). Now (HEAD): JetStream2 Baseline 33.0, DFG 84.3,
+    FTL 89.8; microbenchmarks DFG/Baseline 1.89×, FTL/DFG 1.17× (unchanged ratio — the fixes sped up
+    both tiers).
+  - Tried and dropped: `isel` in offlineasm's conditional sets (LLInt geomean +1.5% but 30 clear
+    losses in 257: layout noise, not a clear win); `mfocrf` instead of `mfcr` (no measurable effect).
+- **Genuine bug found, mitigated, not fixed — far-slot repatching.** MetaAllocator put half of all
+  JIT allocations at the top of the pool (64 KB pages), so with any pool > 32 MB calls between the
+  halves used the far `li64`/`mtctr` slot form. Rewriting a far slot is not atomic, and the Power
+  ISA only allows concurrent modification of `b`/`nop`-class instructions, so wasm's concurrent
+  tier-up repatching raced with execution: tail_call.wast.js failed 4–6% of runs with a 1 GB pool.
+  Packing allocations keeps everything within `b` range until 32 MB of code is live (300/300
+  runs pass), but a larger live code size can still produce far slots that wasm repatches
+  concurrently. The real fix is jump islands for PPC64 (Phase 7 item 10).
 
 ### Status — 2026-10-08, sampling profiler and branch compaction (supersedes the stress figures below)
 
