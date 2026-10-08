@@ -5268,6 +5268,16 @@ public:
         return finishNarrowTest(cond, mask, 0xFF, /*halfword*/ false);
     }
 
+    // load16 with ExtendedAddress — YarrJIT's latin1CanonicalizationTable lookup.
+    // As on x86_64/ARM64, the base register is a uint16_t index into the table
+    // at `offset`: dest = *(uint16_t*)(offset + base * 2).
+    void load16(ExtendedAddress address, RegisterID dest)
+    {
+        move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), memoryTempRegister);
+        m_assembler.sldi(dataTempRegister, address.base, 1);
+        m_assembler.lhzx(dest, memoryTempRegister, dataTempRegister);
+    }
+
     // Unaligned 16-bit load — YarrJIT.
     // PPC64LE performs unaligned integer loads in hardware for cacheable
     // memory, so these are ordinary zero-extending loads.

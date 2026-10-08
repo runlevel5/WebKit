@@ -30,6 +30,7 @@
 #include "AllowMacroScratchRegisterUsage.h"
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "Options.h"
 #include "ProbeContext.h"
 #if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
@@ -89,6 +90,12 @@ static constexpr GPRReg areCanonicallyEquivalentCanonicalModeArgReg = X86Registe
 
 // The thunk code assumes that we return the result to areCanonicallyEquivalentCharArgReg.
 static_assert(areCanonicallyEquivalentCharArgReg == GPRInfo::returnValueGPR);
+#elif CPU(PPC64LE)
+static constexpr GPRReg areCanonicallyEquivalentCharArgReg = PPC64Registers::r8; // regT0
+static constexpr GPRReg areCanonicallyEquivalentPattCharArgReg = PPC64Registers::r9; // regT1
+static constexpr GPRReg areCanonicallyEquivalentCanonicalModeArgReg = PPC64Registers::r26; // regUnicodeInputAndTrail
+#else
+#error "Yarr JIT: areCanonicallyEquivalentThunkGenerator needs this CPU's argument registers"
 #endif
 #endif
 
@@ -7562,6 +7569,16 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenera
         pushCount--;
         jit.pop(callerSaves[pushCount]);
     };
+#elif CPU(PPC64LE)
+    // Every ELFv2 volatile GPR the matcher may hold a value in (r3-r10) except
+    // r8, which receives the result. r26 is ELFv2 callee-saved.
+    constexpr unsigned registersToSave = 7;
+    constexpr GPRReg callerSaves[registersToSave] = {
+        PPC64Registers::r3, PPC64Registers::r4, PPC64Registers::r5, PPC64Registers::r6,
+        PPC64Registers::r7, PPC64Registers::r9, PPC64Registers::r10,
+    };
+    static_assert(areCanonicallyEquivalentCharArgReg == PPC64Registers::r8);
+    constexpr int32_t saveAreaSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(registersToSave * sizeof(CPURegister));
 #endif
 
     jit.emitFunctionPrologue();
@@ -7572,6 +7589,14 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenera
 #elif CPU(X86_64)
     while (pushCount < registersToSave)
         pushCallerSave();
+#elif CPU(PPC64LE)
+    // The saves go right below fp. sp then drops a further
+    // maxFrameExtentForSlowPathCall so that the C callee's ELFv2 linkage-area
+    // writes (CR at sp+8, LR at sp+16, our TOC save at sp+24) land in space
+    // reserved for them instead of on the saved registers.
+    jit.subPtr(CCallHelpers::TrustedImm32(saveAreaSize + static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
+    for (; pushCount < registersToSave; ++pushCount)
+        jit.storePtr(callerSaves[pushCount], CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>((pushCount + 1) * sizeof(CPURegister))));
 #endif
 
     jit.setupArguments<decltype(operationAreCanonicallyEquivalent)>(areCanonicallyEquivalentCharArgReg, areCanonicallyEquivalentPattCharArgReg, areCanonicallyEquivalentCanonicalModeArgReg);
@@ -7591,6 +7616,14 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenera
 
     while (pushCount)
         popCallerSave();
+#elif CPU(PPC64LE)
+    // Convert the 8-bit bool result into a 32-bit value in r8, then restore r3.
+    jit.zeroExtend8To32(GPRInfo::returnValueGPR, areCanonicallyEquivalentCharArgReg);
+
+    while (pushCount) {
+        --pushCount;
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>((pushCount + 1) * sizeof(CPURegister))), callerSaves[pushCount]);
+    }
 #endif
 
     ASSERT(!pushCount);
