@@ -818,6 +818,32 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions (updated 2026-08-27)
 
+### Status — 2026-10-08, sampling profiler and branch compaction (supersedes the stress figures below)
+
+- **`JSTests/stress`: 80,818 pairs, 0 FAIL.** The 4 remaining baseline failures are gone.
+  `/home/tle/stress-baseline-fails.txt` is now empty (old list kept as `…-2026-10-08-4.txt`).
+- **Sampling profiler on** (6435b4fad515). It never needed a native unwinder: it reads pc, r31
+  and r7 (LLInt PC) from the suspended thread's mcontext and walks JS CallFrames. Clears
+  `js-to-wasm-callee-has-correct-prototype`; the 16 `sampling-profiler-*.js` tests and the
+  `ftl-no-cjit-validate-sampling-profiler` variant now really sample. `--sampleCCode` (walks C
+  frames through r31, which GCC does not maintain) is unchecked.
+- **Branch compaction on** (58ab9fa97117). Root cause of the 3 `ftl-no-cjit-small-pool` waitasync
+  failures: not a leak — 20 agents = 21 VMs × ~51 KB of per-VM thunks needed a 1,052,672-byte pool
+  against the variant's 1,048,576. 39% of thunk bytes were nop padding in linked 32-byte jump
+  slots. In-buffer and thunk jumps are now recorded and shrunk by
+  `LinkBuffer::copyCompactAndLinkCode` (b / bc / bc+b / full slot). Fixed-size slots: patchable
+  jumps, JIT math IC fast paths, the by-id inline IC jump, and anything inside a watchpoint shadow.
+  `labelForWatchpoint()` was a stub (replaceWithJump wrote 32 bytes over live labels) — now pads
+  like ARM64. `replaceWithNops` now flushes the icache. Empty-VM thunks 51,200 → 32,992 bytes;
+  v8-* peak executable memory −36…−40%; the small-pool tests now need 659,456 bytes.
+- **Shorter 64-bit immediates** (40c1b37d88da): `move(TrustedImmPtr)` and
+  `move(TrustedImm64)` use 1–5 instructions instead of always 5 (a user-space pointer is 4,
+  numberTag is 2). Another −3…−6% executable memory (empty VM now 32,128 bytes). `moveWithPatch` keeps the fixed li64.
+- **Remaining PPC64-vs-ARM64 code size:** thunks common to both are ~1.25× ARM64 (compared with
+  an older macOS system jsc, so approximate). Call slots stay 8 instructions (li64 r12 + bl, for
+  the ELFv2 TOC), and C calls go through CTR.
+- **Not verified:** testmasm/testb3 (not built in this configuration); POWER8 silicon; throughput.
+
 ### Status — 2026-10-08, RegExp (Yarr) JIT on by default
 
 - **The Yarr JIT is on by default and fully featured on PPC64LE** (73fce5653a45): ALL_PARENS
