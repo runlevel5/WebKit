@@ -800,17 +800,30 @@ public:
         }
     }
 
-    // Set dest = 0/1 from CR0 per cond: mfcr + rlwinm bit extraction,
-    // inverting via xori when the condition is a bit-clear sense.
+    // dest = 1 if CR0 bit `bi` is set (whenSet) or clear (!whenSet), else 0.
+    // isel reads the CR bit directly: compare -> 0/1 is ~4 cycles on POWER9,
+    // where mfcr (microcoded) + rlwinm is ~13 and even mfocrf + rlwinm ~9.
+    // isel's RA = r0 means a literal 0. Clobbers memoryTempRegister (or
+    // dataTempRegister when dest is memoryTempRegister); every caller has
+    // finished with them once CR0 is set.
+    void setFromCR0Bit(unsigned bi, bool whenSet, RegisterID dest)
+    {
+        if (whenSet) {
+            RegisterID one = dest == memoryTempRegister ? dataTempRegister : memoryTempRegister;
+            m_assembler.addi(one, PPC64Registers::r0, 1);   // li one, 1
+            m_assembler.addi(dest, PPC64Registers::r0, 0);  // li dest, 0
+            m_assembler.isel(dest, one, dest, bi);
+        } else {
+            m_assembler.addi(memoryTempRegister, PPC64Registers::r0, 1);
+            m_assembler.isel(dest, PPC64Registers::r0, memoryTempRegister, bi);
+        }
+    }
+
+    // Set dest = 0/1 from CR0 per cond (bo == 4 is the bit-clear sense).
     void setFromCondition(RelationalCondition cond, RegisterID dest)
     {
         BranchBits bits = branchBitsFor(cond);
-        m_assembler.mfcr(dest);
-        // Rotate CR0 bit `bi` into the LSB: CR bit i (MSB numbering) sits
-        // at 32-bit position 31-i from LSB; rlwinm with SH = bi + 1.
-        m_assembler.rlwinm(dest, dest, bits.bi + 1, 31, 31);
-        if (bits.bo == 4)
-            m_assembler.xori(dest, dest, 1);
+        setFromCR0Bit(bits.bi, bits.bo != 4, dest);
     }
 
     // Set dest = 0/1 from CR0 for a test-style ResultCondition. CR0 must
@@ -829,10 +842,7 @@ public:
             RELEASE_ASSERT_NOT_REACHED();
             bi = 2; bo = 12; break;
         }
-        m_assembler.mfcr(dest);
-        m_assembler.rlwinm(dest, dest, bi + 1, 31, 31);
-        if (bo == 4)
-            m_assembler.xori(dest, dest, 1);
+        setFromCR0Bit(bi, bo != 4, dest);
     }
 
     // --- 32-bit arithmetic ---------------------------------------------
@@ -2091,10 +2101,7 @@ public:
         DoubleBranchBits bits = doubleBranchBitsFor(cond);
         m_assembler.fcmpu(0, left, right);
         emitDoubleConditionCRop(bits);
-        m_assembler.mfcr(dest);
-        m_assembler.rlwinm(dest, dest, bits.bi + 1, 31, 31);
-        if (bits.bo == 4)
-            m_assembler.xori(dest, dest, 1);
+        setFromCR0Bit(bits.bi, bits.bo != 4, dest);
     }
 
     // --- Width extensions (Air SignExtend/ZeroExtend opcodes) -----------

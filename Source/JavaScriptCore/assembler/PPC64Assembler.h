@@ -283,6 +283,16 @@ public:
         insn((31u << 26) | (uint32_t(registerValue(rt)) << 21) | (19u << 1));
     }
 
+    // isel — Integer Select. Power ISA v2.07B §3.3.12 (Base category since
+    // v2.06, so POWER7 and later), A-form, opcode 31, XO=15:
+    //   RT <- CR[bc] ? (RA == 0 ? 0 : GPR[RA]) : GPR[RB].
+    // Verified with as -mpower8: isel 3,4,5,2 → 0x7c64289e; isel 3,0,5,0 → 0x7c60281e
+    void isel(RegisterID rt, RegisterID ra, RegisterID rb, unsigned bc)
+    {
+        insn((31u << 26) | (uint32_t(registerValue(rt)) << 21) | (uint32_t(registerValue(ra)) << 16)
+            | (uint32_t(registerValue(rb)) << 11) | ((bc & 31u) << 6) | (15u << 1));
+    }
+
     // oris — Or Immediate Shifted. Power ISA v2.07B §3.3.9, D-form, opcode 25.
     //   Semantics: RA <- RS | (zero_extend(UI) << 16).
     //   Used together with ori to set the high 16 of the low 32 bits
