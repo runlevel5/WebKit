@@ -834,11 +834,11 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    tuned for denser code); `--sampleCCode` C-frame attribution (GCC does not keep r31 as a frame
    pointer); the Yarr JIT/interpreter Unicode disagreements (see the RegExp status block — confirm
    against current upstream ARM64 before calling them upstream bugs).
-10. **Jump islands for PPC64.** Once more than 32 MB of JIT code is live, a call or tail call can
+10. ~~**Jump islands for PPC64.**~~ *Done 2026-10-09 (9a04be8f73ea) — see "Status — jump islands".*
+   Once more than 32 MB of JIT code is live, a call or tail call can
    need the far (`li64`/`mtctr`/`bctr`) slot form, and rewriting that while another thread runs it
    is not safe (Power ISA concurrent-modification rules allow only `b`/`nop`-class changes); wasm
-   tier-up does exactly that. `ENABLE(JUMP_ISLANDS)` (ARM64) keeps every patched site a single `b`
-   to an island within range. See "Status — benchmarks".
+   tier-up does exactly that.
 
 ## Testing strategy (applies to every phase)
 
@@ -873,6 +873,59 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — jump islands (Phase 7 item 10), 2026-10-09
+
+- **The race, reproduced.** HEAD with bottom-packing switched off (a temporary env toggle in
+  MetaAllocator, never committed): tail_call.wast.js with the wasm-bbq flags failed 77/2,000 and
+  110/3,000 runs ("Maximum call stack size exceeded"); 0/2,000 and 0/3,000 with packing on.
+- **Fix (9a04be8f73ea).** Every site retargeted while another thread may run it now changes by one
+  aligned `b`/`bl` store (then the hand-written icache flush):
+  - Jump slots (jumps, patchable jumps, near tail calls): far form is now `nop; li64 r12; mtctr;
+    bctr`, so word 0 is always a nop or a `b`. Retargeting to anything a `b` reaches is the single
+    store of word 0 from either form; near → far writes the dead stanza first and then word 0, so it
+    is atomic too. Only far → far rewrites a live stanza.
+  - Near calls to JIT code: `nops; bl` (r12 is not materialised — JIT code never reads it; only ELFv2
+    C functions build their TOC from it). call() slots keep `li64 r12` (C callees and readCallTarget
+    need it). `threadSafePatchableNearCall()` (wasm only) tags word 6 with an executed no-op
+    `oris 0,0,0` and never takes the far form.
+  - `ENABLE(JUMP_ISLANDS)` on, `nearJumpRange` = 32 MB. Out-of-reach wasm targets go through an
+    island allocated by `prepareForAtomicRelink{Jump,Call}Concurrently` (old islands are kept: a
+    thread may be in one). A PPC64 island is a whole jump slot (`b`, or `li64 r12; mtctr; bctr`), so
+    islands never chain; ARM64's chained single `b`s were 5–21× slower on a hot cross-region call
+    (up to 36 hops in 1 GB). Island area 2 MB per 32 MB region (65,536 islands; 28 MB of code — 1/8
+    left 24 MB and broke stress/regress-169445.js, a single 26 MB allocation).
+  - All other repatching (JS calls/ICs, OSR exit jumps, jump replacement, C calls) happens on the
+    owning thread or with it stopped and keeps the inline far form. Routing it through islands too
+    cost 3.5% on JetStream2 (~300,000 sites through islands, because the island holes push code past
+    32 MB from the thunks).
+  - `useRandomizingExecutableIslandAllocation` is now allowed on PPC64LE (random region per
+    allocation — the way to force far targets).
+- **Repatch entry points.** Atomic (single patch-class store): repatchNearCall on a near call to JIT
+  code (store of `bl`); repatchNearCall tail / repatchJump on an unconditional slot to any in-pool or
+  in-reach target, and near → far; replaceWithJump when the target is in reach; island writes
+  (fresh memory, published after the flush). Not atomic, and only used on the owning or a stopped
+  thread: repatchCall (call() slots, `li64` + `bl`/`bctrl`); repatchJump on conditional slots across
+  forms (within the `bc`+`b` form it is the single `b`); far → far on jump slots; replaceWithJump to
+  an out-of-reach target; replaceWithNops (word-by-word nops); repatchPointer / revert (5-word li64);
+  replaceWithVMHalt (one word, `ld` is not patch class, mutator suspended).
+- **After.** Committed binary: 0/3,000, and 0/3,000 with random region placement; the same design
+  with packing off: 0/3,000, and 0/3,000 with random placement. With random placement each
+  tail_call run makes 15–17 islands concurrently; perf samples of a hot wasm call loop land in island
+  areas in 5/5 runs (0 in control runs); that loop costs 1.04–1.07 s vs 1.00–1.04 s.
+- **Packing (ea64462f3a80) kept**, for locality only, no longer load-bearing: on the islands build,
+  JetStream2 packed 97.2/98.7/91.9 vs unpacked 91.7/93.7/97.3, microbenchmarks 0.998× — no clear
+  difference either way.
+- **Performance, HEAD vs islands:** microbenchmarks 0.9976× (per-invocation 0.9948–0.9970; of the 11
+  biggest losses rechecked at 10 invocations only map-iterator-fast-keys 0.95× reproduces, not
+  diagnosed); JetStream2 FTL 92.1/93.3/89.2/94.4 vs 92.3/93.0/90.7/91.0. Raw data
+  `bench/raw/{isl,isl3,final}-*`; harness and binaries `power9:/home/tle/islands/`.
+- **Gates:** stress 80,818 / 0, wasm.yaml 17,218 / 0, RegExp yaml 85 / 0, RegExpTest.data 2,085 clean.
+  Extra: wasm.yaml with `JSC_useRandomizingExecutableIslandAllocation=1` (islands at most wasm
+  call sites that tier up): 17,218 / 0.
+- **Not verified:** POWER8; island exhaustion (65,536 per region, crash on overflow — only wasm far
+  sites use them; the most counted in one run is 17, never measured on a large wasm app); JS sites are argued, not tested, to be
+  single-threaded (JS code belongs to one VM; repatching runs on its mutator or with it stopped).
 
 ### Status — signal-based VM traps (Phase 7 item 3), 2026-10-09
 
@@ -952,7 +1005,8 @@ older blocks are kept for history and their numbers are superseded by the ones a
     both tiers).
   - Tried and dropped: `isel` in offlineasm's conditional sets (LLInt geomean +1.5% but 30 clear
     losses in 257: layout noise, not a clear win); `mfocrf` instead of `mfcr` (no measurable effect).
-- **Genuine bug found, mitigated, not fixed — far-slot repatching.** MetaAllocator put half of all
+- **Genuine bug found — far-slot repatching** *(fixed 2026-10-09 by jump islands, 9a04be8f73ea;
+  see "Status — jump islands")*. MetaAllocator put half of all
   JIT allocations at the top of the pool (64 KB pages), so with any pool > 32 MB calls between the
   halves used the far `li64`/`mtctr` slot form. Rewriting a far slot is not atomic, and the Power
   ISA only allows concurrent modification of `b`/`nop`-class instructions, so wasm's concurrent
