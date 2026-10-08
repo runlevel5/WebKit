@@ -818,6 +818,37 @@ See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete 
 
 ## Immediate next actions (updated 2026-08-27)
 
+### Status — 2026-10-08, RegExp (Yarr) JIT on by default
+
+- **The Yarr JIT is on by default and fully featured on PPC64LE** (73fce5653a45): ALL_PARENS
+  (bda2755ff38d), BACKREFERENCES incl. 16-bit (59fcf5bc073f), UNICODE_EXPRESSIONS (90d89f426d80) and
+  REGEXP_TEST_INLINE (0de9effb77a9) are enabled as on ARM64/x86_64. Still ARM64/x86_64-only and off
+  here (optimizations, not correctness): the SIMD Boyer-Moore/multi-pattern search, the 8-byte
+  (Char8) / 4-unit (Char16) multi-character compares (`#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)`
+  gates, PPC64 uses the 4/2 path), and YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP.
+- **Root causes** (measured first: 80 of 288 regexp-named stress files segfaulted with
+  `--useRegExpJIT=1`): (1) generateEnter/generateReturn/calleeSaveRegisters had no PPC64 arm, so no
+  frame was built and r17/r27-r30 were clobbered under the C++ caller (1a32327ab26c; scratch registers
+  now r24-r28, saved like x86_64's rbx/r12-r15); (2) `lshift64(TrustedImm32, reg, reg)` shifted the
+  register by the immediate instead of the immediate by the register — every bitmask character class
+  was wrong (ef721f83e4d0); (3) `linkPointer` patched five instructions before a DataLabelPtr, so
+  storePtrWithPatch backtrack addresses stayed 0 (f4167771f084). Yarr is the only user of (2) and (3).
+  The areCanonicallyEquivalent thunk reserves maxFrameExtentForSlowPathCall below its saves for the
+  ELFv2 linkage area.
+- **Gates for each step:** JSTests/stress 80,814 PASS / 4 FAIL / 0 new; wasm.yaml 17,218 / 0 FAIL;
+  `--filter RegEx` over es6.yaml + ChakraCore.yaml 85 / 0 FAIL; RegExpTest.data via a JS driver
+  (`power9:/home/tle/yarr/rxdata.js`, testRegExp is not built for JSCOnly) 2,085 checks clean.
+  Helpers on the box: `/home/tle/yarr/quick.sh` (288 regexp-named stress files, direct jsc),
+  `allgates.sh` (all four gates), `dis.sh` (gdb disassembly of Yarr code; there is no PPC64
+  disassembler), `unicode.js`/`backref.js`/`inline.js` (JIT-vs-interpreter differentials).
+- **Known JIT/interpreter disagreements, not PPC64-specific:** /u and /v matching started in the
+  middle of a surrogate pair (lastIndex inside a pair; `/\B./us` on "a😀b"). ARM64's JIT gives the same
+  answers (the `\B` case once its non-BMP optimization is off, e.g. with /m); `/(?:^a)?b/.exec("xb")`
+  is null on ARM64's JIT too. Checked against the (older) system JSC on an ARM64 Mac.
+- **Not verified:** POWER8 silicon; RegExpTestInline inlines only ~4 of 23 sample patterns at the
+  default maximumRegExpTestInlineCodesize (500 bytes) because PPC64 code is larger (fixed branch
+  slots) — the limit was not tuned.
+
 ### Status — 2026-10-08, wasm SIMD (supersedes the SIMD lines below)
 
 - **Wasm SIMD runs in BBQ and OMG** (459fb0348c25 .. 84c166362460, plus the Air spill fix and the
@@ -957,10 +988,8 @@ what remains is offlineasm assembly.
 4. **6D/6E — opcode handlers, mINT/uINT, and the 256-byte stride validation.**
 5. **Write the WASM trap handler** — faulting-PC extraction from `ucontext` (`PT_NIP` /
    `uc_mcontext.gp_regs`) does not exist yet for Linux PPC64.
-6. **Port the Yarr JIT, or leave it off deliberately.** `useRegExpJIT` is currently forced off for
-   PPC64 (`regExpJITEnabledByDefault()`): `YarrJITRegisters.h` assigns it registers but nothing beyond
-   that works, and enabling it segfaults across ~86 regexp test files. This is the largest remaining
-   known gap after WASM.
+6. ~~Port the Yarr JIT~~ — done 2026-10-08, on by default with every Yarr JIT feature ARM64/x86_64
+   have except the SIMD/wide-compare optimizations (see the RegExp status block above).
 7. **Re-run the earlier tier gates against the current tree.** Baseline and DFG were declared green
    before the icache fix landed, and `WebKitBuild/JSCOnly/Release` is months stale — stale enough that
    comparing against it once produced a wrong conclusion. Rebuild it before using it as a reference.
