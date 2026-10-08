@@ -325,44 +325,14 @@ public:
             m_assembler.rldicl(dest, dest, 0, 32);
     }
 
-    // move — load a 64-bit pointer immediate. Always emits the
-    // 5-instruction full sequence; small-pointer optimization can be
-    // added when MacroAssembler is integrated and we can profile.
-    //
-    //   lis  dest, bits[48:63]              (sign-extends into upper 48)
-    //   ori  dest, dest, bits[32:47]         (set bits[15:0] of dest)
-    //   sldi dest, dest, 32                  (shift up; upper 32 = old low 32)
-    //   oris dest, dest, bits[16:31]         (set bits[31:16] of low half)
-    //   ori  dest, dest, bits[0:15]          (set bits[15:0] of low half)
-    //
-    // Trace for v = 0x123456789ABCDEF0:
-    //   after lis(0x1234)         dest = 0x0000000012340000
-    //   after ori(_, 0x5678)      dest = 0x0000000012345678
-    //   after sldi 32             dest = 0x1234567800000000
-    //   after oris(_, 0x9ABC)     dest = 0x123456789ABC0000
-    //   after ori(_, 0xDEF0)      dest = 0x123456789ABCDEF0  ✓
-    //
-    // The lis sign-extension is handled correctly: for high pointers
-    // with bit 63 set, the lis-loaded sign extension contributes the
-    // intended top bits before the sldi shifts the value into place.
+    // move — load a 64-bit pointer immediate, in as few instructions as
+    // moveImmToScratch can manage (a user-space pointer below 2^47 takes four:
+    // li, sldi, oris, ori). Nothing patches this sequence in place; patchable
+    // pointers go through moveWithPatch, which keeps the fixed 5-instruction
+    // li64 that repatchPointer rewrites.
     void move(TrustedImmPtr imm, RegisterID dest)
     {
-        uintptr_t v = reinterpret_cast<uintptr_t>(imm.m_value);
-
-        // Cast through unsigned types first to avoid implementation-defined
-        // behavior of narrowing a wider signed value; the final
-        // static_cast<int16_t>(uint16_t) is well-defined on all 2's-complement
-        // platforms (and standardized in C++20).
-        int16_t  hiHi16 = static_cast<int16_t>(static_cast<uint16_t>(v >> 48));
-        uint16_t hiLo16 = static_cast<uint16_t>(v >> 32);
-        uint16_t loHi16 = static_cast<uint16_t>(v >> 16);
-        uint16_t lo16   = static_cast<uint16_t>(v);
-
-        m_assembler.lis(dest, hiHi16);
-        m_assembler.ori(dest, dest, hiLo16);
-        m_assembler.sldi(dest, dest, 32);
-        m_assembler.oris(dest, dest, loHi16);
-        m_assembler.ori(dest, dest, lo16);
+        moveImmToScratch(static_cast<int64_t>(reinterpret_cast<uintptr_t>(imm.m_value)), dest);
     }
 
     // ===================================================================
@@ -654,22 +624,36 @@ public:
         m_assembler.rldicl(reg, reg, 0, 32);   // clrldi reg, reg, 32
     }
 
+    // Materialise a 64-bit immediate in 1 to 5 instructions:
+    //   int16:  li                                   (addi rt,0,si sign-extends)
+    //   int32:  lis [; ori]                          (lis sign-extends)
+    //   other:  <upper 32 bits as an int32, as above> ; sldi 32 [; oris] [; ori]
+    // The upper word only has to be right in bits 0-31 before the sldi, which
+    // shifts out whatever sign extension li/lis put above it; oris/ori then
+    // fill the zeroed low word and are skipped when their halfword is 0.
+    // E.g. 0x00007fff12345678 = li 0x7fff; sldi 32; oris 0x1234; ori 0x5678
+    // and 0xfffe000000000000 = lis 0xfffe; sldi 32.
     void moveImmToScratch(int64_t value, RegisterID scratch)
     {
-        if (isInt16(value)) {
-            m_assembler.addi(scratch, PPC64Registers::r0, int16_t(value));
-            return;
-        }
+        auto moveInt32 = [&](int32_t v) {
+            if (isInt16(v)) {
+                m_assembler.addi(scratch, PPC64Registers::r0, int16_t(v));
+                return;
+            }
+            m_assembler.lis(scratch, int16_t(uint16_t(uint32_t(v) >> 16)));
+            if (uint16_t(v))
+                m_assembler.ori(scratch, scratch, uint16_t(v));
+        };
         if (value >= INT32_MIN && value <= INT32_MAX) {
-            m_assembler.lis(scratch, int16_t(uint16_t(uint64_t(value) >> 16)));
-            m_assembler.ori(scratch, scratch, uint16_t(value));
+            moveInt32(static_cast<int32_t>(value));
             return;
         }
-        m_assembler.lis(scratch, int16_t(uint16_t(uint64_t(value) >> 48)));
-        m_assembler.ori(scratch, scratch, uint16_t(uint64_t(value) >> 32));
-        m_assembler.rldicr(scratch, scratch, 32, 31);
-        m_assembler.oris(scratch, scratch, uint16_t(uint64_t(value) >> 16));
-        m_assembler.ori(scratch, scratch, uint16_t(value));
+        moveInt32(static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(value) >> 32)));
+        m_assembler.sldi(scratch, scratch, 32);
+        if (uint16_t(uint64_t(value) >> 16))
+            m_assembler.oris(scratch, scratch, uint16_t(uint64_t(value) >> 16));
+        if (uint16_t(value))
+            m_assembler.ori(scratch, scratch, uint16_t(value));
     }
 
     // Fixed-width 5-instruction li64 (never optimized), so the sequence can be
