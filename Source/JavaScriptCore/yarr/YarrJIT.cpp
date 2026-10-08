@@ -7691,7 +7691,7 @@ void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSiz
 }
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
-#if !(CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
+#if !(CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE))
 #error "No support for inlined JIT'ing of RegExp.test for this CPU / OS combination."
 #endif
 
