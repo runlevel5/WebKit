@@ -1533,7 +1533,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.storePtr(imm, frameAddress().withOffset(frameLocation * sizeof(void*)));
     }
 
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     void storeToFrame(MacroAssembler::TrustedImmPtr imm, unsigned frameLocation)
     {
         m_jit.storePtr(imm, frameAddress().withOffset(frameLocation * sizeof(void*)));
