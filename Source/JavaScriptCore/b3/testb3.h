@@ -263,12 +263,38 @@ struct ArgumentTweaker<float> {
 template <typename T>
 using TweakedArgument = typename ArgumentTweaker<T>::Result;
 
+#if CPU(PPC64LE)
+// On PPC64LE, r29/r30 are ELFv2 callee-saves that the JIT uses as scratch
+// (GPRInfo::nonPreservedNonArgumentGPR0/1): Air never allocates them, but a CCall
+// loads its callee into r29 and patchpoints may clobber either one without saving
+// it. Production code only enters JIT code through the VM entry, which saves them
+// for its C caller; this harness calls the code directly, so do the same here.
+// The asm after the call makes this frame save and restore both registers and
+// keeps the call from becoming a tail call.
+template<typename T, typename Function, typename... Arguments>
+NEVER_INLINE T callPreservingJITScratchRegisters(Function function, Arguments... arguments)
+{
+    if constexpr (std::is_void_v<T>) {
+        function(arguments...);
+        asm volatile("" ::: "r29", "r30", "memory");
+    } else {
+        T result = function(arguments...);
+        asm volatile("" ::: "r29", "r30", "memory");
+        return result;
+    }
+}
+#endif
+
 template<typename T, typename... Arguments>
 T invoke(CodePtr<JITCompilationPtrTag> ptr, Arguments... arguments)
 {
     void* executableAddress = untagCFunctionPtr<JITCompilationPtrTag>(ptr.taggedPtr());
     T (SYSV_ABI *function)(TweakedArgument<Arguments>...) = std::bit_cast<T(SYSV_ABI *)(TweakedArgument<Arguments>...)>(executableAddress);
+#if CPU(PPC64LE)
+    return callPreservingJITScratchRegisters<T>(function, ArgumentTweaker<Arguments>::tweak(arguments)...);
+#else
     return function(ArgumentTweaker<Arguments>::tweak(arguments)...);
+#endif
 }
 
 template<typename T, typename... Arguments>
