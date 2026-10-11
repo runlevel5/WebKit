@@ -819,9 +819,9 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    are not later repatched.
 3. ~~**Signal-based VM traps.**~~ *Done 2026-10-09 (240a9558eb0c) — see "Status — signal-based VM
    traps".* `ENABLE_SIGNAL_BASED_VM_TRAPS` covered x86_64, ARM64 and RISCV64 only, so PPC64 polled.
-4. **Build and run testmasm, testb3 and testair.** They are not targets in the JSCOnly configuration
-   used here, so the backend (including the new branch-compaction linker and the 1–5 instruction
-   immediate sequences) has only been exercised through jsc.
+4. ~~**Build and run testmasm, testb3 and testair.**~~ *Done 2026-10-12 — see "Status — backend test
+   binaries".* They are not targets in the JSCOnly configuration used here, so the backend had only
+   been exercised through jsc. All three now pass in full on POWER9.
 5. **Debug (`ASSERT_ENABLED`) build.** Every gate so far ran on Release; assertion-only paths are
    unexercised.
 6. **Address-sanitized + UBSAN builds pass.**
@@ -873,6 +873,47 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — backend test binaries (Phase 7 item 4), 2026-10-12
+
+- **Build.** `WebKitBuild/DEV` on the box: the IPINT options plus `-DDEVELOPER_MODE=ON
+  -DDEVELOPER_MODE_FATAL_WARNINGS=OFF` (`TMPDIR=/home/tle/tmp ninja -C WebKitBuild/DEV -j16 testmasm
+  testb3 testair testapi`). What DEVELOPER_MODE changes for JSCOnly: the test targets (testapi,
+  testRegExp, testmasm, testb3, testair, testdfg, testwasmdebugger) and PerformanceTests; `-Werror`
+  (turned off: GCC 16 warnings are not this work); `-fno-omit-frame-pointer`; `-fdebug-types-section`;
+  ld.lld instead of ld.bfd (`USE_LD_LLD=ON`); compile_commands.json and CLANGD_AUTO_SETUP.
+  `cmakeconfig.h` is byte-identical to IPINT's: still Release, `NDEBUG`, no assertions. Run with
+  `JSC_useJIT=1`; `WTF_numberOfProcessorCores=16` limits the worker threads.
+- **Harness.** A failing CHECK aborts the whole binary, so `power9:/home/tle/drive.sh` runs one
+  process per test function (a substring filter forces one worker) and records each exit status;
+  lists in `power9:/home/tle/bt/{masm.names,air.list,b3.names}` (testb3 `-list` gives 212,760 names,
+  940 functions).
+- **Before → after (POWER9).** testmasm 87/87 → 372/372 (285 tests newly run: generic tests had
+  been gated to x86_64/ARM64, some with an empty body that "passed"). testair 4 of 97 functions
+  failing → 234/234 (78 functions × 3 opt levels; 19 x86/ARM64-only). testb3 35 of 940 functions
+  failing → 212,760/212,760 in a full parallel run (12.6 s).
+- **Backend bugs fixed** (all production-unreachable today, which is why jsc never found them):
+  - B3 CCall stack arguments ignored the ELFv2 position-based parameter save area, and FP args 9–13
+    went to memory instead of f9–f13 (b641bfee10c8). No JIT operation takes more than 6 arguments.
+    The same position rule is **not** applied in CCallHelpers' poke path (stack args at sp+0); no
+    operation reaches it.
+  - No PPC64 Air forms or MacroAssembler ops for B3 fenced Load/Store (LoadAcq*/StoreRel*) —
+    aborted in Inst::generate (b18a36ddd0aa). sync; ld; lwsync / lwsync; st, RCsc like the LL/SC.
+  - moveConditionally32(…, TrustedImm32 right, TrustedImm32 thenImm, …) materialised thenImm in r11
+    and then a wide `right` over it (22aa1f73e5ae). DFG/BBQ callers happen to be immune.
+  - B3 Depend asserted ARM64 (a93fa9bbea2d); value-producing AtomicWeakCAS used an Xor32 immediate
+    form PPC64 lacks (8fc97f132688).
+- **Test-side changes** (each commit says why): r29/r30 preserved around directly-called JIT code
+  (the port's JIT-scratch callee-saves; the VM entry does this in production) (5c8ebd6e4f9e);
+  disassembly checks skipped without a disassembler (03ce535a746d); testair PPC64 arm /
+  disassembler gate / invalid-FPImm32 skip (4973aac4f596); testInt32BImmToFloatBitwiseCast reads a
+  Double as a float (71a2a6e4d0e1); testmasm gates (3f86d33b1db2).
+- **testapi.** All C-API tests pass ("C-API tests in C++ had 0 failures"); testCompareAndSwap then
+  hung: a plain load in the test's CAS loop let GCC reuse a stale value after a failed relaxed
+  `lbarx/stbcx.` CAS (test UB, not JIT). With an atomic load there (11a05f9c827f) testapi passes in full, exit 0.
+- **Gates** (IPINT, all backend commits together): stress 80,818 / 0, wasm.yaml 17,218 / 0.
+- **Not verified:** POWER8; testb3's lowering-shape (disassembly) checks on PPC64 — there is no PPC64
+  disassembler; testdfg, testRegExp, testwasmdebugger not run; Debug/ASSERT build of the binaries.
 
 ### Status — jump islands (Phase 7 item 10), 2026-10-09
 
