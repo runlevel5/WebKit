@@ -3285,6 +3285,12 @@ void testInt32BArgToFloatBitwiseCast(int32_t value)
 
 void testInt32BImmToFloatBitwiseCast(int32_t value)
 {
+    // The Const64 makes this a BitwiseCast to Double whose result is read back as
+    // a float, which only works where a float is the low half of a double
+    // register (x86_64, ARM64). A PPC64LE FPR holds a float in double format.
+    if (isPPC64LE())
+        return;
+
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     Value* argument = root->appendNew<Const64Value>(proc, Origin(), value);
