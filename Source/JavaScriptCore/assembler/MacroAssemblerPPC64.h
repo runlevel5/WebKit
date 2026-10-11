@@ -3910,9 +3910,16 @@ public:
     }
     void moveConditionally32(RelationalCondition cond, RegisterID left, TrustedImm32 right, TrustedImm32 thenImm, RegisterID elseCase, RegisterID dest)
     {
-        // dest = (cond) ? thenImm : elseCase
-        moveImmToScratch(int64_t(thenImm.m_value), dataTempRegister);
-        moveConditionallyImpl(branchBitsFor(cond), dataTempRegister, elseCase, dest, [&] { emitCompare32(cond, left, right); });
+        // dest = (cond) ? thenImm : elseCase. Compare first: a `right` that does not
+        // fit the compare's 16-bit immediate is materialised in dataTempRegister,
+        // which would overwrite a thenImm materialised there before it.
+        // moveImmToScratch's li/lis/ori/sldi/oris leave CR0 alone, so the compare
+        // result survives.
+        ASSERT(elseCase != dataTempRegister);
+        moveConditionallyImpl(branchBitsFor(cond), dataTempRegister, elseCase, dest, [&] {
+            emitCompare32(cond, left, right);
+            moveImmToScratch(int64_t(thenImm.m_value), dataTempRegister);
+        });
     }
     void moveConditionally64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID src, RegisterID dest)
     {
