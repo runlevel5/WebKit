@@ -328,6 +328,14 @@ inline void lowerToAirForTesting(Procedure& proc)
 template<typename Func>
 void checkDisassembly(Compilation& compilation, const Func& func, const CString& failText)
 {
+#if !ENABLE(DISASSEMBLER)
+    // Without a disassembler (PPC64LE has none) there is no text to match the
+    // expected instruction names against; only the tests' results are checked.
+    UNUSED_PARAM(compilation);
+    UNUSED_PARAM(func);
+    UNUSED_PARAM(failText);
+    return;
+#endif
     CString disassembly = compilation.disassembly();
     if (func(disassembly.data()))
         return;
