@@ -141,7 +141,7 @@ static UNUSED_FUNCTION Vector<int8_t> int8Operands()
     };
 }
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 static Vector<int64_t> int64Operands()
 {
     return Vector<int64_t> {
@@ -441,7 +441,7 @@ static void testBranch32()
     }
 }
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 static void testBranch64()
 {
     auto compare = [](CCallHelpers::RelationalCondition cond, int64_t v1, int64_t v2) -> int {
@@ -985,6 +985,9 @@ void testShiftAndAdd()
     }
 }
 
+#endif // CPU(X86_64) || CPU(ARM64)
+
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 void testStore64Imm64AddressPointer()
 {
     auto doTest = [] (int64_t value) {
@@ -1009,7 +1012,7 @@ void testStore64Imm64AddressPointer()
     doTest(0xAAAA432198765555);
 }
 
-#endif // CPU(X86_64) || CPU(ARM64)
+#endif // CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 
 void testCompareDouble(MacroAssembler::DoubleCondition condition)
 {
@@ -1259,6 +1262,9 @@ void testMultiplyAddZeroExtend32()
     }
 }
 
+#endif // CPU(ARM64)
+
+#if CPU(ARM64) || CPU(PPC64LE)
 void testSub32Args()
 {
     for (auto value : int32Operands()) {
@@ -1364,6 +1370,9 @@ void testSub64ArgImm64()
     }
 }
 
+#endif // CPU(ARM64) || CPU(PPC64LE)
+
+#if CPU(ARM64)
 void testMultiplySubSignExtend32()
 {
     // d = a - SExt32(n) * SExt32(m)
@@ -3152,7 +3161,7 @@ void testZeroExtend48ToWord()
 }
 #endif
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
 void testCompareFloat(MacroAssembler::DoubleCondition condition)
 {
     float arg1 = 0;
@@ -3195,7 +3204,7 @@ void testCompareFloat(MacroAssembler::DoubleCondition condition)
 }
 #endif // CPU(X86_64) || CPU(ARM64)
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
 
 template<typename T, typename SelectionType>
 void testMoveConditionallyFloatingPoint(MacroAssembler::DoubleCondition condition, const MacroAssemblerCodeRef<JSEntryPtrTag>& testCode, T& arg1, T& arg2, const Vector<T> operands, SelectionType selectionA, SelectionType selectionB)
@@ -4480,7 +4489,7 @@ const SignedLoad16to32Scenario signedLoad16to32Scenarios[] = {
 // void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
 void testLoadAcq8SignedExtendTo32_Address_RegisterID()
 {
-#if CPU(ARM64) || CPU(ARM)
+#if CPU(ARM64) || CPU(ARM) || CPU(PPC64LE)
     testLoadExtend_Address_RegisterID<int8_t, int32_t>(signedLoad8to32Scenarios, ARRAY_SIZE(signedLoad8to32Scenarios),
         [] (CCallHelpers& jit, int offset) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;
@@ -4525,7 +4534,7 @@ void testLoad8SignedExtendTo32_BaseIndex_RegisterID()
 // void load8SignedExtendTo32(const void* address, RegisterID dest)
 void testLoad8SignedExtendTo32_voidp_RegisterID()
 {
-#if CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     testLoadExtend_voidp_RegisterID<int32_t>(signedLoad8to32Scenarios, ARRAY_SIZE(signedLoad8to32Scenarios),
         [] (CCallHelpers& jit, const void* src) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;
@@ -4540,7 +4549,7 @@ void testLoad8SignedExtendTo32_voidp_RegisterID()
 // void loadAcq16SignedExtendTo32(Address address, RegisterID dest)
 void testLoadAcq16SignedExtendTo32_Address_RegisterID()
 {
-#if CPU(ARM64) || CPU(ARM)
+#if CPU(ARM64) || CPU(ARM) || CPU(PPC64LE)
     testLoadExtend_Address_RegisterID<int16_t, int32_t>(signedLoad16to32Scenarios, ARRAY_SIZE(signedLoad16to32Scenarios),
         [] (CCallHelpers& jit, int offset) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;
@@ -4585,7 +4594,7 @@ void testLoad16SignedExtendTo32_BaseIndex_RegisterID()
 // void load16SignedExtendTo32(const void* address, RegisterID dest)
 void testLoad16SignedExtendTo32_voidp_RegisterID()
 {
-#if CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     testLoadExtend_voidp_RegisterID<int32_t>(signedLoad16to32Scenarios, ARRAY_SIZE(signedLoad16to32Scenarios),
         [] (CCallHelpers& jit, const void* src) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;
@@ -4829,7 +4838,7 @@ void testLoad32SignedExtendTo64_voidp_RegisterID()
 
 #endif // CPU(ADDRESS64)
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(PPC64LE)
 void testLoadStorePair64Int64()
 {
     constexpr uint64_t initialValue = 0x5555aaaabbbb8800ull;
@@ -5069,6 +5078,9 @@ void testLoadStorePair64Int64()
     CHECK_EQ(buffer[9], initialValue + 9);
 }
 
+#endif // CPU(ARM64) || CPU(PPC64LE)
+
+#if CPU(ARM64)
 void testLoadStorePair64Double()
 {
     constexpr double initialValue = 10000.275;
@@ -5958,7 +5970,7 @@ void testNegateFloat()
 
 void testByteSwap()
 {
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     auto byteSwap16 = compile([] (CCallHelpers& jit) {
         emitFunctionPrologue(jit);
         jit.move(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
@@ -5993,7 +6005,7 @@ void testByteSwap()
 
 void testMoveDoubleConditionally32()
 {
-#if CPU(X86_64) | CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     double arg1 = 0;
     double arg2 = 0;
     const double zero = -0;
@@ -6027,7 +6039,7 @@ void testMoveDoubleConditionally32()
 
 void testMoveDoubleConditionally64()
 {
-#if CPU(X86_64) | CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     double arg1 = 0;
     double arg2 = 0;
     const double zero = -0;
@@ -6059,7 +6071,7 @@ void testMoveDoubleConditionally64()
 #endif
 }
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 template<typename SelectionType>
 static SelectionType NODELETE expectedResultForRelationalCondition(MacroAssembler::RelationalCondition cond, int32_t a, int32_t b, SelectionType thenValue, SelectionType elseValue)
 {
@@ -6162,6 +6174,9 @@ void testMoveConditionally32WithImmThenCase(MacroAssembler::RelationalCondition 
 }
 
 // Tests moveConditionallyTest32(cond, left, regMask, immThenCase, regElseCase, dest)
+#endif // CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
+
+#if CPU(X86_64) || CPU(ARM64)
 void testMoveConditionallyTest32WithImmThenCaseRegMask(MacroAssembler::ResultCondition cond)
 {
     const int32_t thenValue = 42;
@@ -6285,7 +6300,7 @@ void testMoveConditionallyTest32WithImmThenCaseImmMask(MacroAssembler::ResultCon
 
 void testLoadBaseIndex()
 {
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     // load64
     {
         auto test = compile([=](CCallHelpers& jit) {
@@ -6478,7 +6493,7 @@ void testLoadBaseIndex()
 
 void testStoreImmediateAddress()
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     // store64
     for (auto imm : int64Operands()) {
         {
@@ -6587,7 +6602,7 @@ void testStoreImmediateAddress()
 
 void testStoreBaseIndex()
 {
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
     // store64
     {
         auto test = compile([=](CCallHelpers& jit) {
@@ -6740,7 +6755,7 @@ void testStoreBaseIndex()
 
 void testStoreImmediateBaseIndex()
 {
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     // store64
     for (auto imm : int64Operands()) {
         {
@@ -6915,7 +6930,7 @@ static void testBranchIfNotType()
     CHECK_EQ(invoke<bool>(isNotType, &cell), true);
 }
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
 static void testBranchConvertDoubleToInt52()
 {
     auto toInt52 = compile([](CCallHelpers& jit) {
@@ -7172,7 +7187,7 @@ static void testAtomicAndEmitsCode()
 }
 #endif
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
 static void testMove32ToFloatMovi()
 {
     // Test movi-encodable patterns
@@ -8495,15 +8510,18 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testBranchTestBit64AddrImm());
 #endif
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     RUN(testBranch64());
+    RUN(testStore64Imm64AddressPointer());
+#endif
+
+#if CPU(X86_64) || CPU(ARM64)
     RUN(testClearBit64());
     RUN(testClearBits64WithMask());
     RUN(testClearBits64WithMaskTernary());
     RUN(testCountTrailingZeros64());
     RUN(testCountTrailingZeros64WithoutNullCheck());
     RUN(testShiftAndAdd());
-    RUN(testStore64Imm64AddressPointer());
 #endif
 
     RUN(testLoadAcq8SignedExtendTo32_Address_RegisterID());
@@ -8535,18 +8553,24 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testLoad32SignedExtendTo64_voidp_RegisterID());
 #endif
 
-#if CPU(ARM64)
-    RUN(testLoadStorePair64Int64());
-    RUN(testLoadStorePair64Double());
-    RUN(testMultiplySignExtend32());
-    RUN(testMultiplyZeroExtend32());
-
+#if CPU(ARM64) || CPU(PPC64LE)
     RUN(testSub32Args());
     RUN(testSub32Imm());
     RUN(testSub64Imm32());
     RUN(testSub64ArgImm32());
     RUN(testSub64Imm64());
     RUN(testSub64ArgImm64());
+
+    RUN(testLoadStorePair64Int64());
+#endif
+
+#if CPU(ARM64)
+    RUN(testLoadStorePair64Double());
+#endif
+
+#if CPU(ARM64)
+    RUN(testMultiplySignExtend32());
+    RUN(testMultiplyZeroExtend32());
 
     RUN(testMultiplyAddSignExtend32());
     RUN(testMultiplyAddZeroExtend32());
@@ -8635,11 +8659,11 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     }
 #endif
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     FOR_EACH_DOUBLE_CONDITION_RUN(testCompareFloat);
 #endif
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     // Comparing 2 different registers.
     FOR_EACH_DOUBLE_CONDITION_RUN(testMoveConditionallyDouble2);
     FOR_EACH_DOUBLE_CONDITION_RUN(testMoveConditionallyDouble3);
@@ -8665,10 +8689,12 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     FOR_EACH_DOUBLE_CONDITION_RUN(testMoveDoubleConditionallyFloatSameArg);
 #endif
 
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     // Tests for moveConditionally32 and moveConditionallyTest32 with immediate thenCase.
     FOR_EACH_RELATIONAL_CONDITION_RUN(testMoveConditionally32WithImmThenCase);
+#endif
 
+#if CPU(X86_64) || CPU(ARM64)
     // For test32 variants, only use Zero and NonZero (Overflow is not valid for TEST).
     RUN(testMoveConditionallyTest32WithImmThenCaseRegMask(MacroAssembler::Zero));
     RUN(testMoveConditionallyTest32WithImmThenCaseRegMask(MacroAssembler::NonZero));
@@ -8676,7 +8702,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testMoveConditionallyTest32WithImmThenCaseImmMask(MacroAssembler::NonZero));
 #endif
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
     RUN(testSignExtend8To32());
     RUN(testSignExtend16To32());
     RUN(testSignExtend8To64());
@@ -8701,7 +8727,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     RUN(testBranchIfType());
     RUN(testBranchIfNotType());
-#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
     RUN(testBranchConvertDoubleToInt52());
 #endif
 
@@ -8717,7 +8743,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     RUN(testNegateFloat());
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     RUN(testMove32ToFloatMovi());
     RUN(testMove64ToDoubleMovi());
     RUN(testMove64ToDoubleRepeated32BitPatternBug());
