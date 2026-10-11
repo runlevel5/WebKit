@@ -3607,8 +3607,15 @@ private:
                 successBlock->append(Air::Jump, m_value);
                 successBlock->setSuccessors(doneBlock);
             } else {
-                if (!invert)
-                    storeBlock->append(Xor32, m_value, Arg::bitImm(1), boolResultTmp, boolResultTmp);
+                if (!invert) {
+                    if (isValidForm(Xor32, Arg::BitImm, Arg::Tmp, Arg::Tmp))
+                        storeBlock->append(Xor32, m_value, Arg::bitImm(1), boolResultTmp, boolResultTmp);
+                    else {
+                        Tmp one = m_code.newTmp(GP);
+                        storeBlock->append(Move, m_value, Arg::imm(1), one);
+                        storeBlock->append(Xor32, m_value, one, boolResultTmp, boolResultTmp);
+                    }
+                }
                 
                 storeBlock->append(Air::Jump, m_value);
                 storeBlock->setSuccessors(doneBlock);
