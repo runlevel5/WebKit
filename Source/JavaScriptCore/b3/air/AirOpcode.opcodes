@@ -896,7 +896,7 @@ Load8 U:G:8, ZD:G:32
     Addr, Tmp
     Index, Tmp
 
-arm: LoadAcq8 U:G:8, ZD:G:32 /effects
+arm ppc64le: LoadAcq8 U:G:8, ZD:G:32 /effects
     SimpleAddr, Tmp
 
 Store8 U:G:8, D:G:8
@@ -907,28 +907,28 @@ Store8 U:G:8, D:G:8
     arm64: ZeroReg, Addr
     arm64: ZeroReg, Index
 
-arm: StoreRel8 U:G:8, D:G:8 /effects
+arm ppc64le: StoreRel8 U:G:8, D:G:8 /effects
     Tmp, SimpleAddr
 
 Load8SignedExtendTo32 U:G:8, ZD:G:32
     Addr, Tmp
     Index, Tmp
 
-arm: LoadAcq8SignedExtendTo32 U:G:8, ZD:G:32 /effects
+arm ppc64le: LoadAcq8SignedExtendTo32 U:G:8, ZD:G:32 /effects
     SimpleAddr, Tmp
 
 Load16 U:G:16, ZD:G:32
     Addr, Tmp
     Index, Tmp
 
-arm: LoadAcq16 U:G:16, ZD:G:32 /effects
+arm ppc64le: LoadAcq16 U:G:16, ZD:G:32 /effects
     SimpleAddr, Tmp
 
 Load16SignedExtendTo32 U:G:16, ZD:G:32
     Addr, Tmp
     Index, Tmp
 
-arm: LoadAcq16SignedExtendTo32 U:G:16, ZD:G:32 /effects
+arm ppc64le: LoadAcq16SignedExtendTo32 U:G:16, ZD:G:32 /effects
     SimpleAddr, Tmp
 
 Store16 U:G:16, D:G:16
@@ -939,19 +939,19 @@ Store16 U:G:16, D:G:16
     arm64: ZeroReg, Addr
     arm64: ZeroReg, Index
 
-arm: StoreRel16 U:G:16, D:G:16 /effects
+arm ppc64le: StoreRel16 U:G:16, D:G:16 /effects
     Tmp, SimpleAddr
 
-arm: LoadAcq32 U:G:32, ZD:G:32 /effects
+arm ppc64le: LoadAcq32 U:G:32, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-arm: StoreRel32 U:G:32, ZD:G:32 /effects
+arm ppc64le: StoreRel32 U:G:32, ZD:G:32 /effects
     Tmp, SimpleAddr
 
-arm64: LoadAcq64 U:G:64, ZD:G:64 /effects
+arm64 ppc64le: LoadAcq64 U:G:64, ZD:G:64 /effects
     SimpleAddr, Tmp
 
-arm64: StoreRel64 U:G:64, ZD:G:64 /effects
+arm64 ppc64le: StoreRel64 U:G:64, ZD:G:64 /effects
     Tmp, SimpleAddr
 
 x86: Xchg8 UD:G:8, UD:G:8 /effects
