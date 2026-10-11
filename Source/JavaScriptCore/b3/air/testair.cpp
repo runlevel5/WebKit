@@ -2362,7 +2362,7 @@ void testElideMoveThenRealloc()
         if (isARM64() || isARM_THUMB2()) {
             negOne = code.newTmp(B3::GP);
             root->append(Move, nullptr, Arg::bigImm(-1), negOne);
-        } else if (isX86())
+        } else if (isX86() || isPPC64LE())
             negOne = Arg::bitImm(-1);
         else
             RELEASE_ASSERT_NOT_REACHED();
@@ -2873,6 +2873,12 @@ void testMoveFloatConstantSpill()
     // 1.0f = 0x3f800000 as a 32-bit float
     // If misinterpreted as a 64-bit double, it's ~4.6e-315
     uint32_t floatBits = 0x3f800000U;
+
+    // MoveFloat $imm, %tmp is only a valid Air form for an immediate the target
+    // can materialise directly (Arg::isValidFPImm32Form); on PPC64LE that is
+    // only zero, which cannot tell a float constant from a double one.
+    if (!Arg::isValidFPImm32Form(floatBits))
+        return;
 
     // Create many float constants to force spilling
     Vector<Tmp> tmps;
@@ -3470,7 +3476,10 @@ void run(const char* filter)
     RUN(testLea64());
 #endif
 
+#if ENABLE(DISASSEMBLER)
+    // Counts register-to-register moves in the disassembly.
     RUN(testElideSimpleMove());
+#endif
     RUN(testElideHandlesEarlyClobber());
     RUN(testElideMoveThenRealloc());
 
