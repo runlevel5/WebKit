@@ -5103,6 +5103,24 @@ public:
     void atomicXchg64(RegisterID reg, Address address)   { atomicXchg(64, reg, address); }
     void atomicXchg64(RegisterID reg, BaseIndex address) { atomicXchg(64, reg, address); }
 
+    // --- Air LoadAcq/StoreRel (B3 Load/Store with a fence range) --------
+    // Stand-ins for ARM64's ldar/stlr, with the same strength as the LL/SC
+    // pair below and for the same reason: RCsc, so a store-release followed by
+    // a load-acquire of another location is not reordered. The leading sync
+    // orders the load after everything earlier (including a store-release);
+    // the lwsync after it makes it an acquire; the lwsync before the store
+    // makes it a release.
+    void loadAcq8(Address address, RegisterID dest) { m_assembler.sync(); load8(address, dest); m_assembler.lwsync(); }
+    void loadAcq8SignedExtendTo32(Address address, RegisterID dest) { m_assembler.sync(); load8SignedExtendTo32(address, dest); m_assembler.lwsync(); }
+    void loadAcq16(Address address, RegisterID dest) { m_assembler.sync(); load16(address, dest); m_assembler.lwsync(); }
+    void loadAcq16SignedExtendTo32(Address address, RegisterID dest) { m_assembler.sync(); load16SignedExtendTo32(address, dest); m_assembler.lwsync(); }
+    void loadAcq32(Address address, RegisterID dest) { m_assembler.sync(); load32(address, dest); m_assembler.lwsync(); }
+    void loadAcq64(Address address, RegisterID dest) { m_assembler.sync(); load64(address, dest); m_assembler.lwsync(); }
+    void storeRel8(RegisterID src, Address address) { m_assembler.lwsync(); store8(src, address); }
+    void storeRel16(RegisterID src, Address address) { m_assembler.lwsync(); store16(src, address); }
+    void storeRel32(RegisterID src, Address address) { m_assembler.lwsync(); store32(src, address); }
+    void storeRel64(RegisterID src, Address address) { m_assembler.lwsync(); store64(src, address); }
+
     // --- Air LoadLink/StoreCond (B3 atomics LL/SC loops) ----------------
     // The Air forms use SimpleAddr (a bare register address, offset 0).
     // storeCond* results follow the ARM64 stxr convention the lowering
