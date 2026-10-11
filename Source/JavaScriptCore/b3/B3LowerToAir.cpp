@@ -4555,7 +4555,7 @@ private:
         }
             
         case Depend: {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(isARM64() || isPPC64LE());
             appendUnOp<Depend32, Depend64>(m_value->child(0));
             return;
         }
