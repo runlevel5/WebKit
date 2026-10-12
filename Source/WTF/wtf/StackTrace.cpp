@@ -41,6 +41,10 @@
 #include <wtf/NeverDestroyed.h>
 #endif
 
+#if CPU(PPC64LE) && OS(LINUX)
+// The walk below reads other functions' stack frames, which ASan considers out of bounds.
+SUPPRESS_ASAN
+#endif
 void WTFGetBacktrace(void** stack, int* size)
 {
 #if CPU(PPC64LE) && OS(LINUX)
