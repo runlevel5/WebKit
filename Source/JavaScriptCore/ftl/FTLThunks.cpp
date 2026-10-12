@@ -154,7 +154,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> lazySlowPathGenerationThunkGenerator(VM& v
 static void registerClobberCheck(AssemblyHelpers& jit, RegisterSet dontClobber)
 {
     ASSERT(Options::clobberAllRegsInFTLICSlowPath());
-    RegisterSet clobber = RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters());
+    // Clobber what the C call itself may clobber. SlowPathCallContext does not save registers the C
+    // ABI preserves, and on some CPUs (PPC64: r24-r31, f22-f31) the C ABI preserves registers that the
+    // VM's callee-save convention does not, so registersToSaveForJSCall would scribble on live values.
+    RegisterSet clobber = RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters());
     clobber.exclude(dontClobber);
     auto wholeClobberedRegisters = clobber.normalizeWidths();
     
