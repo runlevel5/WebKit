@@ -48,11 +48,14 @@ static constexpr size_t maxFrameExtentForSlowPathCall = 0;
 
 #elif CPU(PPC64LE)
 // Args are in registers, but an ELFv2 callee writes its LR/CR/TOC saves
-// into the CALLER's linkage area at sp+0..31, and callees taking spilled
-// or variadic arguments may store into the caller-allocated parameter
-// save area above it. 32 (linkage) + 64 (param save) — ELFv2 rev 1.5
-// sec 2.2.2. This is also where JIT C-call sites save/restore r2 (TOC),
-// at the ABI-designated slot sp+24.
+// into the CALLER's linkage area at sp+0..31, and a variadic callee may
+// store its register arguments into the caller-allocated parameter save
+// area above it. 32 (linkage) + 64 (param save for 8 positions) — ELFv2
+// rev 1.5 sec 2.2.2. This is also where JIT C-call sites save/restore r2
+// (TOC), at the ABI-designated slot sp+24. A call that passes anything in
+// memory (an integer argument at position 8 or later, or a 14th double)
+// needs 32 + 8 * (number of arguments) bytes, which this does not cover;
+// CCallHelpers::setupArguments static_asserts that every operation fits.
 static constexpr size_t maxFrameExtentForSlowPathCall = 96;
 
 #elif CPU(ARM)
