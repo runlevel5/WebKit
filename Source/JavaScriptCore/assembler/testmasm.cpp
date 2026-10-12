@@ -331,6 +331,113 @@ void testSimple()
     }), 42);
 }
 
+#if CPU(PPC64LE)
+// A C call through CCallHelpers::setupArguments with more arguments than the
+// argument registers hold, integer and floating point interleaved. ELFv2 puts
+// an argument that is not in a register at sp + 32 + 8 * its position in the
+// whole list, and passes doubles in f1-f13, so this checks the positions of
+// both banks, the FP register count, and a 32-bit immediate in memory.
+// Positions:  0 g0   1 d0   2 g1   3 d1   4 g2   5 d2   6 g3   7 d3   (r3-r10, f1-f4)
+//             8 g4*  9 d4  10 g5* 11 d5  12 g6* 13 d6  14 g7* 15 d7  (f5-f8)
+//            16 g8* 17 d8  18 g9* 19 d9  20 d10 21 d11 22 d12 23 d13* (f9-f13)
+//            24 g10* 25 g11*                       (* = in memory, at 32 + 8 * position)
+// GCC 16 on POWER9 stores the same signature's memory arguments exactly there.
+struct ManyCArguments {
+    int64_t g[12];
+    double d[14];
+};
+static ManyCArguments manyCArgumentsSeen;
+
+static int64_t SYSV_ABI recordManyCArguments(int64_t g0, double d0, int64_t g1, double d1, int32_t g2, double d2, void* g3, double d3,
+    int64_t g4, double d4, int32_t g5, double d5, int64_t g6, double d6, int64_t g7, double d7,
+    int64_t g8, double d8, int64_t g9, double d9, double d10, double d11, double d12, double d13,
+    int64_t g10, int32_t g11)
+{
+    manyCArgumentsSeen = { { g0, g1, g2, std::bit_cast<int64_t>(g3), g4, g5, g6, g7, g8, g9, g10, g11 },
+        { d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13 } };
+    return 0x600dca11;
+}
+
+void testCCallManyMixedArguments()
+{
+    using Op = decltype(recordManyCArguments);
+    // 32-byte linkage area + one doubleword per position, 16-byte aligned.
+    constexpr unsigned argumentAreaBytes = 32 + 8 * 26;
+    static_assert(CCallHelpers::outgoingArgumentAreaBytes<Op>() == argumentAreaBytes);
+    static_assert(!(argumentAreaBytes % 16));
+    constexpr unsigned frameBytes = argumentAreaBytes + 16; // + the saved f14
+
+    static constexpr ManyCArguments expected = {
+        { 0x0102030405060708, -0x1112131415161718, -7, 0x2122232425262728, 0x3132333435363738, -123456,
+            0x4142434445464748, -0x5152535455565758, 0x6162636465666768, 0x7172737475767778, -0x0a0b0c0d0e0f1011, 0x7fffff00 },
+        { 1.5, -2.25, 3.125, 4.0625, -5.5, 6.75, 7.875, -8.5, 9.25, 10.125, -11.0625, 12.5, 13.75, -14.875 }
+    };
+
+    auto fpr = [] (unsigned n) { return static_cast<FPRReg>(PPC64Registers::f0 + n); };
+    // d0-d12 come from f1-f13 permuted (d[i] from f[1 + 5i mod 13]), so the shuffle
+    // has real work and every destination f1-f13 is also some other argument's
+    // source; d13 comes from f14, a callee-save we preserve.
+    auto source = [&] (unsigned i) { return i == 13 ? fpr(14) : fpr(1 + (5 * i) % 13); };
+
+    manyCArgumentsSeen = { };
+    int64_t result = compileAndRun<int64_t>([&] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.subPtr(CCallHelpers::TrustedImm32(frameBytes), MacroAssembler::stackPointerRegister);
+        jit.storeDouble(fpr(14), MacroAssembler::Address(MacroAssembler::stackPointerRegister, argumentAreaBytes));
+        // Garbage in the whole argument area first, so a misplaced store is seen.
+        for (unsigned offset = 0; offset < argumentAreaBytes; offset += 8)
+            jit.store64(CCallHelpers::TrustedImm64(0x5a5a5a5a5a5a5a5a), MacroAssembler::Address(MacroAssembler::stackPointerRegister, offset));
+
+        for (unsigned i = 0; i < 14; ++i)
+            jit.loadDouble(CCallHelpers::TrustedImmPtr(&expected.d[i]), source(i));
+        // GP sources in argument registers that are not their destinations.
+        jit.move(CCallHelpers::TrustedImm64(expected.g[0]), GPRInfo::regT5);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[2]), GPRInfo::regT0);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[4]), GPRInfo::regT2);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[6]), GPRInfo::regT7);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[8]), GPRInfo::regT1);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[9]), GPRInfo::regT4);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[10]), GPRInfo::regT6);
+        jit.move(CCallHelpers::TrustedImm64(expected.g[11]), GPRInfo::regT3);
+
+        jit.setupArgumentsWithReservedArgumentArea<Op, argumentAreaBytes>(
+            GPRInfo::regT5, source(0),
+            CCallHelpers::TrustedImm64(expected.g[1]), source(1),
+            GPRInfo::regT0, source(2),
+            CCallHelpers::TrustedImmPtr(std::bit_cast<void*>(expected.g[3])), source(3),
+            GPRInfo::regT2, source(4),
+            CCallHelpers::TrustedImm32(static_cast<int32_t>(expected.g[5])), source(5),
+            GPRInfo::regT7, source(6),
+            CCallHelpers::TrustedImm64(expected.g[7]), source(7),
+            GPRInfo::regT1, source(8),
+            GPRInfo::regT4, source(9),
+            source(10), source(11), source(12), source(13),
+            GPRInfo::regT6, GPRInfo::regT3);
+        jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(recordManyCArguments)), MacroAssembler::dataTempRegister);
+        jit.call(MacroAssembler::dataTempRegister, OperationPtrTag);
+
+        jit.loadDouble(MacroAssembler::Address(MacroAssembler::stackPointerRegister, argumentAreaBytes), fpr(14));
+        jit.addPtr(CCallHelpers::TrustedImm32(frameBytes), MacroAssembler::stackPointerRegister);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    for (unsigned i = 0; i < 12; ++i) {
+        if (manyCArgumentsSeen.g[i] != expected.g[i])
+            dataLogLn("integer argument g", i, ": expected ", expected.g[i], ", callee saw ", manyCArgumentsSeen.g[i]);
+    }
+    for (unsigned i = 0; i < 14; ++i) {
+        if (std::bit_cast<uint64_t>(manyCArgumentsSeen.d[i]) != std::bit_cast<uint64_t>(expected.d[i]))
+            dataLogLn("double argument d", i, ": expected ", expected.d[i], ", callee saw ", manyCArgumentsSeen.d[i]);
+    }
+    CHECK_EQ(result, 0x600dca11);
+    for (unsigned i = 0; i < 12; ++i)
+        CHECK_EQ(manyCArgumentsSeen.g[i], expected.g[i]);
+    for (unsigned i = 0; i < 14; ++i)
+        CHECK_EQ(std::bit_cast<uint64_t>(manyCArgumentsSeen.d[i]), std::bit_cast<uint64_t>(expected.d[i]));
+}
+#endif // CPU(PPC64LE)
+
 void testGetEffectiveAddress(size_t pointer, ptrdiff_t length, int32_t offset, CCallHelpers::Scale scale)
 {
     CHECK_EQ(compileAndRun<size_t>([=] (CCallHelpers& jit) {
@@ -8442,6 +8549,9 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     };
 
     RUN(testSimple());
+#if CPU(PPC64LE)
+    RUN(testCCallManyMixedArguments());
+#endif
     RUN(testGetEffectiveAddress(0xff00, 42, 8, CCallHelpers::TimesEight));
     RUN(testGetEffectiveAddress(0xff00, -200, -300, CCallHelpers::TimesEight));
     RUN(testBranchTruncateDoubleToInt32(0, 0));
