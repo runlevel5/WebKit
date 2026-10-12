@@ -874,6 +874,37 @@ first, then benchmarking. The dated status blocks below record how each piece la
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
 
+### Status — CCallHelpers stack arguments (ELFv2), 2026-10-12
+
+- **Bug (latent).** `setupArguments`/`callOperation` (Baseline, DFG, thunks, ICs, wasm glue)
+  placed memory arguments the x86/ARM64 way: `calculatePokeOffset` packed them from sp+0
+  (`8*(gp-8) + 8*(fp-8)`), so the first overwrote the back chain; doubles used FPRInfo's 8 JS
+  argument registers, so doubles 9–13 went to memory while the callee read f9–f13;
+  `setupArgument(index, functor)` poked at `8*(index-8)`; a `ConstantMaterializer` argument chose
+  its GPR by integer count, not position. ELFv2: an argument not in a register is at
+  `sp + 32 + 8*position` (position counts both banks); doubles take f1–f13. GCC 16 on the box
+  confirms (12 ints + 14 doubles interleaved: ints at 96(r1)…208(r1), 14th double at 232(r1),
+  240-byte frame). No operation passes anything in memory, so jsc never hit it.
+- **Fix** (2670de9d60c5). Position-based slots, 13 FPRs, ints extended to the doubleword in memory
+  too, and the register-or-memory choice made with `if constexpr` (the runtime `if` instantiated
+  both paths per argument: 14 doubles could not compile and 25 arguments OOM'd GCC at 36 GB).
+- **Reservation.** A call with anything in memory needs `32 + 8*arity` bytes at sp, more than
+  `maxFrameExtentForSlowPathCall` (96 = linkage + 8 positions, which every in-register call fits).
+  Kept at 96, sized for the operations JSC has (as ARMv7's is); `setupArguments` and
+  `setupArgumentsForIndirectCall` now `static_assert` the operation's area fits it, so an operation
+  that would spill fails to compile instead of corrupting the caller's frame.
+  `setupArgumentsWithReservedArgumentArea<Op, bytes>` is for callers that reserve their own.
+- **Test** (6a053d97e600): testmasm `testCCallManyMixedArguments` — 12 int + 14 double args,
+  interleaved, 9 in memory, sources permuted, area pre-filled with garbage; every value checked.
+  Before the fix it did not compile; a 15-arg variant ran and failed (int at position 8 stored
+  over the back chain, 9th double sent to memory while the callee read f9). Passes after.
+- **Gates** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0; DEV testmasm 373/373, testair
+  234/234, testb3 212,760/212,760.
+- **Not verified:** POWER8; a real JIT operation with memory arguments (none exists); variadic C
+  calls through CCallHelpers (none exist); 32-bit *register* (not immediate) arguments are still
+  passed without extension to 64 bits, as on ARM64/x86_64 — the ELFv2 caller-extends rule is only
+  applied to immediates.
+
 ### Status — backend test binaries (Phase 7 item 4), 2026-10-12
 
 - **Build.** `WebKitBuild/DEV` on the box: the IPINT options plus `-DDEVELOPER_MODE=ON
@@ -895,8 +926,8 @@ older blocks are kept for history and their numbers are superseded by the ones a
 - **Backend bugs fixed** (all production-unreachable today, which is why jsc never found them):
   - B3 CCall stack arguments ignored the ELFv2 position-based parameter save area, and FP args 9–13
     went to memory instead of f9–f13 (b641bfee10c8). No JIT operation takes more than 6 arguments.
-    The same position rule is **not** applied in CCallHelpers' poke path (stack args at sp+0); no
-    operation reaches it.
+    CCallHelpers had the same bug (stack args packed from sp+0); fixed 2026-10-12, see "Status —
+    CCallHelpers stack arguments".
   - No PPC64 Air forms or MacroAssembler ops for B3 fenced Load/Store (LoadAcq*/StoreRel*) —
     aborted in Inst::generate (b18a36ddd0aa). sync; ld; lwsync / lwsync; st, RCsc like the LL/SC.
   - moveConditionally32(…, TrustedImm32 right, TrustedImm32 thenImm, …) materialised thenImm in r11
