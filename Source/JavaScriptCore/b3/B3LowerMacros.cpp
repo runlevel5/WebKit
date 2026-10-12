@@ -63,6 +63,7 @@
 #include "JSObject.h"
 #include "JSWebAssemblyArray.h"
 #include "JSWebAssemblyArrayInlines.h"
+#include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyStruct.h"
 #include "LinkBuffer.h"
 #include "MarkedSpace.h"
@@ -1728,6 +1729,14 @@ private:
     UpsilonValue* emitWasmGCSlowPath(BasicBlock* slowPathBlock, BasicBlock* mergeBlock, Value* instance, uint32_t typeIndex,
         SlowFunctionType slowFunction, Wasm::ExceptionType exnType, Value* extraArg = nullptr)
     {
+#if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
+        // Wasm operations find their caller's frame through the instance (DECLARE_WASM_CALL_FRAME), so
+        // store it as OMG's callWasmOperation does. Without this the operation sees whichever frame made
+        // the last wasm operation call, and makes that vm.topCallFrame.
+        slowPathBlock->appendNew<MemoryValue>(m_proc, Store, m_origin,
+            slowPathBlock->appendNew<Value>(m_proc, FramePointer, m_origin), instance,
+            safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTemporaryCallFrame()));
+#endif
         Value* slowFunctionAddress = slowPathBlock->appendNew<ConstPtrValue>(m_proc, m_origin, slowFunction);
         Value* typeIndexValue = slowPathBlock->appendNew<Const32Value>(m_proc, m_origin, typeIndex);
         Value* slowResult;
