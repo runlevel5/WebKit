@@ -29,6 +29,7 @@
 
 #include <wtf/Assertions.h>
 #include <wtf/PrintStream.h>
+#include <wtf/StackBounds.h>
 #include <wtf/StringPrintStream.h>
 
 #if HAVE(DLADDR)
@@ -50,10 +51,13 @@ void WTFGetBacktrace(void** stack, int* size)
     // pointer and SIGSEGV — fatal because captureStackTrace() runs during
     // exception-scope verification and crash logging, turning any such event
     // into a secondary crash. Walk the back-chain ourselves and stop at the
-    // first frame that isn't a strictly-higher, 16-byte-aligned, nearby stack
-    // slot, so we never fault (we simply truncate the trace at JIT frames).
+    // first frame that isn't a strictly-higher, 16-byte-aligned slot inside
+    // this thread's stack, so we never fault (we simply truncate the trace at
+    // JIT frames). "Nearby" alone is not enough: a JIT frame's first doubleword
+    // can hold a value a little above the top of the stack.
     int maxFrames = *size;
     int captured = 0;
+    auto stackBounds = WTF::StackBounds::currentThreadStackBounds();
     void** frame = reinterpret_cast<void**>(__builtin_frame_address(0));
     while (captured < maxFrames && frame) {
         void** next = reinterpret_cast<void**>(*frame); // back chain
@@ -63,6 +67,8 @@ void WTFGetBacktrace(void** stack, int* size)
             break; // frames are 16-byte aligned in ELFv2
         if (reinterpret_cast<uintptr_t>(next) - reinterpret_cast<uintptr_t>(frame) > (16u << 20))
             break; // an implausibly large gap means a bogus back-chain
+        if (stackBounds.isEmpty() || reinterpret_cast<char*>(next + 3) > static_cast<char*>(stackBounds.origin()))
+            break; // next[0..2] must lie within the stack
         // ELFv2 saves the return address (LR) at caller_sp + 16, i.e. next[2].
         stack[captured++] = next[2];
         frame = next;
