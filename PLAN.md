@@ -822,8 +822,8 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
 4. ~~**Build and run testmasm, testb3 and testair.**~~ *Done 2026-10-12 — see "Status — backend test
    binaries".* They are not targets in the JSCOnly configuration used here, so the backend had only
    been exercised through jsc. All three now pass in full on POWER9.
-5. **Debug (`ASSERT_ENABLED`) build.** Every gate so far ran on Release; assertion-only paths are
-   unexercised.
+5. ~~**Debug (`ASSERT_ENABLED`) build.**~~ *Done 2026-10-13 — see "Status — ASSERT build".* Every
+   gate so far ran on Release; assertion-only paths were unexercised.
 6. **Address-sanitized + UBSAN builds pass.**
 7. **Concurrent JIT under stress** (`--useConcurrentJIT=1`, the default, but stress it deliberately).
    Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
@@ -873,6 +873,33 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — ASSERT build (Phase 7 item 5), 2026-10-13
+
+- **Build.** `power9:~/Work/WebKit/WebKitBuild/ASSERT`: the IPINT configuration plus
+  `-DENABLE_ASSERTS=ON` (Release optimisation, `-DASSERT_ENABLED=1` on every TU). A `-O0` Debug
+  build was not used: the stress gate would take many times longer, and assertions are the point.
+  Gates: `/home/tle/assertgate.sh [BUILD]` → `/home/tle/stress-<BUILD>`, `/home/tle/wsuite-<BUILD>`.
+- **First run:** stress 80,814 / 4 FAIL, wasm.yaml 17,115 / 103 FAIL; a JIT smoke test also crashed.
+  **Now:** stress 80,817 / 1, wasm.yaml 17,218 / 0 (table-grow re-verified 40/40 after its fix).
+- **Bugs found** (the first two are Release bugs too):
+  - B3LowerMacros' wasm GC allocation slow paths (struct.new / array.new in OMG) called
+    `operationWasm{Struct,Array}NewEmpty` without storing the frame into the instance's
+    `temporaryCallFrame`. PPC64 has no `USE(BUILTIN_FRAME_ADDRESS)`, so the operation took a stale
+    frame as `vm.topCallFrame` (67 wasm.yaml failures: `assertCalleeIsReferenced` found no
+    NativeCallee) (e385bf347525).
+  - The PPC64 `WTFGetBacktrace` back-chain walk could step just past the top of the stack and fault;
+    now bounded by `StackBounds` (b179276def2f). ASSERT builds capture a native trace on every throw.
+  - `clobberAllRegsInFTLICSlowPath` (ASSERT default) scribbled on everything outside the VM
+    callee-saves, but the slow path thunk does not save C-ABI callee-saves; on PPC64 those sets
+    differ (r24-r31, f22-f31), so live values were overwritten (FTL hash-probe segfault; jsc exit
+    status 0xef). Clobbers `registersToSaveForCCall` now — identical elsewhere (9dcff9141d97).
+- **Known limit, not fixed:** `stress/stack-overflow-llint-large-params-and-large-locals.js`
+  (`no-llint`) needs a single 35.6 MB baseline allocation in the ASSERT build. A PPC64 island region
+  holds at most ~28 MB of code (32 MB branch reach minus 2 MB of islands; ARM64 ~112 MB), and with
+  `--useLLInt=false` there is no fallback. Release fits. Lifting it means allocations spanning
+  island regions.
+- **Release gates after these fixes** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0.
 
 ### Status — TestWebKitAPI (TestWTF, TestJavaScriptCore), 2026-10-12
 
