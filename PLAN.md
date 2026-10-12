@@ -874,6 +874,36 @@ first, then benchmarking. The dated status blocks below record how each piece la
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
 
+### Status — TestWebKitAPI (TestWTF, TestJavaScriptCore), 2026-10-12
+
+- **Build.** The IPINT default target failed in TestWebKitAPI: `MacroAssembler.h` includes
+  `MacroAssemblerPPC64.h`, which (with `PPC64Assembler.h` and `PPC64Registers.h`) was not in
+  JavaScriptCore's exported private headers (1ec517c2b5eb). The default target now builds.
+- **TestJavaScriptCore** 106 / 106.
+- **TestWTF** 1,819 / 1,821 (the first full run aborted part-way). Fixed:
+  - WTF `enumName`/`enumTypeName` under GCC skipped a fixed-length `__PRETTY_FUNCTION__` prefix that
+    GCC does not spell consistently (inside this build: `std::span<const char, 18446744073709551615>`),
+    so non-enumerators came back as signature text; "enum out of range" carried its NUL
+    (a5ded1c74ded). Not PPC64-specific — any GCC build. Upstream candidate.
+  - The EnumTraits test helper never compared lengths (an empty result passed anything; a longer one
+    read out of bounds → `_GLIBCXX_ASSERTIONS` abort); four "out of range" expectations were really
+    in-range gaps, which have no name (92b7f8561b55).
+  - Clamp tests used plain `char` as signed 8-bit; it is unsigned on PPC64/ARM64 Linux (c69d0649ae70).
+  - MetaAllocator's PPC64 bottom-first placement (ea64462f3a80) applied to every MetaAllocator and
+    broke two placement tests; it is now a protected `setAllocatesFromBottom` that only the JIT
+    executable pool turns on (libpas, and so `LIBPAS_JIT_HEAP`, is not built on PPC64) (f362e0debcd6).
+  - `WTF_InlineMap.RefKeysGrowth` left 50 entries in the shared RefLogger log, failing
+    `WTF_LazyRef.Basic` in a full run (ec6f36c67234).
+  - `WTF_WeakPtr.WeakHashSetComputeSize` retried until hash order matched insertion order; with
+    system malloc (no libpas) the same addresses recur and it looped forever (c56fb30f8973).
+- **Remaining 2, environmental:** `WTF_DateMath.calculateLocalTimeOffset` assumes US Pacific time
+  outside Windows (passes with `TZ=America/Los_Angeles`; the box is Australia/Melbourne);
+  `StackTraceTest.StackTraceWorks` symbolizes with `dladdr`, which cannot name WTF/test functions
+  statically linked into an executable that does not export them (no `-rdynamic`); not a PPC64 issue.
+- **Run:** `power9:~/Work/WebKit/WebKitBuild/IPINT/bin/TestWebKitAPI/{TestWTF,TestJavaScriptCore}`.
+  Redirect with `stdbuf -oL` — gtest output to a file is block-buffered and a slow test looks hung.
+- **Gates** (IPINT, with the EnumTraits and MetaAllocator changes): stress 80,818 / 0, wasm.yaml 17,218 / 0.
+
 ### Status — CCallHelpers stack arguments (ELFv2), 2026-10-12
 
 - **Bug (latent).** `setupArguments`/`callOperation` (Baseline, DFG, thunks, ICs, wasm glue)
