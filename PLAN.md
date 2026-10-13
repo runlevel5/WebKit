@@ -824,7 +824,7 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
    been exercised through jsc. All three now pass in full on POWER9.
 5. ~~**Debug (`ASSERT_ENABLED`) build.**~~ *Done 2026-10-13 — see "Status — ASSERT build".* Every
    gate so far ran on Release; assertion-only paths were unexercised.
-6. **Address-sanitized + UBSAN builds pass.**
+6. ~~**Address-sanitized + UBSAN builds pass.**~~ *Done 2026-10-14 — see "Status — ASan + UBSan build".*
 7. **Concurrent JIT under stress** (`--useConcurrentJIT=1`, the default, but stress it deliberately).
    Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
    118542349276 and 08abfedb7fbd). Still worth a litmus-test pass over every atomic path.
@@ -873,6 +873,43 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — ASan + UBSan build (Phase 7 item 6), 2026-10-14
+
+- **Build.** `power9:~/Work/WebKit/WebKitBuild/SAN`: the IPINT configuration plus
+  `-DENABLE_SANITIZERS="address;undefined"` (GCC 16 libasan/libubsan; Release, no asserts).
+  Gates: `/home/tle/sangate.sh` → `/home/tle/stress-SAN`, `/home/tle/wsuite-SAN`, with
+  `ASAN_OPTIONS=detect_leaks=0:handle_segv=0:handle_sigbus=0:handle_sigill=0:allocator_may_return_null=1`
+  (JSC owns SIGSEGV/SIGBUS/SIGILL; some tests expect large allocations to fail), UBSan reporting
+  without halting, and `JSCTEST_memoryLimit` 6 GB (ASan shadow + quarantine count toward jsc's
+  footprint). A full run takes ~14 h stress + ~15 h wasm.yaml at -c 24.
+- **Result:** stress 80,648 / 170, wasm.yaml 17,188 / 30, **no ASan reports**. Every failure is
+  sanitizer overhead: ASan frames are several times larger, so tests that cap the stack
+  (`--maxPerThreadStackUsage=147456` etc.) or count recursion depth fail (34 + 30 + the
+  reserved-zone / regexp / hasInstance / module-graph groups, all pass with a larger stack budget);
+  33 OOM, 10 over the 6 GB budget, 8 timeouts; FinalizationRegistry "keeps holdings alive" (stale
+  conservative roots in larger frames); one memory-accounting test; 10 variants of one test I
+  killed after 9.5 h (fixed, see below).
+- **Bugs found:**
+  - ASan use-after-return fake stacks broke the GC's conservative stack scan (it starts at a local's
+    address): segfaults in ~5% of tests, JIT-less ones too. Cocoa builds already disabled it; the
+    shared `ENABLE_SANITIZERS` path now does (5ac3e36f6560; GCC `--param=asan-use-after-return=0`).
+    Not PPC64-specific. (That commit message says "a third of JSTests/stress"; it was ~5%.)
+  - The PPC64 `WTFGetBacktrace` walker reads other frames' stack slots: `SUPPRESS_ASAN`
+    (801c5c88dec5), as for the conservative scan.
+  - `memcpyAtomicIfPossible` made an 8-byte (two-instruction) PPC64 code copy a misaligned 64-bit
+    atomic store; now only aligned copies are atomic (fda95bf4bcca). Generic.
+  - The stack-bounds check added in b179276def2f called `pthread_getattr_np` (parses
+    /proc/self/maps for the main thread) on every native backtrace, i.e. every throw under exception
+    scope verification: 3× slower in the ASSERT build, a 9.5 h hang under ASan. Uses the bounds
+    cached on `Thread` now (9f757d7cee30).
+- **UBSan:** 8.7 M reports at 397 distinct locations, none in PPC64 port code (checked against every
+  file the port's commits touch; the two overlaps, WasmOperations.cpp:863 and YarrJIT.cpp:677, are
+  upstream lines). Dominated by generic patterns: `memcpy(dst, nullptr, 0)` (Vector.h:122,
+  StdLibExtras.h:1139), deliberate unaligned loads (FastCharacterComparison.h, packed
+  BytecodeStructs.h), signed overflow in B3 constant folding. Upstream material, not port work.
+- **Release gates after these fixes** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0. The
+  cached-bounds fix was timed on the ASSERT build (7.3 s → 2.4 s); not re-timed under ASan.
 
 ### Status — ASSERT build (Phase 7 item 5), 2026-10-13
 
