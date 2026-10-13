@@ -2666,11 +2666,11 @@ public:
     //   stbcx.  RS, RA, RB — opcode 31, XO=694, Rc=1 (POWER8+)
     //   sthcx.  RS, RA, RB — opcode 31, XO=726, Rc=1 (POWER8+)
     //
-    // Important: the fail path of a reservation sequence LEAKS the
-    // reservation until it is cleared by a subsequent stwcx./stdcx. or
-    // an interrupt. PLAN.md "Lessons from SpiderMonkey" §Concurrency
-    // calls out this as an open hazard. Compare-exchange macros must
-    // route the fail path through a dummy store-conditional or equivalent.
+    // The fail path of a reservation sequence (value mismatch) leaves the
+    // reservation set until the next larx, stcx. or interrupt. That only
+    // matters to a stcx. not paired with its own larx, which could then
+    // succeed on the stale reservation; every stcx. emitted here immediately
+    // follows its larx, so no dummy store-conditional is needed.
     //
     // Verified on POWER9:
     //   lwarx  3,4,5 → 0x7c642828     ldarx  3,4,5 → 0x7c6428a8
@@ -3408,15 +3408,24 @@ public:
     // first, and only where they change; the branch word goes last, as one
     // aligned 4-byte store. Retargeting a b/bl therefore writes exactly one
     // word, which the Power ISA allows under a concurrently executing thread
-    // (b/bl/nop are patch class). Changing the stanza of a far form writes
-    // several words and is only safe where no other thread runs the slot.
+    // (b/bl/nop are patch class). When other words change too, they are
+    // flushed to instruction storage (dcbst/sync/icbi/isync) before the branch
+    // word is written, so no processor can fetch the new branch word with the
+    // old stanza behind it: a near -> far change is atomic. A far -> far
+    // change still rewrites a live stanza and is only safe where no other
+    // thread runs the slot.
     static void writeSlot(uint32_t* location, const uint32_t (&words)[JUMP_SLOT_INSNS], unsigned branchIndex)
     {
         RELEASE_ASSERT(roundUpToMultipleOf<sizeof(uint32_t)>(location) == location);
+        bool wroteStanza = false;
         for (unsigned i = 0; i < JUMP_SLOT_INSNS; ++i) {
-            if (i != branchIndex && location[i] != words[i])
+            if (i != branchIndex && location[i] != words[i]) {
                 writeWord(&location[i], words[i]);
+                wroteStanza = true;
+            }
         }
+        if (wroteStanza)
+            cacheFlush(location, JUMP_SLOT_INSNS * sizeof(uint32_t));
         if (location[branchIndex] != words[branchIndex])
             writeWord(&location[branchIndex], words[branchIndex]);
     }
@@ -3433,9 +3442,9 @@ public:
     // Word [0] is always a nop or a b, so moving to a target a b reaches --
     // or to a jump island, see prepareForAtomicRelinkJumpConcurrently -- is
     // the single store of [0], from either form. Moving to the far form
-    // writes the stanza while [0] still holds the old b, then [0] = nop, so
-    // a near -> far change is atomic as well; only far -> far rewrites a live
-    // stanza.
+    // writes and flushes the stanza while [0] still holds the old b, then
+    // [0] = nop, so a near -> far change is atomic as well (see writeSlot);
+    // only far -> far rewrites a live stanza.
     //
     // The slot writers take the address the slot will execute at separately
     // from the address they write to: branch compaction links into a staging
