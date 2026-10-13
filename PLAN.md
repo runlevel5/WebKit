@@ -400,6 +400,19 @@ Remaining Phase 2 polish before calling it fully closed: remove the `call C/JS` 
 ### Rebase log
 
 - **2026-07-13**: rebased all 96 port commits onto `origin/main` @ `08160f69fe42` (previous base 2026-04-13, ~5850 upstream commits). Single conflict: `jit/GdbJIT.cpp` (upstream added RISCV64 to the same CPU guards where we added PPC64LE — resolved as union). Upstream changes reviewed for impact: new offlineasm instructions `adcq/sbcq/umulhq/smulhq/addqs/subqs` (wasm wide arithmetic) are per-arch **opt-in** lists in `instructions.rb` — no backend action required until we want the fast paths; `op_try_get_by_id` removed; wasm tail calls use a lazy restore frame; relaxed wasm SIMD landed (Phase 5+ concern). Pre-rebase branch preserved as `ppc64-pre-rebase-20260713`.
+- **2026-10-15**: moved `ppc64` onto the **WebKitGTK 2.54.1 release** (tag `webkitgtk-2.54.1` = `628d6ce1850e`,
+  on the `webkitglib/2.54` release branch). Our base `08160f69fe42` is an ancestor of the tag (1,086 newer
+  upstream commits: `main` up to the branch point plus release cherry-picks), so all 377 port commits were
+  replayed onto the tag. Two conflicts: `wasm/WasmAddressType.{h,cpp}` (upstream now guards the B3::Type
+  paths with `!PLATFORM(PLAYSTATION) && ENABLE(JIT)`; took upstream's) and `llint/InPlaceInterpreter64.asm`
+  (`br_on_cast` now reads `allowNull` from metadata; kept upstream's and re-applied `loadis` to all six
+  `toHeapType` loads). Three follow-ups: `WTFGetBacktrace` uses `Thread::currentSingleton().stack()`
+  (`StackBounds::currentThreadStackBounds()` is private on 2.54); JSCOnly did not export
+  `wtf/linux/HighPriorityThreads.h`, which a 2.54.1 TestWTF cherry-pick includes (upstream bug, any JSCOnly
+  Linux build); the 2.54 Yarr JIT needs `regT3` (PPC64: callee-saved r19, always saved). Gates on 2.54.1's own
+  suites: stress 82,159 / 0, wasm.yaml 19,798 / 0. The `main`-based history is preserved as `ppc64-main-base`
+  (= old `ppc64` @ `476f932e2234`), which is where upstreaming to `main` would start. On the box,
+  `~/Work/WebKit` is now the 2.54.1 tree; the old tree (with its ASSERT/SAN/DEV builds) is `~/Work/WebKit-main-base`.
 
 ## Phase 3 — Baseline JIT
 
