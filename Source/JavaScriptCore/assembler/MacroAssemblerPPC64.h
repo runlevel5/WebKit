@@ -33,6 +33,12 @@
 #include "PPC64Assembler.h"
 #include <limits>
 #include "SIMDInfo.h"
+#if OS(LINUX)
+#include <sys/auxv.h>
+#endif
+
+// AT_HWCAP2 bit for Power ISA 3.0 (asm/cputable.h's PPC_FEATURE2_ARCH_3_00).
+#define PPC64_FEATURE2_ARCH_3_00 0x00800000
 
 // MacroAssemblerPPC64 — Phase 1 skeleton.
 //
@@ -157,11 +163,20 @@ public:
     // needs an mflr sequence, not a regular register move.
     static constexpr RegisterID linkRegister = PPC64Registers::r0;
 
-    // Feature flags consulted by JSC when generating code. Both default
-    // to conservative "not yet supported" until their implementations
-    // land; overriding can be done as instruction coverage grows.
+    // Feature flags consulted by JSC when generating code.
     static bool supportsFloatingPointRounding() { return true; } // frip/frim/friz + xsrdpic
-    static bool supportsFloat16() { return false; }
+    // binary16 conversions (xscvhpdp/xscvdphp) are Power ISA 3.0, so POWER9 and
+    // later. On POWER8 this is false and Float16 stays on the C++ paths (the
+    // DFG, the FTL and the typed-array inline caches all check it).
+    static bool supportsFloat16()
+    {
+#if OS(LINUX)
+        static const bool isISA300 = getauxval(AT_HWCAP2) & PPC64_FEATURE2_ARCH_3_00;
+        return isISA300;
+#else
+        return false;
+#endif
+    }
 
     // Conditions. Values are opaque to callers — the branch-emitting
     // methods (branch32, branchPtr, branchAdd32, etc.) will decode these
@@ -4482,8 +4497,7 @@ public:
 
     // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
 
-    // Phase 2 stubs surfaced by InlineCacheCompiler / DFGSpeculativeJIT compilation.
-    // All PPC64_UNIMPLEMENTED(); the JIT does not run yet on PPC64LE.
+    // Operations first surfaced by InlineCacheCompiler / DFGSpeculativeJIT compilation.
 
     // 32-bit negate
     void neg32(RegisterID src, RegisterID dest)
@@ -4507,10 +4521,26 @@ public:
         zeroExtend32ToWordInternal(dest);
     }
 
-    // FP conversions
-    void loadFloat16(Address, FPRegisterID)                                { PPC64_UNIMPLEMENTED(); }
-    void loadFloat16(BaseIndex, FPRegisterID)                              { PPC64_UNIMPLEMENTED(); }
-    void convertFloat16ToDouble(FPRegisterID, FPRegisterID)                { PPC64_UNIMPLEMENTED(); }
+    // Float16 (IEEE binary16), used only when supportsFloat16(). A Float16
+    // value in an FPR is its 16 bits in bits 48:63 of the VSR's doubleword 0
+    // (the low halfword of the FPR image), the format xscvhpdp reads and
+    // xscvdphp writes. Loads, stores and moves are POWER8 instructions; only
+    // the conversions need ISA 3.0.
+    void loadFloat16(Address address, FPRegisterID dest)
+    {
+        load16(address, dataTempRegister);
+        m_assembler.mtvsrd(dest, dataTempRegister);
+    }
+    void loadFloat16(BaseIndex address, FPRegisterID dest)
+    {
+        load16(address, dataTempRegister);
+        m_assembler.mtvsrd(dest, dataTempRegister);
+    }
+    void convertFloat16ToDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsFloat16());
+        m_assembler.xscvhpdp(vsr(dest), vsr(src));
+    }
 
     // FP branches
 
@@ -4540,9 +4570,25 @@ public:
         moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
         store8(dataTempRegister, address);
     }
-    void convertDoubleToFloat16(FPRegisterID, FPRegisterID)                { PPC64_UNIMPLEMENTED(); }
-    void storeFloat16(FPRegisterID, Address)                               { PPC64_UNIMPLEMENTED(); }
-    void storeFloat16(FPRegisterID, BaseIndex)                             { PPC64_UNIMPLEMENTED(); }
+    void convertDoubleToFloat16(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsFloat16());
+        m_assembler.xscvdphp(vsr(dest), vsr(src)); // rounds per FPSCR[RN], nearest-even
+    }
+    // The address goes into memoryTempRegister first: forming it can use
+    // dataTempRegister, which then carries the bits.
+    void storeFloat16(FPRegisterID src, Address address)
+    {
+        add64(TrustedImm32(address.offset), address.base, memoryTempRegister);
+        m_assembler.mfvsrd(dataTempRegister, src);
+        m_assembler.sth(dataTempRegister, 0, memoryTempRegister);
+    }
+    void storeFloat16(FPRegisterID src, BaseIndex address)
+    {
+        getEffectiveAddress(address, memoryTempRegister);
+        m_assembler.mfvsrd(dataTempRegister, src);
+        m_assembler.sth(dataTempRegister, 0, memoryTempRegister);
+    }
 
     // callOperation — InlineCacheCompiler invokes this for slow-path C calls.
     template<PtrTag tag>
@@ -5190,10 +5236,17 @@ public:
 
     // branchPtr with BaseIndex — DFGSpeculativeJIT64.cpp:5830.
 
-    // FP↔int bit-pattern moves (NaN-boxing).  PPC64LE has no native 16-bit
-    // float register; these stubs document the surface and crash if invoked.
-    void move16ToFloat16(RegisterID, FPRegisterID)                         { PPC64_UNIMPLEMENTED(); }
-    void moveFloat16To16(FPRegisterID, RegisterID)                         { PPC64_UNIMPLEMENTED(); }
+    // Float16 bit-pattern moves (see loadFloat16 for the in-FPR format).
+    void move16ToFloat16(RegisterID src, FPRegisterID dest)
+    {
+        zeroExtend16To32(src, dataTempRegister);
+        m_assembler.mtvsrd(dest, dataTempRegister);
+    }
+    void moveFloat16To16(FPRegisterID src, RegisterID dest)
+    {
+        m_assembler.mfvsrd(dest, src);
+        zeroExtend16To32(dest, dest);
+    }
 
     // moveDoubleConditionallyDouble — FP-conditional FP-move. Mirrors
     // moveConditionallyDouble but moves an FPR (fmr) instead of a GPR (mr).
