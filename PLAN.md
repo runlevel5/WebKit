@@ -903,8 +903,17 @@ older blocks are kept for history and their numbers are superseded by the ones a
   mismatch-never-writes. Threads start at the same timebase value; the SB control shows the relaxed
   outcome in 50-80% of 100,000 runs, the forbidden ones never. testmasm 382 / 382, testb3
   212,760 / 212,760, testair 234 / 234.
-- **Not done:** a cross-modifying-code litmus (one thread running a patchable call while another
-  retargets it across an island); the far-form slot change has no concurrent caller to test.
+- **Cross-modifying code** (testmasm `testCrossModifyingNearCall`, near call and near tail call):
+  one thread calls through a thread-safe patchable site while another retargets it 3,000 times via
+  `prepareForAtomicRepatchNearCallConcurrently` + `repatchNearCall`, rotating between two in-reach
+  targets and one beyond 32 MB (the test fills reachable executable memory first and checks that an
+  island is used). Every call lands on a target. testmasm 384 / 384. The far-form slot change has no
+  concurrent caller, so it is not exercised.
+- **Island exhaustion (was unmeasured):** a concurrent retarget never frees or reuses islands
+  (`islandForJumpLocation` frees only when `!concurrently`; upstream behaviour). Each concurrent
+  retarget to an out-of-reach target permanently uses one 32-byte island in the call's region (2 MB
+  = 65,536 islands per 32 MB region) until the calling code is freed. Wasm tier-up retargets each
+  callsite a few times, so this is far from a limit in practice.
 
 ### Status — ASan + UBSan build (Phase 7 item 6), 2026-10-14
 
