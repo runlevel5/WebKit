@@ -30,6 +30,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StackBounds.h>
+#include <wtf/Threading.h>
 #include <wtf/StringPrintStream.h>
 
 #if HAVE(DLADDR)
@@ -61,7 +62,14 @@ void WTFGetBacktrace(void** stack, int* size)
     // can hold a value a little above the top of the stack.
     int maxFrames = *size;
     int captured = 0;
-    auto stackBounds = WTF::StackBounds::currentThreadStackBounds();
+    // Use the bounds WTF caches per thread: computing them afresh means pthread_getattr_np, which for
+    // the main thread parses /proc/self/maps, and exception scope verification captures a trace on
+    // every throw.
+    auto stackBounds = [] {
+        if (auto* thread = WTF::Thread::currentMayBeNull())
+            return thread->stack();
+        return WTF::StackBounds::currentThreadStackBounds();
+    }();
     void** frame = reinterpret_cast<void**>(__builtin_frame_address(0));
     while (captured < maxFrames && frame) {
         void** next = reinterpret_cast<void**>(*frame); // back chain
