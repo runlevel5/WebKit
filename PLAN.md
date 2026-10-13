@@ -825,7 +825,7 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
 5. ~~**Debug (`ASSERT_ENABLED`) build.**~~ *Done 2026-10-13 — see "Status — ASSERT build".* Every
    gate so far ran on Release; assertion-only paths were unexercised.
 6. ~~**Address-sanitized + UBSAN builds pass.**~~ *Done 2026-10-14 — see "Status — ASan + UBSan build".*
-7. **Concurrent JIT under stress** (`--useConcurrentJIT=1`, the default, but stress it deliberately).
+7. ~~**Concurrent JIT under stress**~~ *Done 2026-10-14 — see "Status — concurrent JIT and memory ordering".* (`--useConcurrentJIT=1`, the default, but stress it deliberately).
    Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
    118542349276 and 08abfedb7fbd). Still worth a litmus-test pass over every atomic path.
 8. **JIT cage / `USE(JIT_CAGE)`** relies on ARM64 PAC and specific mmap tricks. Default off for PPC64LE.
@@ -873,6 +873,38 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — concurrent JIT and memory ordering (Phase 7 item 7), 2026-10-14
+
+- **Concurrency stress.** `/home/tle/concgate.sh [TAG]` runs the stress and wasm.yaml gates on the
+  IPINT build with `JSC_numberOfDFGCompilerThreads=7`, `JSC_numberOfFTLCompilerThreads=7`,
+  `JSC_numberOfWasmCompilerThreads=7` and `JSC_numberOfGCMarkers=8` (JSC_ environment options;
+  per-test flags still win) at -c 24, so the box is heavily oversubscribed. Before and after the
+  fixes below: stress 80,818 / 0, wasm.yaml 17,218 / 0. Standard gates after: same.
+- **Audit** of every atomic, fence and concurrently patched code path (MacroAssembler LL/SC, CAS,
+  xchg, loadAcq/storeRel, fences; offlineasm and IPInt atomics; B3/Air lowering; WTF fences;
+  cacheFlush and the branch-slot/jump-island patchers) against the Power ISA and ARM64: no bug in
+  a path production code takes. Fixed as hardening:
+  - `storeRel*` was `lwsync; st` (release only); with `loadAcq*` it stands in for ARM64's
+    sequentially consistent stlr/ldar, and the Power model allows the R outcome. Now `sync; st`.
+    POWER9 never showed R with the old mapping in 300,000 runs (1a967842fb1e).
+  - `branchAtomicWeakCAS` had no `isync` when the compare failed (ARM64's ldaxr acquires anyway).
+    Added (1a967842fb1e); `loadLink*`/`storeCond*` assert a zero offset.
+  - `writeSlot` claimed a near -> far slot change was atomic but wrote the stanza and the branch
+    word with no instruction-storage sync between; it now `cacheFlush`es the stanza first
+    (00bd2bb49e63). Far -> far still needs a stopped slot; no concurrent caller uses it.
+  - Not changed, noted: a thread-safe call slot linked to a non-JIT target in the far form could
+    not be retargeted atomically (`RELEASE_ASSERT(!threadSafe || !isJITPC(to))`); unreachable with
+    the JIT on. Upstream: ARM64 non-LSE `atomicStrongCAS` overwrites `expectedAndResult` before its
+    store-back retry, so a spuriously failing stlxr can make a mismatching CAS store
+    (MacroAssemblerARM64.h ~8025-8046; PPC64's version avoids this).
+- **Litmus tests** in testmasm (ARM64/PPC64, 94661a9d9f91): MP (fence and acq/rel), SB (fence,
+  acq/rel, plain control), R, weak-CAS counters (32-bit, adjacent 8-bit), strong-CAS
+  mismatch-never-writes. Threads start at the same timebase value; the SB control shows the relaxed
+  outcome in 50-80% of 100,000 runs, the forbidden ones never. testmasm 382 / 382, testb3
+  212,760 / 212,760, testair 234 / 234.
+- **Not done:** a cross-modifying-code litmus (one thread running a patchable call while another
+  retargets it across an island); the far-form slot change has no concurrent caller to test.
 
 ### Status — ASan + UBSan build (Phase 7 item 6), 2026-10-14
 
