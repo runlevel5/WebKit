@@ -8790,6 +8790,104 @@ static void testLitmusStrongCASMismatchNeverWrites()
     runConcurrently(bodies);
     CHECK_EQ(counter.value, static_cast<uint32_t>(increments));
 }
+#if ENABLE(JUMP_ISLANDS)
+// Cross-modifying code. One thread calls through a thread-safe patchable near
+// call (or tail call) in a loop while another retargets it, the way wasm
+// tier-up does (prepareForAtomicRepatchNearCallConcurrently, then
+// repatchNearCall), between two targets in branch reach and one beyond it,
+// reached through a jump island. Every call must land on one of the targets.
+static void testCrossModifyingNearCall(bool tailCall)
+{
+    auto returnConstant = [] (uint32_t value) {
+        return compile([=] (CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.move(CCallHelpers::TrustedImm32(value), GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+    auto target1 = returnConstant(1);
+    auto target2 = returnConstant(2);
+
+    CodeLocationNearCall<JSEntryPtrTag> callLocation;
+    auto caller = compile([&] (CCallHelpers& jit) {
+        CCallHelpers::Call call;
+        if (tailCall)
+            call = jit.threadSafePatchableNearTailCall(); // target returns to our caller
+        else {
+            emitFunctionPrologue(jit);
+            call = jit.threadSafePatchableNearCall();
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        }
+        jit.addLinkTask([&, call] (LinkBuffer& linkBuffer) {
+            linkBuffer.link(call, CodeLocationLabel<JSEntryPtrTag>(target1.code()));
+            callLocation = linkBuffer.locationOfNearCall<JSEntryPtrTag>(call);
+        });
+    });
+
+    // Push the third target out of direct branch reach where the reach is
+    // small enough to fill (PPC64: 32 MB). The allocator places code as low as
+    // it can, so take every piece of executable memory still within reach of
+    // the call, in shrinking sizes, before compiling the target.
+    Vector<MacroAssemblerCodeRef<JSEntryPtrTag>> filler;
+    bool farTargetNeedsIsland = false;
+    uintptr_t callAddress = std::bit_cast<uintptr_t>(callLocation.dataLocation());
+    auto inReach = [&] (const void* address) {
+        uintptr_t to = std::bit_cast<uintptr_t>(address);
+        return (callAddress > to ? callAddress - to : to - callAddress) < MacroAssembler::nearJumpRange + MB;
+    };
+    if constexpr (MacroAssembler::nearJumpRange <= 64 * MB) {
+        for (size_t size = 4 * MB; size >= 64; size /= 4) {
+            for (;;) {
+                auto code = compile([=] (CCallHelpers& jit) {
+                    for (size_t i = 0; i < size / 4; ++i)
+                        jit.nop();
+                });
+                bool near = inReach(code.code().untaggedPtr());
+                filler.append(WTF::move(code));
+                if (!near)
+                    break;
+            }
+        }
+        farTargetNeedsIsland = true;
+    }
+    auto target3 = returnConstant(3);
+    if (farTargetNeedsIsland)
+        CHECK_EQ(inReach(target3.code().untaggedPtr()), false);
+
+    static constexpr unsigned retargets = 3000;
+    std::atomic<bool> stop { false };
+    std::atomic<unsigned> calls { 0 };
+    unsigned bad = 0;
+    Ref<Thread> runner = Thread::create("testmasm cross-modifying code"_s, [&] {
+        unsigned count = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t result = invoke<uint32_t>(caller);
+            bad += result < 1 || result > 3;
+            ++count;
+        }
+        calls.store(count);
+    });
+
+    const MacroAssemblerCodeRef<JSEntryPtrTag>* targets[] = { &target2, &target3, &target1 };
+    for (unsigned i = 0; i < retargets; ++i) {
+        auto& target = *targets[i % std::size(targets)];
+        CodeLocationLabel<JSEntryPtrTag> destination(target.code());
+        CodeLocationLabel<JSEntryPtrTag> prepared = MacroAssembler::prepareForAtomicRepatchNearCallConcurrently(callLocation, destination);
+        if (&target == &target3 && farTargetNeedsIsland)
+            CHECK_EQ(prepared.untaggedPtr() != destination.untaggedPtr(), true); // went through an island
+        MacroAssembler::repatchNearCall(callLocation, prepared);
+        for (unsigned spin = 0; spin < 2000; ++spin)
+            WTF::compilerFence();
+    }
+    stop.store(true);
+    runner->waitForCompletion();
+    dataLogLn("testCrossModifyingNearCall(", tailCall, "): ", calls.load(), " calls during ", retargets, " retargets");
+    CHECK_EQ(bad, 0U);
+    CHECK_EQ(calls.load() > 0, true);
+}
+#endif // ENABLE(JUMP_ISLANDS)
 #endif // CPU(ARM64) || CPU(PPC64LE)
 
 static void testGPRInfoConsistency()
@@ -9173,6 +9271,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testLitmusWeakCASCounter32());
     RUN(testLitmusWeakCASCounter8());
     RUN(testLitmusStrongCASMismatchNeverWrites());
+#if ENABLE(JUMP_ISLANDS)
+    RUN(testCrossModifyingNearCall(false));
+    RUN(testCrossModifyingNearCall(true));
+#endif
 #endif
 
     if (tasks.isEmpty())
