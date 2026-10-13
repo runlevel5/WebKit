@@ -8503,6 +8503,295 @@ static void testMove64ToDoubleX64()
 }
 #endif
 
+#if CPU(ARM64) || CPU(PPC64LE)
+// Memory-model litmus tests for the weakly ordered ports. Each runs a few
+// instructions of JIT code on two or more threads many times over and checks
+// that no outcome the API's ordering guarantees forbid ever shows up.
+
+struct alignas(128) LitmusCell {
+    uint32_t value { 0 };
+};
+
+// The CPU's free-running timestamp counter: both threads of a litmus
+// iteration spin until the same timestamp before running their code, which
+// starts them within a few nanoseconds of each other. Handing the start over
+// through memory leaves them too far apart for a reordering to be seen at all.
+static ALWAYS_INLINE uint64_t litmusTimestamp()
+{
+#if CPU(PPC64LE)
+    return __builtin_ppc_get_timebase();
+#else
+    uint64_t value;
+    asm volatile("mrs %0, cntvct_el0" : "=r"(value));
+    return value;
+#endif
+}
+
+// Runs thread0 here and thread1 on a helper thread, `iterations` times, the
+// two started at the same timestamp each time; reset() runs before each
+// iteration and check() after both threads have finished it.
+static void runLitmusPair(unsigned iterations, const Function<void()>& reset, const Function<void()>& thread0, const Function<void()>& thread1, const Function<void()>& check)
+{
+    // A start far enough ahead for the helper to see it and be spinning.
+    static constexpr uint64_t startDelay = 4096;
+    std::atomic<unsigned> go { 0 };
+    std::atomic<unsigned> done { 0 };
+    std::atomic<uint64_t> start { 0 };
+    Ref<Thread> helper = Thread::create("testmasm litmus"_s, [&] {
+        for (unsigned i = 1; i <= iterations; ++i) {
+            while (go.load(std::memory_order_acquire) != i) { }
+            uint64_t startAt = start.load(std::memory_order_relaxed);
+            while (litmusTimestamp() < startAt) { }
+            thread1();
+            done.store(i, std::memory_order_release);
+        }
+    });
+    for (unsigned i = 1; i <= iterations; ++i) {
+        reset();
+        uint64_t startAt = litmusTimestamp() + startDelay;
+        start.store(startAt, std::memory_order_relaxed);
+        go.store(i, std::memory_order_release);
+        while (litmusTimestamp() < startAt) { }
+        thread0();
+        while (done.load(std::memory_order_acquire) != i) { }
+        check();
+    }
+    helper->waitForCompletion();
+}
+
+// Runs every body on its own thread, all released at once.
+static void runConcurrently(Vector<Function<void()>>& bodies)
+{
+    std::atomic<unsigned> ready { 0 };
+    unsigned count = bodies.size();
+    Vector<Ref<Thread>> threads;
+    for (auto& body : bodies) {
+        threads.append(Thread::create("testmasm litmus"_s, [&ready, count, body = &body] {
+            ready.fetch_add(1);
+            while (ready.load() < count) { }
+            (*body)();
+        }));
+    }
+    for (auto& thread : threads)
+        thread->waitForCompletion();
+}
+
+static constexpr unsigned litmusIterations = 100000;
+
+// MP. T0: data = 1; flag = 1.  T1: r0 = flag; r1 = data.
+// With the stores ordered (storeFence, or a store-release of flag) and the
+// loads ordered (loadFence, or a load-acquire of flag), r0 == 1 && r1 == 0 is
+// forbidden.
+static void testLitmusMessagePassing(bool releaseAcquire)
+{
+    auto writer = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+        jit.store32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR0));
+        if (releaseAcquire)
+            jit.storeRel32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR1));
+        else {
+            jit.storeFence();
+            jit.store32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR1));
+        }
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    auto reader = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        if (releaseAcquire)
+            jit.loadAcq32(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::argumentGPR2);
+        else {
+            jit.load32(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::argumentGPR2);
+            jit.loadFence();
+        }
+        jit.load32(CCallHelpers::Address(GPRInfo::argumentGPR0), GPRInfo::argumentGPR3);
+        jit.lshift32(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+        jit.or32(GPRInfo::argumentGPR3, GPRInfo::argumentGPR2, GPRInfo::returnValueGPR); // flag * 2 + data
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    LitmusCell data;
+    LitmusCell flag;
+    uint32_t observed = 0;
+    unsigned forbidden = 0;
+    runLitmusPair(litmusIterations,
+        [&] { data.value = 0; flag.value = 0; },
+        [&] { invoke<uint32_t>(writer, &data.value, &flag.value); },
+        [&] { observed = invoke<uint32_t>(reader, &data.value, &flag.value); },
+        [&] { forbidden += observed == 2; });
+    CHECK_EQ(forbidden, 0U);
+}
+
+enum class LitmusOrdering : uint8_t { None, MemoryFence, AcquireRelease };
+
+// SB. Ti: mine = 1; r = other. Ordering the store before the load (a full
+// fence, or a store-release followed by a load-acquire, which ARM64's
+// stlr/ldar make sequentially consistent) forbids r0 == 0 && r1 == 0.
+// LitmusOrdering::None is the control: the outcome is allowed and is only
+// counted, to show that the harness can see a reordering at all.
+static void testLitmusStoreBuffering(LitmusOrdering ordering)
+{
+    auto side = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+        switch (ordering) {
+        case LitmusOrdering::None:
+            jit.store32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR0));
+            jit.load32(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::returnValueGPR);
+            break;
+        case LitmusOrdering::MemoryFence:
+            jit.store32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR0));
+            jit.memoryFence();
+            jit.load32(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::returnValueGPR);
+            break;
+        case LitmusOrdering::AcquireRelease:
+            jit.storeRel32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR0));
+            jit.loadAcq32(CCallHelpers::Address(GPRInfo::argumentGPR1), GPRInfo::returnValueGPR);
+            break;
+        }
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    LitmusCell x;
+    LitmusCell y;
+    uint32_t r0 = 0;
+    uint32_t r1 = 0;
+    unsigned bothZero = 0;
+    runLitmusPair(litmusIterations,
+        [&] { x.value = 0; y.value = 0; },
+        [&] { r0 = invoke<uint32_t>(side, &x.value, &y.value); },
+        [&] { r1 = invoke<uint32_t>(side, &y.value, &x.value); },
+        [&] { bothZero += !r0 && !r1; });
+    if (ordering == LitmusOrdering::None)
+        dataLogLn("testLitmusStoreBuffering(None): store buffering observed ", bothZero, " / ", litmusIterations, " times (allowed)");
+    else
+        CHECK_EQ(bothZero, 0U);
+}
+
+// R. T0: x = 1; y = 1.  T1: y = 2; r = x.  All store-release / load-acquire.
+// Sequential consistency (ARM64's stlr/ldar) forbids y == 2 && r == 0: T1's
+// store of y landing last means T0's y = 1, and so its x = 1, came first.
+static void testLitmusR()
+{
+    auto thread0 = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+        jit.storeRel32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR0));
+        jit.storeRel32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR1));
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    auto thread1 = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::argumentGPR2);
+        jit.storeRel32(GPRInfo::argumentGPR2, CCallHelpers::Address(GPRInfo::argumentGPR1));
+        jit.loadAcq32(CCallHelpers::Address(GPRInfo::argumentGPR0), GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    LitmusCell x;
+    LitmusCell y;
+    uint32_t r = 0;
+    unsigned forbidden = 0;
+    runLitmusPair(litmusIterations,
+        [&] { x.value = 0; y.value = 0; },
+        [&] { invoke<uint32_t>(thread0, &x.value, &y.value); },
+        [&] { r = invoke<uint32_t>(thread1, &x.value, &y.value); },
+        [&] { forbidden += y.value == 2 && !r; });
+    CHECK_EQ(forbidden, 0U);
+}
+
+// Compiles `void(T* location, uint64_t count)` that adds 1 to *location
+// `count` times through a weak-CAS retry loop.
+template<unsigned width>
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileWeakCASIncrementLoop()
+{
+    return compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        CCallHelpers::Address location(GPRInfo::argumentGPR0);
+        CCallHelpers::Label loop = jit.label();
+        if constexpr (width == 8)
+            jit.load8(location, GPRInfo::argumentGPR2);
+        else
+            jit.load32(location, GPRInfo::argumentGPR2);
+        jit.add32(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2, GPRInfo::argumentGPR3);
+        if constexpr (width == 8)
+            jit.branchAtomicWeakCAS8(CCallHelpers::Failure, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3, location).linkTo(loop, &jit);
+        else
+            jit.branchAtomicWeakCAS32(CCallHelpers::Failure, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3, location).linkTo(loop, &jit);
+        jit.sub64(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR1);
+        jit.branchTest64(CCallHelpers::NonZero, GPRInfo::argumentGPR1).linkTo(loop, &jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+// Four threads increment one 32-bit counter through weak CAS: no update may be
+// lost.
+static void testLitmusWeakCASCounter32()
+{
+    static constexpr unsigned threadCount = 4;
+    static constexpr uint64_t increments = 200000;
+    auto increment = compileWeakCASIncrementLoop<32>();
+    LitmusCell counter;
+    Vector<Function<void()>> bodies;
+    for (unsigned i = 0; i < threadCount; ++i)
+        bodies.append([&] { invoke<uint32_t>(increment, &counter.value, increments); });
+    runConcurrently(bodies);
+    CHECK_EQ(counter.value, static_cast<uint32_t>(threadCount * increments));
+}
+
+// Four threads each increment their own byte of one word through 8-bit weak
+// CAS: every byte ends at its own count (mod 256), so a sub-word
+// store-conditional that disturbs its neighbours, or a lost update, shows.
+static void testLitmusWeakCASCounter8()
+{
+    static constexpr unsigned threadCount = 4;
+    static constexpr uint64_t increments = 100000;
+    auto increment = compileWeakCASIncrementLoop<8>();
+    struct alignas(128) Bytes {
+        uint8_t values[threadCount] { };
+    } bytes;
+    Vector<Function<void()>> bodies;
+    for (unsigned i = 0; i < threadCount; ++i)
+        bodies.append([&, i] { invoke<uint32_t>(increment, &bytes.values[i], increments); });
+    runConcurrently(bodies);
+    for (unsigned i = 0; i < threadCount; ++i)
+        CHECK_EQ(static_cast<unsigned>(bytes.values[i]), static_cast<unsigned>(increments % 256));
+}
+
+// One thread runs a strong CAS whose expected value never occurs while another
+// increments the location: a failed strong CAS must never store, so the
+// counter ends exactly at the increment count.
+static void testLitmusStrongCASMismatchNeverWrites()
+{
+    static constexpr uint64_t increments = 200000;
+    static constexpr uint64_t attempts = 200000;
+    auto increment = compileWeakCASIncrementLoop<32>();
+    auto failingCAS = compile([=] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        CCallHelpers::Label loop = jit.label();
+        jit.move(CCallHelpers::TrustedImm32(0x7eadbeef), GPRInfo::argumentGPR2); // never reached by the counter
+        jit.move(CCallHelpers::TrustedImm32(0x7ad00000), GPRInfo::argumentGPR3);
+        jit.atomicStrongCAS32(CCallHelpers::Success, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3, CCallHelpers::Address(GPRInfo::argumentGPR0), GPRInfo::argumentGPR4);
+        jit.sub64(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR1);
+        jit.branchTest64(CCallHelpers::NonZero, GPRInfo::argumentGPR1).linkTo(loop, &jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    LitmusCell counter;
+    Vector<Function<void()>> bodies;
+    bodies.append([&] { invoke<uint32_t>(increment, &counter.value, increments); });
+    bodies.append([&] { invoke<uint32_t>(failingCAS, &counter.value, attempts); });
+    runConcurrently(bodies);
+    CHECK_EQ(counter.value, static_cast<uint32_t>(increments));
+}
+#endif // CPU(ARM64) || CPU(PPC64LE)
+
 static void testGPRInfoConsistency()
 {
     for (unsigned index = 0; index < GPRInfo::numberOfRegisters; ++index) {
@@ -8873,6 +9162,18 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
     RUN(testGPRInfoConsistency());
+
+#if CPU(ARM64) || CPU(PPC64LE)
+    RUN(testLitmusMessagePassing(false));
+    RUN(testLitmusMessagePassing(true));
+    RUN(testLitmusStoreBuffering(LitmusOrdering::None));
+    RUN(testLitmusStoreBuffering(LitmusOrdering::MemoryFence));
+    RUN(testLitmusStoreBuffering(LitmusOrdering::AcquireRelease));
+    RUN(testLitmusR());
+    RUN(testLitmusWeakCASCounter32());
+    RUN(testLitmusWeakCASCounter8());
+    RUN(testLitmusStrongCASMismatchNeverWrites());
+#endif
 
     if (tasks.isEmpty())
         usage();
