@@ -2602,6 +2602,10 @@ public:
     // Scalar single <-> double, non-signalling (v2.07): xscvdpspn leaves the
     // single in word 0 of T; xscvspdpn reads the single from word 0 of B.
     void xscvdpspn(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 267)); }
+    // Power ISA 3.0 (POWER9) only: binary16 <-> binary64, the half in bits
+    // 48:63 of doubleword 0 (XX2-form, XO=347, bits 11:15 select the op).
+    void xscvhpdp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 347) | (16u << 16)); }
+    void xscvdphp(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 347) | (17u << 16)); }
     void xscvspdpn(uint32_t vsrT, uint32_t vsrB) { insn(xx2Form(60, vsrT, vsrB, 331)); }
 
     // VSX scalar / splat indexed loads and stores (XX1, opcode 31).
