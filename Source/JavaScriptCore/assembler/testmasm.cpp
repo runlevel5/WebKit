@@ -36,6 +36,7 @@
 #include <limits>
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
+#include <wtf/Float16.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
@@ -8890,6 +8891,88 @@ static void testCrossModifyingNearCall(bool tailCall)
 #endif // ENABLE(JUMP_ISLANDS)
 #endif // CPU(ARM64) || CPU(PPC64LE)
 
+#if CPU(PPC64LE)
+// Float16 against WTF's software conversions: every binary16 bit pattern to
+// double, doubles at and around every half's rounding boundaries back to
+// binary16, and the bit-pattern moves.
+static void testFloat16Conversions()
+{
+    if (!MacroAssembler::supportsFloat16()) {
+        dataLogLn("testFloat16Conversions: no ISA 3.0 binary16 conversions on this CPU; skipped");
+        return;
+    }
+
+    auto halfToDouble = compile([] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.loadFloat16(CCallHelpers::Address(GPRInfo::argumentGPR0), FPRInfo::fpRegT0);
+        jit.convertFloat16ToDouble(FPRInfo::fpRegT0, FPRInfo::returnValueFPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    auto doubleToHalf = compile([] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.convertDoubleToFloat16(FPRInfo::argumentFPR0, FPRInfo::fpRegT0);
+        jit.storeFloat16(FPRInfo::fpRegT0, CCallHelpers::BaseIndex(GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, CCallHelpers::TimesTwo, 2));
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    auto roundTripBits = compile([] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move16ToFloat16(GPRInfo::argumentGPR0, FPRInfo::fpRegT0);
+        jit.move(CCallHelpers::TrustedImm32(-1), GPRInfo::argumentGPR0);
+        jit.moveFloat16To16(FPRInfo::fpRegT0, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    auto sameDouble = [] (double a, double b) {
+        if (std::isnan(a) || std::isnan(b))
+            return std::isnan(a) && std::isnan(b);
+        return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+    };
+    auto sameHalf = [] (uint16_t a, uint16_t b) {
+        auto isNaN = [] (uint16_t h) { return (h & 0x7c00) == 0x7c00 && (h & 0x3ff); };
+        if (isNaN(a) || isNaN(b))
+            return isNaN(a) && isNaN(b);
+        return a == b;
+    };
+
+    uint16_t buffer[4] = { };
+    auto jitDoubleToHalf = [&] (double value) {
+        buffer[1] = 0xdead;
+        buffer[0] = buffer[2] = 0x5555;
+        invoke<void>(doubleToHalf, buffer, static_cast<uintptr_t>(0), value); // stores to buffer[1]
+        CHECK_EQ(buffer[0], 0x5555);
+        CHECK_EQ(buffer[2], 0x5555);
+        return buffer[1];
+    };
+
+    for (unsigned bits = 0; bits < 0x10000; ++bits) {
+        uint16_t half = bits;
+        double expected = WTF::convertFloat16ToFloat64(half);
+        CHECK_EQ(sameDouble(invoke<double>(halfToDouble, &half), expected), true);
+        CHECK_EQ(invoke<uint32_t>(roundTripBits, static_cast<uintptr_t>(0xabcd0000u | bits)), bits);
+
+        // The value itself, the midpoint to the next half up (a tie, which
+        // rounds to even), and the doubles either side of that midpoint.
+        if (std::isnan(expected))
+            continue;
+        CHECK_EQ(sameHalf(jitDoubleToHalf(expected), WTF::convertFloat64ToFloat16(expected)), true);
+        uint16_t nextBits = bits + 1;
+        if ((bits & 0x7fff) >= 0x7c00 || (nextBits & 0x7fff) > 0x7c00)
+            continue;
+        double next = WTF::convertFloat16ToFloat64(nextBits);
+        if (!std::isfinite(next))
+            next = std::copysign(65520.0, expected); // the first value that rounds to infinity
+        double midpoint = (expected + next) / 2;
+        for (double value : { midpoint, std::nextafter(midpoint, 0.0), std::nextafter(midpoint, midpoint * 2) })
+            CHECK_EQ(sameHalf(jitDoubleToHalf(value), WTF::convertFloat64ToFloat16(value)), true);
+    }
+    for (double value : { 1e300, -1e300, 65519.99, 65520.0, 1e-30, -1e-30, 5.9604644775390625e-8 / 2, 5.9604644775390625e-8 * 0.75, std::numeric_limits<double>::infinity(), -0.0 })
+        CHECK_EQ(sameHalf(jitDoubleToHalf(value), WTF::convertFloat64ToFloat16(value)), true);
+}
+#endif // CPU(PPC64LE)
+
 static void testGPRInfoConsistency()
 {
     for (unsigned index = 0; index < GPRInfo::numberOfRegisters; ++index) {
@@ -9260,6 +9343,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
     RUN(testGPRInfoConsistency());
+
+#if CPU(PPC64LE)
+    RUN(testFloat16Conversions());
+#endif
 
 #if CPU(ARM64) || CPU(PPC64LE)
     RUN(testLitmusMessagePassing(false));
