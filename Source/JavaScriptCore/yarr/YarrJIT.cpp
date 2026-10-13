@@ -2586,7 +2586,7 @@ class YarrGenerator final : public YarrJITInfo {
         ASSERT(opIndex + 1 < m_ops.size());
 
         const MacroAssembler::RegisterID character = m_regs.regT0;
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
         unsigned maxCharactersAtOnce = m_charSize == CharSize::Char8 ? 8 : 4;
 #else
         unsigned maxCharactersAtOnce = m_charSize == CharSize::Char8 ? 4 : 2;
@@ -2864,7 +2864,7 @@ class YarrGenerator final : public YarrJITInfo {
                         matchTargets.appendSucceeded(m_jit.branch32(MacroAssembler::Equal, character, MacroAssembler::Imm32(characters | caseMask)));
                 };
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
                 auto check8 = [&] (Checked<unsigned> offset, uint64_t characters, uint64_t caseMask, uint64_t ignoredCharsMask, MatchTargets& matchTargets) {
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
                     if (ignoredCharsMask)
@@ -2892,7 +2892,7 @@ class YarrGenerator final : public YarrJITInfo {
                     check4(checkedOffset - startPosition, allCharacters & 0xffffffff, caseMask & 0xffffffff, ignoredCharsMask, *matchTargetForFinalComparison);
                     break;
                 }
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
                 case 8: {
                     check8(checkedOffset - startPosition, allCharacters, caseMask, ignoredCharsMask, *matchTargetForFinalComparison);
                     break;
@@ -2921,7 +2921,7 @@ class YarrGenerator final : public YarrJITInfo {
                         matchTargets.appendSucceeded(m_jit.branch32(MacroAssembler::Equal, character, MacroAssembler::Imm32(characters | caseMask)));
                 };
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
                 auto check4 = [&] (Checked<unsigned> offset, uint64_t characters, uint64_t caseMask, uint64_t ignoredCharsMask, MatchTargets& matchTargets) {
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
                     if (ignoredCharsMask)
@@ -2945,7 +2945,7 @@ class YarrGenerator final : public YarrJITInfo {
                     check2(checkedOffset - startPosition, allCharacters & 0xffffffff, caseMask & 0xffffffff, *matchTargetForFinalComparison);
                     break;
                 }
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
                 case 4: {
                     check4(checkedOffset - startPosition, allCharacters, caseMask, ignoredCharsMask, *matchTargetForFinalComparison);
                     break;
