@@ -4894,17 +4894,22 @@ public:
         }
         // stcx. sets CR0[EQ]=1 iff the store succeeded (reservation held).
 
+        // Acquire on every outcome, as ARM64's ldaxr gives even when the value
+        // does not match: a failed CAS has still read the location, and a
+        // caller may act on that (the strong CAS does the same).
         if (cond == Success) {
             Jump storeFailed = makeBranch(NotEqual); // CR0[EQ] clear -> stcx. failed
-            m_assembler.isync();                     // acquire (reached only on success)
+            m_assembler.isync();                     // acquire on success
             Jump success = jump();
             mismatch.link(this);
             storeFailed.link(this);
+            m_assembler.isync();                     // acquire on failure
             return success;
         }
         // Failure form: taken on value mismatch or a lost reservation.
         Jump stored = makeBranch(Equal); // CR0[EQ] set -> stcx. succeeded
         mismatch.link(this);             // mismatch joins the store-failed fall-through
+        m_assembler.isync();             // acquire on failure
         Jump failure = jump();
         stored.link(this);
         m_assembler.isync();             // acquire on the success path
@@ -5111,22 +5116,25 @@ public:
     void atomicXchg64(RegisterID reg, BaseIndex address) { atomicXchg(64, reg, address); }
 
     // --- Air LoadAcq/StoreRel (B3 Load/Store with a fence range) --------
-    // Stand-ins for ARM64's ldar/stlr, with the same strength as the LL/SC
-    // pair below and for the same reason: RCsc, so a store-release followed by
-    // a load-acquire of another location is not reordered. The leading sync
-    // orders the load after everything earlier (including a store-release);
-    // the lwsync after it makes it an acquire; the lwsync before the store
-    // makes it a release.
+    // Stand-ins for ARM64's ldar/stlr, which are RCsc: together they give
+    // sequentially consistent loads and stores. This is the leading-sync C11
+    // seq_cst mapping for Power: a full sync before every access, then an
+    // lwsync after a load to make it an acquire. A store needs the sync too,
+    // not just an lwsync: with only an lwsync, a store-release can still be
+    // ordered after a later store-release to another location as seen from a
+    // thread that stores and then load-acquires ("R" litmus:
+    // T0: x=1; y=1  T1: y=2; r=x  ends with y==2 && r==0), which ldar/stlr
+    // forbid.
     void loadAcq8(Address address, RegisterID dest) { m_assembler.sync(); load8(address, dest); m_assembler.lwsync(); }
     void loadAcq8SignedExtendTo32(Address address, RegisterID dest) { m_assembler.sync(); load8SignedExtendTo32(address, dest); m_assembler.lwsync(); }
     void loadAcq16(Address address, RegisterID dest) { m_assembler.sync(); load16(address, dest); m_assembler.lwsync(); }
     void loadAcq16SignedExtendTo32(Address address, RegisterID dest) { m_assembler.sync(); load16SignedExtendTo32(address, dest); m_assembler.lwsync(); }
     void loadAcq32(Address address, RegisterID dest) { m_assembler.sync(); load32(address, dest); m_assembler.lwsync(); }
     void loadAcq64(Address address, RegisterID dest) { m_assembler.sync(); load64(address, dest); m_assembler.lwsync(); }
-    void storeRel8(RegisterID src, Address address) { m_assembler.lwsync(); store8(src, address); }
-    void storeRel16(RegisterID src, Address address) { m_assembler.lwsync(); store16(src, address); }
-    void storeRel32(RegisterID src, Address address) { m_assembler.lwsync(); store32(src, address); }
-    void storeRel64(RegisterID src, Address address) { m_assembler.lwsync(); store64(src, address); }
+    void storeRel8(RegisterID src, Address address) { m_assembler.sync(); store8(src, address); }
+    void storeRel16(RegisterID src, Address address) { m_assembler.sync(); store16(src, address); }
+    void storeRel32(RegisterID src, Address address) { m_assembler.sync(); store32(src, address); }
+    void storeRel64(RegisterID src, Address address) { m_assembler.sync(); store64(src, address); }
 
     // --- Air LoadLink/StoreCond (B3 atomics LL/SC loops) ----------------
     // The Air forms use SimpleAddr (a bare register address, offset 0).
@@ -5145,10 +5153,12 @@ public:
     // stcx. The lwsync after the load-reserve keeps acquire ordering for what
     // follows, and the lwsync before the store-conditional keeps storeCondRel a
     // release on its own, independent of how the reserve was taken.
-    void loadLink8(Address address, RegisterID dest)  { m_assembler.lbarx(dest, PPC64Registers::r0, address.base); }
-    void loadLink16(Address address, RegisterID dest) { m_assembler.lharx(dest, PPC64Registers::r0, address.base); }
-    void loadLink32(Address address, RegisterID dest) { m_assembler.lwarx(dest, PPC64Registers::r0, address.base); }
-    void loadLink64(Address address, RegisterID dest) { m_assembler.ldarx(dest, PPC64Registers::r0, address.base); }
+    // larx/stcx. take a bare register address, so these ignore address.offset;
+    // callers (Air SimpleAddr, BBQ's Address(pointer)) always pass 0.
+    void loadLink8(Address address, RegisterID dest)  { ASSERT(!address.offset); m_assembler.lbarx(dest, PPC64Registers::r0, address.base); }
+    void loadLink16(Address address, RegisterID dest) { ASSERT(!address.offset); m_assembler.lharx(dest, PPC64Registers::r0, address.base); }
+    void loadLink32(Address address, RegisterID dest) { ASSERT(!address.offset); m_assembler.lwarx(dest, PPC64Registers::r0, address.base); }
+    void loadLink64(Address address, RegisterID dest) { ASSERT(!address.offset); m_assembler.ldarx(dest, PPC64Registers::r0, address.base); }
     void loadLinkAcq8(Address address, RegisterID dest)  { m_assembler.sync(); loadLink8(address, dest); m_assembler.lwsync(); }
     void loadLinkAcq16(Address address, RegisterID dest) { m_assembler.sync(); loadLink16(address, dest); m_assembler.lwsync(); }
     void loadLinkAcq32(Address address, RegisterID dest) { m_assembler.sync(); loadLink32(address, dest); m_assembler.lwsync(); }
@@ -5160,10 +5170,10 @@ public:
         m_assembler.rlwinm(result, result, 3, 31, 31); // CR0 bit 2 (EQ) -> LSB
         m_assembler.xori(result, result, 1);
     }
-    void storeCond8(RegisterID src, Address address, RegisterID result)  { m_assembler.stbcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
-    void storeCond16(RegisterID src, Address address, RegisterID result) { m_assembler.sthcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
-    void storeCond32(RegisterID src, Address address, RegisterID result) { m_assembler.stwcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
-    void storeCond64(RegisterID src, Address address, RegisterID result) { m_assembler.stdcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond8(RegisterID src, Address address, RegisterID result)  { ASSERT(!address.offset); m_assembler.stbcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond16(RegisterID src, Address address, RegisterID result) { ASSERT(!address.offset); m_assembler.sthcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond32(RegisterID src, Address address, RegisterID result) { ASSERT(!address.offset); m_assembler.stwcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
+    void storeCond64(RegisterID src, Address address, RegisterID result) { ASSERT(!address.offset); m_assembler.stdcx_(src, PPC64Registers::r0, address.base); emitStoreCondResult(result); }
     void storeCondRel8(RegisterID src, Address address, RegisterID result)  { m_assembler.lwsync(); storeCond8(src, address, result); }
     void storeCondRel16(RegisterID src, Address address, RegisterID result) { m_assembler.lwsync(); storeCond16(src, address, result); }
     void storeCondRel32(RegisterID src, Address address, RegisterID result) { m_assembler.lwsync(); storeCond32(src, address, result); }
