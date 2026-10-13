@@ -828,8 +828,10 @@ Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
 7. ~~**Concurrent JIT under stress**~~ *Done 2026-10-14 — see "Status — concurrent JIT and memory ordering".* (`--useConcurrentJIT=1`, the default, but stress it deliberately).
    Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
    118542349276 and 08abfedb7fbd). Still worth a litmus-test pass over every atomic path.
-8. **JIT cage / `USE(JIT_CAGE)`** relies on ARM64 PAC and specific mmap tricks. Default off for PPC64LE.
-9. **Smaller gaps:** the `PPC64_UNIMPLEMENTED` Float16 family; Yarr's SIMD Boyer-Moore and
+8. ~~**JIT cage / `USE(JIT_CAGE)`**~~ *Checked 2026-10-15: nothing to do.* `ENABLE_JIT_CAGE` is defined only for
+   Darwin + ARM64E + the Apple internal SDK (PlatformEnable.h); the PPC64 build has no trace of it.
+9. **Smaller gaps** *(2026-10-15: Float16 done for POWER9+, Yarr multi-char compares done, Unicode
+   disagreements confirmed upstream — see "Status — item 9 smaller gaps"; the rest open)*: the `PPC64_UNIMPLEMENTED` Float16 family; Yarr's SIMD Boyer-Moore and
    multi-character compare optimizations (off on PPC64) and the RegExp inline size limit (500 bytes,
    tuned for denser code); `--sampleCCode` C-frame attribution (GCC does not keep r31 as a frame
    pointer); the Yarr JIT/interpreter Unicode disagreements (see the RegExp status block — confirm
@@ -873,6 +875,33 @@ the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** �
 first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
+
+### Status — item 9 smaller gaps, 2026-10-15
+
+- **Float16 (was the `PPC64_UNIMPLEMENTED` family) — done for POWER9+.** The eight MacroAssembler
+  operations are implemented (2e69530aa37d): a Float16 lives in an FPR as its 16 bits in bits 48:63 of
+  VSR doubleword 0; loads/stores/moves use lhz/sth + mtvsrd/mfvsrd (POWER8), the conversions use ISA 3.0
+  `xscvhpdp`/`xscvdphp` (encodings checked with `as -mpower9`). `supportsFloat16()` is true when
+  `AT_HWCAP2` has ISA 3.0, so POWER8 keeps the C++ paths every caller already falls back to. testmasm
+  `testFloat16Conversions` checks all 65,536 halves, every rounding midpoint and its neighbours, against
+  WTF's software conversions (10624ad3a7b7). Gates: stress 80,817 / 1 (`sampling-profiler-bound-function-name.js`
+  ftl-eager-no-cjit, a sampling-profiler timing flake: 30 / 30 on rerun), wasm.yaml 17,218 / 0. No
+  `PPC64_UNIMPLEMENTED` remains in the MacroAssembler.
+- **Yarr multi-character compares — done** (c4f4ca140543): 8 Char8 / 4 Char16 characters per 64-bit
+  compare, as on X86_64/ARM64/RISCV64. A long-literal JIT-vs-interpreter differential
+  (`power9:/home/tle/yarr/rxlong.js`, `rxlong-plain.js`) agrees on ~840,000 cases; all regexp gates
+  unchanged (stress 80,818 / 0, wasm 17,218 / 0, yaml 85 / 0, RegExpTest.data 2,085 / 0 JIT and
+  interpreter). Not done: the SIMD Boyer-Moore and multi-pattern SIMD searches (ARM64/X86_64 vector
+  code), and `maximumRegExpTestInlineCodesize` (500 bytes) is still untuned for PPC64's larger code.
+- **Yarr Unicode JIT/interpreter disagreements — upstream, the interpreter is wrong.** PPC64's JIT and
+  interpreter outputs are byte-identical to ARM64's (macOS system JSC) on the long-literal seeds, and
+  the PPC64 JIT's output on all 27 fuzzer seeds that show a disagreement is unchanged by the port's
+  Yarr work. The cases are case-insensitive folding of U+017F (ſ), U+212A (Kelvin) and U+0130 (İ):
+  without /u, Canonicalize must not map a non-ASCII character to ASCII, so ſ ≠ s and K ≠ k; with /u,
+  İ has no simple case folding, so İ ≠ i. The interpreter matches all three; the JIT does not.
+  An upstream Yarr interpreter bug.
+- **Not done:** `--sampleCCode` C-frame attribution (GCC does not keep a frame pointer; would need
+  `-fno-omit-frame-pointer` builds or an unwinder).
 
 ### Status — concurrent JIT and memory ordering (Phase 7 item 7), 2026-10-14
 
