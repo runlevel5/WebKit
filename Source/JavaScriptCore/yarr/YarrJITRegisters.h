@@ -178,6 +178,10 @@ public:
     static constexpr GPRReg regT0 = PPC64Registers::r8;
     static constexpr GPRReg regT1 = PPC64Registers::r9;
     static constexpr GPRReg regT2 = PPC64Registers::r10;
+    // No volatile GPR is left for a fourth scratch, so regT3 is ELFv2
+    // callee-saved r19 (clear of the JSC-reserved r20-r23), saved whenever the
+    // generated code runs as a function (see calleeSaveRegisters()).
+    static constexpr GPRReg regT3 = PPC64Registers::r19;
     static constexpr GPRReg initialStart = PPC64Registers::r24;
     static constexpr GPRReg remainingMatchCount = PPC64Registers::r25;
     static constexpr GPRReg regUnicodeInputAndTrail = PPC64Registers::r26;

@@ -6715,6 +6715,10 @@ class YarrGenerator final : public YarrJITInfo {
 #elif CPU(PPC64LE)
         // Same register roles and conditions as x86_64 above: these five are
         // ELFv2 callee-saved, and the generated code is called directly from C++.
+        // regT3 is callee-saved here too (x86_64's r8 is not); several unrelated
+        // paths (.* enclosures, paren contexts) use it, so always save it.
+        if (m_regs.regT3 != InvalidGPRReg)
+            registers.add(m_regs.regT3, IgnoreVectors);
         if (m_pattern.m_saveInitialStartValue)
             registers.add(m_regs.initialStart, IgnoreVectors);
 
