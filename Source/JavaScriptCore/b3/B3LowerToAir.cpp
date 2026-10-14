@@ -4175,26 +4175,36 @@ private:
         }
 
         case Mod: {
-            RELEASE_ASSERT(isX86());
             RELEASE_ASSERT(!m_value->isChill());
+#if CPU(PPC64LE)
+            RELEASE_ASSERT(MacroAssembler::supportsISA3_00());
+            appendBinOp<Mod32, Mod64, Air::Oops, Air::Oops>(m_value->child(0), m_value->child(1));
+#else
+            RELEASE_ASSERT(isX86());
             appendX86Div(Mod);
+#endif
             return;
         }
 
         case UMod: {
+#if CPU(PPC64LE)
+            RELEASE_ASSERT(MacroAssembler::supportsISA3_00());
+            appendBinOp<UMod32, UMod64, Air::Oops, Air::Oops>(m_value->child(0), m_value->child(1));
+#else
             RELEASE_ASSERT(isX86());
             appendX86UDiv(UMod);
+#endif
             return;
         }
 
         case FMin: {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(isARM64() || isPPC64LE());
             append(m_value->type() == Float ? FloatMin : DoubleMin, tmp(m_value->child(0)), tmp(m_value->child(1)), tmp(m_value));
             return;
         }
 
         case FMax: {
-            RELEASE_ASSERT(isARM64());
+            RELEASE_ASSERT(isARM64() || isPPC64LE());
             append(m_value->type() == Float ? FloatMax : DoubleMax, tmp(m_value->child(0)), tmp(m_value->child(1)), tmp(m_value));
             return;
         }

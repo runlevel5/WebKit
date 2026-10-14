@@ -519,6 +519,23 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
         }
     }
 
+#if CPU(PPC64LE)
+    // POWER9 computes the remainder directly; x % 0 and x % -1 are already handled.
+    if (IsMod && MacroAssembler::supportsISA3_00()) {
+        if (is32 && isSigned)
+            m_jit.mod32(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLocation.asGPR());
+        else if (is32)
+            m_jit.uMod32(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLocation.asGPR());
+        else if (isSigned)
+            m_jit.mod64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLocation.asGPR());
+        else
+            m_jit.uMod64(lhsLocation.asGPR(), rhsLocation.asGPR(), resultLocation.asGPR());
+        if (remainderByNegativeOneDone.isSet())
+            remainderByNegativeOneDone.link(&m_jit);
+        return;
+    }
+#endif
+
     GPRReg divResult = IsMod ? scratches.gpr(0) : resultLocation.asGPR();
     if (is32 && isSigned)
         m_jit.div32(lhsLocation.asGPR(), rhsLocation.asGPR(), divResult);

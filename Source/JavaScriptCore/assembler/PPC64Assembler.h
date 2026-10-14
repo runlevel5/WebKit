@@ -2652,6 +2652,59 @@ public:
     void vbpermq(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 1356)); }
 
     // ===================================================================
+    // Power ISA 3.0 (POWER9) and 3.1 (POWER10). Emitted only behind
+    // MacroAssemblerPPC64::supportsISA3_00() / supportsISA3_1().
+    // Verified with `as -mpower10` (POWER10, binutils 2.46):
+    //   cnttzw 3,4 → 0x7c830434     cnttzd 3,4 → 0x7c830474
+    //   modsw 3,4,5 → 0x7c642e16    moduw 3,4,5 → 0x7c642a16
+    //   modsd 3,4,5 → 0x7c642e12    modud 3,4,5 → 0x7c642a12
+    //   xsmaxjdp 1,2,3 → 0xf0221c80 xsminjdp 1,2,3 → 0xf0221cc0
+    //   brh 3,4 → 0x7c8301b6        brw 3,4 → 0x7c830136    brd 3,4 → 0x7c830176
+    //   setbc 3,2 → 0x7c620300      setbcr 3,2 → 0x7c620340
+    //   vmulld 2,3,4 → 0x104321c9
+    //   vextractbm 3,2 → 0x10681642 (hm/wm/dm: RA field 9/10/11)
+    // ===================================================================
+    void cnttzw(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 538, /*Rc*/ 0)); }
+    void cnttzd(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 570, /*Rc*/ 0)); }
+    // Remainders. Like divw/divd the result is undefined for x / 0 and
+    // INT_MIN / -1; callers guard those cases exactly as they do for div.
+    void modsw(RegisterID rt, RegisterID ra, RegisterID rb) { insn(xForm(31, rt, ra, rb, /*XO*/ 779, /*Rc*/ 0)); }
+    void moduw(RegisterID rt, RegisterID ra, RegisterID rb) { insn(xForm(31, rt, ra, rb, /*XO*/ 267, /*Rc*/ 0)); }
+    void modsd(RegisterID rt, RegisterID ra, RegisterID rb) { insn(xForm(31, rt, ra, rb, /*XO*/ 777, /*Rc*/ 0)); }
+    void modud(RegisterID rt, RegisterID ra, RegisterID rb) { insn(xForm(31, rt, ra, rb, /*XO*/ 265, /*Rc*/ 0)); }
+    // "Java" min/max: a NaN operand yields that NaN, and -0 < +0, which is
+    // exactly JS Math.min/max and wasm f32/f64.min/max (results are doubles
+    // in the scalar format, so singles work unchanged).
+    void xsmaxjdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 144)); }
+    void xsminjdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 152)); }
+    // Byte-reverse each halfword / word / doubleword of RS (ISA 3.1).
+    void brh(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 219, /*Rc*/ 0)); }
+    void brw(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 155, /*Rc*/ 0)); }
+    void brd(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 187, /*Rc*/ 0)); }
+    // RT = CR bit BI ? 1 : 0 (setbc) or ? 0 : 1 (setbcr) (ISA 3.1).
+    void setbc(RegisterID rt, unsigned bi)
+    {
+        ASSERT(bi < 32);
+        insn((31u << 26) | (registerValue(rt) << 21) | (bi << 16) | (384u << 1));
+    }
+    void setbcr(RegisterID rt, unsigned bi)
+    {
+        ASSERT(bi < 32);
+        insn((31u << 26) | (registerValue(rt) << 21) | (bi << 16) | (416u << 1));
+    }
+    void vmulld(VRegisterID vrt, VRegisterID vra, VRegisterID vrb) { insn(vxForm(4, vrt, vra, vrb, 457)); } // 3.1
+    // RT = the most significant bit of each element of VRB, element 0 in the
+    // most significant result bit (ISA 3.1, VX-form XO=1602, RA selects the width).
+    void vextractbm(RegisterID rt, VRegisterID vrb) { insn(vectorExtractMask(rt, 8, vrb)); }
+    void vextracthm(RegisterID rt, VRegisterID vrb) { insn(vectorExtractMask(rt, 9, vrb)); }
+    void vextractwm(RegisterID rt, VRegisterID vrb) { insn(vectorExtractMask(rt, 10, vrb)); }
+    void vextractdm(RegisterID rt, VRegisterID vrb) { insn(vectorExtractMask(rt, 11, vrb)); }
+    static constexpr uint32_t vectorExtractMask(RegisterID rt, uint32_t width, VRegisterID vrb)
+    {
+        return (4u << 26) | (registerValue(rt) << 21) | (width << 16) | (vrValue(vrb) << 11) | 1602u;
+    }
+
+    // ===================================================================
     // Atomic Load-Reserved / Store-Conditional (X-form). Power ISA v2.07B
     // §3.3.1.1 (lwarx/ldarx) and §3.3.1.2 (stwcx./stdcx.). The building
     // blocks for every atomic on PPC: compare-exchange, fetch-add,

@@ -32,13 +32,15 @@
 #include "AbstractMacroAssembler.h"
 #include "PPC64Assembler.h"
 #include <limits>
+#include "Options.h"
 #include "SIMDInfo.h"
 #if OS(LINUX)
 #include <sys/auxv.h>
 #endif
 
-// AT_HWCAP2 bit for Power ISA 3.0 (asm/cputable.h's PPC_FEATURE2_ARCH_3_00).
+// AT_HWCAP2 bits for Power ISA 3.0 and 3.1 (asm/cputable.h's PPC_FEATURE2_ARCH_3_00 / _3_1).
 #define PPC64_FEATURE2_ARCH_3_00 0x00800000
+#define PPC64_FEATURE2_ARCH_3_1 0x00040000
 
 // MacroAssemblerPPC64 — Phase 1 skeleton.
 //
@@ -165,18 +167,33 @@ public:
 
     // Feature flags consulted by JSC when generating code.
     static bool supportsFloatingPointRounding() { return true; } // frip/frim/friz + xsrdpic
+    // Power ISA level beyond the POWER8 (2.07) baseline, from AT_HWCAP2 and
+    // capped by Options::maximumPPC64ISALevel() so POWER9/POWER10 machines can
+    // also exercise the older sequences. Every instruction newer than 2.07 is
+    // emitted only behind one of these checks.
+    static unsigned isaLevel()
+    {
+        static const unsigned hardwareLevel = [] {
+#if OS(LINUX)
+            unsigned long hwcap2 = getauxval(AT_HWCAP2);
+            if (hwcap2 & PPC64_FEATURE2_ARCH_3_1)
+                return 310u;
+            if (hwcap2 & PPC64_FEATURE2_ARCH_3_00)
+                return 300u;
+#endif
+            return 207u;
+        }();
+        return std::min(hardwareLevel, Options::maximumPPC64ISALevel());
+    }
+    static bool supportsISA3_00() { return isaLevel() >= 300; }
+    static bool supportsISA3_1() { return isaLevel() >= 310; }
+
     // binary16 conversions (xscvhpdp/xscvdphp) are Power ISA 3.0, so POWER9 and
     // later. On POWER8 this is false and Float16 stays on the C++ paths (the
     // DFG, the FTL and the typed-array inline caches all check it).
-    static bool supportsFloat16()
-    {
-#if OS(LINUX)
-        static const bool isISA300 = getauxval(AT_HWCAP2) & PPC64_FEATURE2_ARCH_3_00;
-        return isISA300;
-#else
-        return false;
-#endif
-    }
+    static bool supportsFloat16() { return supportsISA3_00(); }
+    // xsmaxjdp/xsminjdp (ISA 3.0) implement JS and wasm min/max directly.
+    static bool supportsFloatingPointMinMax() { return supportsISA3_00(); }
 
     // Conditions. Values are opaque to callers — the branch-emitting
     // methods (branch32, branchPtr, branchAdd32, etc.) will decode these
@@ -413,6 +430,31 @@ public:
     void uDiv64(RegisterID dividend, RegisterID divisor, RegisterID dest)
     {
         m_assembler.divdu(dest, dividend, divisor);
+    }
+
+    // Remainders: modsw/moduw/modsd/modud, ISA 3.0 only (supportsISA3_00()).
+    // As with div, x % 0 and INT_MIN % -1 are undefined; callers guard them.
+    void mod32(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        ASSERT(supportsISA3_00());
+        m_assembler.modsw(dest, dividend, divisor);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void uMod32(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        ASSERT(supportsISA3_00());
+        m_assembler.moduw(dest, dividend, divisor);
+        zeroExtend32ToWordInternal(dest);
+    }
+    void mod64(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        ASSERT(supportsISA3_00());
+        m_assembler.modsd(dest, dividend, divisor);
+    }
+    void uMod64(RegisterID dividend, RegisterID divisor, RegisterID dest)
+    {
+        ASSERT(supportsISA3_00());
+        m_assembler.modud(dest, dividend, divisor);
     }
 
     // dest = dest + imm
@@ -821,6 +863,13 @@ public:
     // finished with them once CR0 is set.
     void setFromCR0Bit(unsigned bi, bool whenSet, RegisterID dest)
     {
+        if (supportsISA3_1()) {
+            if (whenSet)
+                m_assembler.setbc(dest, bi);
+            else
+                m_assembler.setbcr(dest, bi);
+            return;
+        }
         if (whenSet) {
             RegisterID one = dest == memoryTempRegister ? dataTempRegister : memoryTempRegister;
             m_assembler.addi(one, PPC64Registers::r0, 1);   // li one, 1
@@ -1941,6 +1990,22 @@ public:
         zeroExtend32ToWordInternal(dest);
     }
     void absDouble(FPRegisterID src, FPRegisterID dest)               { m_assembler.fabs(dest, src); }
+    // JS Math.min/max semantics (a NaN operand wins, -0 < +0), POWER9 only:
+    // see supportsFloatingPointMinMax(). A signalling NaN operand comes back
+    // unquieted, so wasm, which needs an arithmetic NaN, cannot use these.
+    void doubleMax(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        ASSERT(supportsFloatingPointMinMax());
+        m_assembler.xsmaxjdp(vsr(dest), vsr(op1), vsr(op2));
+    }
+    void doubleMin(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        ASSERT(supportsFloatingPointMinMax());
+        m_assembler.xsminjdp(vsr(dest), vsr(op1), vsr(op2));
+    }
+    // Singles are held in double format, where min/max are exact.
+    void floatMax(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest) { doubleMax(op1, op2, dest); }
+    void floatMin(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest) { doubleMin(op1, op2, dest); }
     void absFloat(FPRegisterID src, FPRegisterID dest)                { m_assembler.fabs(dest, src); }
 
     // FP bitwise ops treat the doubles as bit patterns (used for sign-bit
@@ -2728,6 +2793,10 @@ public:
             vmxBinary(&PPC64Assembler::vmuluwm, left, right, dest);
             return;
         case SIMDLane::i64x2:
+            if (supportsISA3_1()) {
+                vmxBinary(&PPC64Assembler::vmulld, left, right, dest);
+                return;
+            }
             // No doubleword vector multiply before POWER10: one mulld per lane.
             m_assembler.mfvsrd(dataTempRegister, vsr(left));
             m_assembler.mfvsrd(memoryTempRegister, vsr(right));
@@ -2984,6 +3053,27 @@ public:
     void vectorAllTrue(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest, FPRegisterID) { vectorAllTrue(simdInfo, vec, dest); }
     void vectorBitmask(SIMDInfo simdInfo, FPRegisterID vec, RegisterID dest)
     {
+        if (supportsISA3_1()) {
+            // vextract*m puts ISA element 0 in the result's top bit. With the
+            // doublewords swapped, ISA element e holds wasm lane (lanes - 1 - e),
+            // so the result is the wasm bitmask as is.
+            m_assembler.xxswapd(vsr(vecTemp0), vsr(vec));
+            switch (elementByteSize(simdInfo.lane)) {
+            case 1:
+                m_assembler.vextractbm(dest, vecTemp0);
+                return;
+            case 2:
+                m_assembler.vextracthm(dest, vecTemp0);
+                return;
+            case 4:
+                m_assembler.vextractwm(dest, vecTemp0);
+                return;
+            case 8:
+                m_assembler.vextractdm(dest, vecTemp0);
+                return;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        }
         // vbpermq gathers 16 selected bits into bits 48-63 of doubleword 0:
         // control byte i selects ISA bit index c (c >= 128 gives 0) into
         // result bit 15 - i. Put lane l's sign bit (the first ISA bit of its
@@ -3724,6 +3814,10 @@ public:
 
     void countTrailingZeros32(RegisterID src, RegisterID dest)
     {
+        if (supportsISA3_00()) {
+            m_assembler.cnttzw(dest, src);
+            return;
+        }
         RegisterID temp = tempRegisterAvoiding(src);
         m_assembler.addi(temp, src, -1);           // x - 1
         m_assembler.andc(temp, temp, src);         // (x - 1) & ~x
@@ -3732,6 +3826,10 @@ public:
     }
     void countTrailingZeros64(RegisterID src, RegisterID dest)
     {
+        if (supportsISA3_00()) {
+            m_assembler.cnttzd(dest, src);
+            return;
+        }
         RegisterID temp = tempRegisterAvoiding(src);
         m_assembler.addi(temp, src, -1);
         m_assembler.andc(temp, temp, src);
@@ -4844,17 +4942,28 @@ public:
         m_assembler.extsh(dest, src);
         zeroExtend32ToWordInternal(dest);
     }
-    // Register byte-reverse without POWER10 brh/brw/brd: rotate/mask sequences.
+    // Register byte-reverse: brh/brw/brd on POWER10, else rotate/mask sequences.
     // Verified on POWER9 (bswap16(0xABCD)=0xCDAB, bswap32(0x11223344)=0x44332211,
-    // bswap64(0x1122334455667788)=0x8877665544332211).
+    // bswap64(0x1122334455667788)=0x8877665544332211). The 16- and 32-bit
+    // results are zero-extended.
     void byteSwap16(RegisterID reg)
     {
+        if (supportsISA3_1()) {
+            m_assembler.brh(reg, reg);
+            m_assembler.rldicl(reg, reg, 0, 48);
+            return;
+        }
         m_assembler.rlwinm(dataTempRegister, reg, 8, 16, 23);   // (reg<<8) & 0x0000ff00
         m_assembler.rlwinm(memoryTempRegister, reg, 24, 24, 31); // (reg>>8) & 0x000000ff
         m_assembler.or_(reg, dataTempRegister, memoryTempRegister);
     }
     void byteSwap32(RegisterID reg)
     {
+        if (supportsISA3_1()) {
+            m_assembler.brw(reg, reg);
+            m_assembler.rldicl(reg, reg, 0, 32);
+            return;
+        }
         m_assembler.rlwinm(dataTempRegister, reg, 8, 0, 31);    // rotl(reg,8)
         m_assembler.rlwimi(dataTempRegister, reg, 24, 0, 7);
         m_assembler.rlwimi(dataTempRegister, reg, 24, 16, 23);
@@ -4862,6 +4971,10 @@ public:
     }
     void byteSwap64(RegisterID reg)
     {
+        if (supportsISA3_1()) {
+            m_assembler.brd(reg, reg);
+            return;
+        }
         // reg = HIGH:LOW; result = bswap32(LOW):bswap32(HIGH).
         m_assembler.rldicl(dataTempRegister, reg, 32, 32);      // dataTemp = HIGH (zero-extended)
         m_assembler.rldicl(memoryTempRegister, reg, 0, 32);     // memoryTemp = LOW (zero-extended)

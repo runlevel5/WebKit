@@ -6591,6 +6591,16 @@ void SpeculativeJIT::compileArithMod(Node* node)
         afterDivision.append(jump());
         divisorNotMinusOne.link(this);
 #endif
+#if CPU(PPC64LE)
+        if (supportsISA3_00())
+            mod32(dividendGPR, divisorGPR, quotientThenRemainderGPR);
+        else {
+            div32(dividendGPR, divisorGPR, quotientThenRemainderGPR);
+            mul32(quotientThenRemainderGPR, divisorGPR, quotientThenRemainderGPR);
+            sub32(dividendGPR, quotientThenRemainderGPR, quotientThenRemainderGPR);
+        }
+        afterDivision.link(this);
+#else
         div32(dividendGPR, divisorGPR, quotientThenRemainderGPR);
         // This should only overflow for INT32_MIN % -1 but that will end up with quotientThenRemainderGPR == 0, which will be handled as needed in the negative zero check.
 #if CPU(ARM64)
@@ -6599,8 +6609,6 @@ void SpeculativeJIT::compileArithMod(Node* node)
         mul32(quotientThenRemainderGPR, divisorGPR, quotientThenRemainderGPR);
         sub32(dividendGPR, quotientThenRemainderGPR, quotientThenRemainderGPR);
 #endif
-#if CPU(PPC64LE)
-        afterDivision.link(this);
 #endif
 
         // If the user cares about negative zero, then speculate that we're not about
@@ -6699,9 +6707,17 @@ void SpeculativeJIT::compileArithMod(Node* node)
             notZero.link(this);
         }
 
-        div64(op1GPR, op2GPR, quotientGPR);
-        mul64(quotientGPR, op2GPR, resultGPR);
-        sub64(op1GPR, resultGPR, resultGPR);
+#if CPU(PPC64LE)
+        // Int52 values are far from INT64_MIN, so modsd is well defined here.
+        if (supportsISA3_00())
+            mod64(op1GPR, op2GPR, resultGPR);
+        else
+#endif
+        {
+            div64(op1GPR, op2GPR, quotientGPR);
+            mul64(quotientGPR, op2GPR, resultGPR);
+            sub64(op1GPR, resultGPR, resultGPR);
+        }
 
         if (shouldCheckNegativeZero(node->arithMode())) {
             Jump numeratorPositive = branch64(GreaterThanOrEqual, op1GPR, TrustedImm64(0));
@@ -7006,6 +7022,16 @@ void SpeculativeJIT::compileArithMinMax(Node* node)
                 doubleMax(op1FPR, op2FPR, resultFPR);
             doubleResult(resultFPR, node);
 #else
+#if CPU(PPC64LE)
+            if (supportsFloatingPointMinMax()) {
+                if (node->op() == ArithMin)
+                    doubleMin(op1FPR, op2FPR, resultFPR);
+                else
+                    doubleMax(op1FPR, op2FPR, resultFPR);
+                doubleResult(resultFPR, node);
+                break;
+            }
+#endif
             JumpList done;
 
             Jump op1Less = branchDouble(node->op() == ArithMin ? DoubleLessThanAndOrdered : DoubleGreaterThanAndOrdered, op1FPR, op2FPR);
@@ -7066,6 +7092,29 @@ void SpeculativeJIT::compileArithMinMax(Node* node)
 
         doubleResult(resultFPR, node);
 #else
+#if CPU(PPC64LE)
+        if (supportsFloatingPointMinMax()) {
+            SpeculateDoubleOperand op1(this, m_graph.child(node, 0));
+            FPRTemporary result(this);
+
+            FPRReg op1FPR = op1.fpr();
+            FPRReg resultFPR = result.fpr();
+
+            moveDouble(op1FPR, resultFPR);
+
+            for (unsigned index = 1; index < node->numChildren(); ++index) {
+                SpeculateDoubleOperand op2(this, m_graph.child(node, index));
+                FPRReg op2FPR = op2.fpr();
+                if (node->op() == ArithMin)
+                    doubleMin(op2FPR, resultFPR, resultFPR);
+                else
+                    doubleMax(op2FPR, resultFPR, resultFPR);
+            }
+
+            doubleResult(resultFPR, node);
+            break;
+        }
+#endif
         GPRTemporary buffer(this);
 
         GPRReg bufferGPR = buffer.gpr();

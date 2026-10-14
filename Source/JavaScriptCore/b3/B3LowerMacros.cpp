@@ -83,6 +83,16 @@ namespace JSC { namespace B3 {
 
 namespace {
 
+// POWER9 (Power ISA 3.0) has integer remainder and JS-style min/max instructions.
+static bool ppc64HasISA3_00()
+{
+#if CPU(PPC64LE)
+    return MacroAssembler::supportsISA3_00();
+#else
+    return false;
+#endif
+}
+
 class LowerMacros {
 public:
     LowerMacros(Procedure& proc)
@@ -291,6 +301,9 @@ private:
                     break;
                 }
 
+                // POWER9's modsw/modsd lower a non-chill Mod directly.
+                if (ppc64HasISA3_00())
+                    break;
                 if (isARM64() || isPPC64LE()) {
                     // A non-chill Mod makes no promise for x%0 or INT_MIN%-1, so a plain Div is
                     // enough. Only ARM64 lowers a chill Div natively.
@@ -313,6 +326,8 @@ private:
                         replaceWithBinaryCall(Math::i32_rem_u);
                     break;
                 }
+                if (ppc64HasISA3_00())
+                    break;
                 if (isARM64() || isPPC64LE()) {
                     Value* divResult = m_insertionSet.insert<Value>(m_index, UDiv, m_origin, m_value->child(0), m_value->child(1));
                     Value* multipliedBack = m_insertionSet.insert<Value>(m_index, Mul, m_origin, divResult, m_value->child(1));
@@ -334,7 +349,10 @@ private:
             }
             case FMax:
             case FMin: {
-                if (isX86() || isARM_THUMB2() || isPPC64LE()) {
+                // POWER9's xsmaxjdp/xsminjdp return a signalling NaN operand unquieted. JS
+                // never sees one, but wasm requires min/max to return an arithmetic NaN.
+                bool expandForPPC64 = isPPC64LE() && (m_proc.isWasm() || !ppc64HasISA3_00());
+                if (isX86() || isARM_THUMB2() || expandForPPC64) {
                     bool isMax = m_value->opcode() == FMax;
 
                     Value* a = m_value->child(0);
@@ -1146,7 +1164,7 @@ private:
         Value* innerResult;
         if (isARM_THUMB2() && (m_value->type() == Int64 || m_value->type() == Int32))
             innerResult = callDivModHelper(normalDivCase, nonChillOpcode, num, den);
-        else if (isPPC64LE() && nonChillOpcode == Mod) {
+        else if (isPPC64LE() && nonChillOpcode == Mod && !ppc64HasISA3_00()) {
             // POWER8 has no integer remainder instruction. Here den is neither 0 nor -1 paired
             // with INT_MIN, so the plain Div is well defined and num - (num / den) * den is exact.
             Value* quotient = normalDivCase->appendNew<Value>(m_proc, Div, m_origin, num, den);

@@ -8899,6 +8899,116 @@ static void testCrossModifyingNearCall(bool tailCall)
 #endif // CPU(ARM64) || CPU(PPC64LE)
 
 #if CPU(PPC64LE)
+// The POWER9/POWER10 sequences (remainders, JS min/max, count trailing zeros,
+// compare to bool) against C++. Run once per ISA level the CPU reaches, with
+// JSC_maximumPPC64ISALevel=207/300 covering the older sequences.
+static void testPPC64ISALevelSequences()
+{
+    dataLogLn("testPPC64ISALevelSequences: ISA level ", MacroAssembler::isaLevel());
+
+    auto ctz32 = compile([] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.countTrailingZeros32(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    for (auto value : int64Operands()) {
+        uint32_t low = static_cast<uint32_t>(value);
+        CHECK_EQ(invoke<uint64_t>(ctz32, value), static_cast<uint64_t>(low ? std::countr_zero(low) : 32));
+    }
+
+    auto compareToBool = [] (MacroAssembler::RelationalCondition cond) {
+        return compile([=] (CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.compare64(cond, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+    auto lessThan = compareToBool(MacroAssembler::LessThan);
+    auto notEqual = compareToBool(MacroAssembler::NotEqual);
+    for (auto a : int64Operands()) {
+        for (auto b : int64Operands()) {
+            CHECK_EQ(invoke<uint64_t>(lessThan, a, b), static_cast<uint64_t>(a < b));
+            CHECK_EQ(invoke<uint64_t>(notEqual, a, b), static_cast<uint64_t>(a != b));
+        }
+    }
+
+    if (!MacroAssembler::supportsISA3_00()) {
+        dataLogLn("testPPC64ISALevelSequences: no ISA 3.0 remainder or min/max on this CPU; skipped");
+        return;
+    }
+
+    auto remainder = [] (auto emit) {
+        return compile([=] (CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            (jit.*emit)(GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+    auto mod32 = remainder(&MacroAssembler::mod32);
+    auto uMod32 = remainder(&MacroAssembler::uMod32);
+    auto mod64 = remainder(&MacroAssembler::mod64);
+    auto uMod64 = remainder(&MacroAssembler::uMod64);
+    for (auto a : int64Operands()) {
+        for (auto b : int64Operands()) {
+            int32_t a32 = static_cast<int32_t>(a);
+            int32_t b32 = static_cast<int32_t>(b);
+            if (b32 && !(a32 == std::numeric_limits<int32_t>::min() && b32 == -1)) {
+                CHECK_EQ(invoke<uint64_t>(mod32, a, b), static_cast<uint64_t>(static_cast<uint32_t>(a32 % b32)));
+                CHECK_EQ(invoke<uint64_t>(uMod32, a, b), static_cast<uint64_t>(static_cast<uint32_t>(a32) % static_cast<uint32_t>(b32)));
+            }
+            if (b && !(a == std::numeric_limits<int64_t>::min() && b == -1)) {
+                CHECK_EQ(invoke<int64_t>(mod64, a, b), a % b);
+                CHECK_EQ(invoke<uint64_t>(uMod64, a, b), static_cast<uint64_t>(a) % static_cast<uint64_t>(b));
+            }
+        }
+    }
+
+    auto minOrMax = [] (bool isMax) {
+        return compile([=] (CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            if (isMax)
+                jit.doubleMax(FPRInfo::argumentFPR0, FPRInfo::argumentFPR1, FPRInfo::returnValueFPR);
+            else
+                jit.doubleMin(FPRInfo::argumentFPR0, FPRInfo::argumentFPR1, FPRInfo::returnValueFPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+    auto doubleMax = minOrMax(true);
+    auto doubleMin = minOrMax(false);
+    auto sameDouble = [] (double a, double b) {
+        if (std::isnan(a) || std::isnan(b))
+            return std::isnan(a) && std::isnan(b);
+        return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+    };
+    // JS Math.max/Math.min: a NaN operand gives NaN, and +0 > -0.
+    auto jsMax = [] (double a, double b) {
+        if (std::isnan(a) || std::isnan(b))
+            return PNaN;
+        if (!a && !b)
+            return std::signbit(a) ? b : a;
+        return a > b ? a : b;
+    };
+    auto jsMin = [] (double a, double b) {
+        if (std::isnan(a) || std::isnan(b))
+            return PNaN;
+        if (!a && !b)
+            return std::signbit(a) ? a : b;
+        return a < b ? a : b;
+    };
+    auto operands = doubleOperands();
+    operands.append(-0.0); // doubleOperands()'s -0 is the integer, so +0.0
+    for (auto a : operands) {
+        for (auto b : operands) {
+            CHECK_EQ(sameDouble(invoke<double>(doubleMax, a, b), jsMax(a, b)), true);
+            CHECK_EQ(sameDouble(invoke<double>(doubleMin, a, b), jsMin(a, b)), true);
+        }
+    }
+}
+
 // Float16 against WTF's software conversions: every binary16 bit pattern to
 // double, doubles at and around every half's rounding boundaries back to
 // binary16, and the bit-pattern moves.
@@ -9352,6 +9462,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testGPRInfoConsistency());
 
 #if CPU(PPC64LE)
+    RUN(testPPC64ISALevelSequences());
     RUN(testFloat16Conversions());
 #endif
 

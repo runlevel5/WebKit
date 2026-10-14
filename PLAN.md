@@ -889,6 +889,46 @@ first, then benchmarking. The dated status blocks below record how each piece la
 older blocks are kept for history and their numbers are superseded by the ones above them.
 
 
+### Status — POWER9 / POWER10 fast paths, 2026-10-15
+
+POWER8 (ISA 2.07) stays the baseline; newer instructions are emitted only behind runtime checks.
+`MacroAssemblerPPC64::isaLevel()` reads `AT_HWCAP2` (ARCH_3_00 → 300, ARCH_3_1 → 310) and is capped
+by the new option `maximumPPC64ISALevel` (default 310), so one POWER10 box tests all three levels with
+`JSC_maximumPPC64ISALevel=207/300/310`. `supportsFloat16()` now goes through it too.
+
+| ISA | Instruction | Used for |
+|-----|-------------|----------|
+| 3.0 | `cnttzw`/`cnttzd` | countTrailingZeros32/64 (was addi/andc/cntlz/subfic) |
+| 3.0 | `modsw`/`moduw`/`modsd`/`modud` | DFG ArithMod (Int32, Int52), BBQ rem, B3 Mod/UMod via new Air `Mod32`/`UMod32`/`Mod64`/`UMod64` |
+| 3.0 | `xsmaxjdp`/`xsminjdp` | DFG ArithMin/Max (2 and n operands), FTL via B3 FMin/FMax → Air DoubleMin/Max — **JS only** |
+| 3.1 | `brh`/`brw`/`brd` | byteSwap16/32/64 (big-endian DataView, wasm) |
+| 3.1 | `setbc`/`setbcr` | compare → 0/1 (`setFromCR0Bit`, was li/li/isel) |
+| 3.1 | `vmulld` | wasm i64x2.mul (was an 11-instruction GPR round trip) |
+| 3.1 | `vextract{b,h,w,d}m` | wasm *.bitmask (`xxswapd` + extract gives the wasm lane order directly) |
+
+All 19 encodings checked against `as -mpower10` (binutils 2.46). **`xsmaxjdp`/`xsminjdp` return a
+signalling NaN operand unquieted** (checked on POWER10), which JS never sees (its NaNs are purified)
+but wasm forbids: min/max must return an arithmetic NaN. So B3 keeps the FMin/FMax expansion when
+`Procedure::isWasm()`, and BBQ keeps its sequence. New test
+`JSTests/wasm/stress/min-max-signalling-nan-is-quieted.js` pins this. testmasm
+`testPPC64ISALevelSequences` checks ctz32, compare→bool, the four remainders and JS min/max against C++.
+
+POWER10 microbenchmarks (same jsc, ns/iteration, ISA 2.07 → 3.0 → 3.1): Math.max 2.07 → 1.46 → 1.41;
+3-operand Math.min 2.69 → 1.35; int `%` 3.01 → 2.41; DataView getUint32 BE 2.45 → 2.26 (3.1);
+getFloat64 BE 2.76 → 1.66 (3.1); compare→bool 2.59 → 2.49 (3.1). Earlier C microbenchmarks:
+i64x2.mul 4.28 → 1.03, bitmask 3.23 → 2.51.
+
+Gates (2.54.1 suites + the new wasm test): power9 at ISA 3.0 and capped to 2.07, stress 82,176 / 0 and
+wasm.yaml 19,812 / 0 each; power10 at ISA 3.1, stress 82,176 / 0, wasm.yaml 19,812 / 0; testmasm
+386 / 0 at 3.1, 3.0 and 2.07; testb3 and testair pass at 3.1 and 2.07. **First full POWER10 run**
+(before these changes, 89a8d2a4b98b): stress 82,175 / 1 (`sampling-profiler-line-column.js`
+ftl-eager, a timing flake: 5 / 5 on rerun), wasm.yaml 19,798 / 0. The POWER10 box (`ssh power10`,
+8 vCPU, Fedora 44) has a sparse clone with IPINT and DEV (DEVELOPER_MODE) builds; gate script
+`/home/fedora/p10gates.sh`.
+
+Not done (step 3 candidates): prefixed `pli`/`paddi` for 34-bit immediates and pc-relative addressing,
+POWER9 vector lane insert/extract (`vinsertw`, `vextublx`…), `cmpeqb` for Yarr character classes.
+
 ### Status — item 9 smaller gaps, 2026-10-15
 
 - **Float16 (was the `PPC64_UNIMPLEMENTED` family) — done for POWER9+.** The eight MacroAssembler

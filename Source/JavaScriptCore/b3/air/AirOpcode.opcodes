@@ -345,6 +345,19 @@ arm64 ppc64le: Div64 U:G:64, U:G:64, D:G:64
 arm64 ppc64le: UDiv64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
+# POWER9 (Power ISA 3.0) remainders; B3 emits them only when supportsISA3_00().
+ppc64le: Mod32 U:G:32, U:G:32, ZD:G:32
+    Tmp, Tmp, Tmp
+
+ppc64le: UMod32 U:G:32, U:G:32, ZD:G:32
+    Tmp, Tmp, Tmp
+
+ppc64le: Mod64 U:G:64, U:G:64, D:G:64
+    Tmp, Tmp, Tmp
+
+ppc64le: UMod64 U:G:64, U:G:64, D:G:64
+    Tmp, Tmp, Tmp
+
 MulDouble U:F:64, U:F:64, D:F:64
     Tmp, Tmp, Tmp
     x86: Addr, Tmp, Tmp
@@ -1150,16 +1163,16 @@ arm64: OrRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
 arm64: OrUnsignedRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Imm, Tmp
 
-arm64: FloatMax U:F:32, U:F:32, D:F:32
+arm64 ppc64le: FloatMax U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 
-arm64: FloatMin U:F:32, U:F:32, D:F:32
+arm64 ppc64le: FloatMin U:F:32, U:F:32, D:F:32
     Tmp, Tmp, Tmp
 
-arm64: DoubleMax U:F:64, U:F:64, D:F:64
+arm64 ppc64le: DoubleMax U:F:64, U:F:64, D:F:64
     Tmp, Tmp, Tmp
 
-arm64: DoubleMin U:F:64, U:F:64, D:F:64
+arm64 ppc64le: DoubleMin U:F:64, U:F:64, D:F:64
     Tmp, Tmp, Tmp
 
 # The first operand is rax.
