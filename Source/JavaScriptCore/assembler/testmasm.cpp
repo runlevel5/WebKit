@@ -8857,22 +8857,28 @@ static void testCrossModifyingNearCall(bool tailCall)
     if (farTargetNeedsIsland)
         CHECK_EQ(inReach(target3.code().untaggedPtr()), false);
 
+    // Retarget at least `retargets` times, and until the runner has made
+    // `overlappingCalls` calls while retargeting is under way: on a loaded
+    // machine the runner may not get a CPU for the first few thousand.
     static constexpr unsigned retargets = 3000;
+    static constexpr unsigned overlappingCalls = 1000;
     std::atomic<bool> stop { false };
     std::atomic<unsigned> calls { 0 };
     unsigned bad = 0;
     Ref<Thread> runner = Thread::create("testmasm cross-modifying code"_s, [&] {
-        unsigned count = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t result = invoke<uint32_t>(caller);
             bad += result < 1 || result > 3;
-            ++count;
+            calls.fetch_add(1, std::memory_order_relaxed);
         }
-        calls.store(count);
     });
+    while (!calls.load(std::memory_order_relaxed))
+        Thread::yield();
 
     const MacroAssemblerCodeRef<JSEntryPtrTag>* targets[] = { &target2, &target3, &target1 };
-    for (unsigned i = 0; i < retargets; ++i) {
+    unsigned callsBeforeRetargeting = calls.load(std::memory_order_relaxed);
+    unsigned i = 0;
+    for (; i < retargets || calls.load(std::memory_order_relaxed) - callsBeforeRetargeting < overlappingCalls; ++i) {
         auto& target = *targets[i % std::size(targets)];
         CodeLocationLabel<JSEntryPtrTag> destination(target.code());
         CodeLocationLabel<JSEntryPtrTag> prepared = MacroAssembler::prepareForAtomicRepatchNearCallConcurrently(callLocation, destination);
@@ -8882,11 +8888,12 @@ static void testCrossModifyingNearCall(bool tailCall)
         for (unsigned spin = 0; spin < 2000; ++spin)
             WTF::compilerFence();
     }
+    unsigned overlapping = calls.load() - callsBeforeRetargeting;
     stop.store(true);
     runner->waitForCompletion();
-    dataLogLn("testCrossModifyingNearCall(", tailCall, "): ", calls.load(), " calls during ", retargets, " retargets");
+    dataLogLn("testCrossModifyingNearCall(", tailCall, "): ", overlapping, " calls during ", i, " retargets");
     CHECK_EQ(bad, 0U);
-    CHECK_EQ(calls.load() > 0, true);
+    CHECK_EQ(overlapping >= overlappingCalls, true);
 }
 #endif // ENABLE(JUMP_ISLANDS)
 #endif // CPU(ARM64) || CPU(PPC64LE)

@@ -2245,6 +2245,7 @@ inline Vector<String> matchAll(const CString& source, std::regex regex)
     return matches;
 }
 
+#if ENABLE(DISASSEMBLER)
 void testElideSimpleMove()
 {
     for (unsigned tmpCount = 1; tmpCount < 100; tmpCount++) {
@@ -2285,6 +2286,7 @@ void testElideSimpleMove()
             RELEASE_ASSERT_NOT_REACHED();
     }
 }
+#endif
 
 void testElideHandlesEarlyClobber()
 {
