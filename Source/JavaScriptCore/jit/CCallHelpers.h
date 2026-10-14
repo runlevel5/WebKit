@@ -746,6 +746,37 @@ private:
         setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
     }
 
+#if CPU(PPC64LE)
+    template<typename ArgumentType>
+    void widenNarrowIntegerArgument(GPRReg reg)
+    {
+        // Callers that do not know the C function's type pass a signature made of the argument
+        // values' own types instead (FTL's callOperation: setupArguments<void(ArgumentTypes...)>).
+        // A GPRReg there names the register holding the value, not a narrow integer parameter.
+        if constexpr (std::is_same_v<ArgumentType, GPRReg>)
+            return;
+        else if constexpr (std::is_enum_v<ArgumentType>)
+            widenNarrowIntegerArgument<std::underlying_type_t<ArgumentType>>(reg);
+        else if constexpr (std::is_integral_v<ArgumentType> && sizeof(ArgumentType) < sizeof(CPURegister)) {
+            if constexpr (std::is_signed_v<ArgumentType>) {
+                if constexpr (sizeof(ArgumentType) == 1)
+                    signExtend8To32(reg, reg);
+                else if constexpr (sizeof(ArgumentType) == 2)
+                    signExtend16To32(reg, reg);
+                else
+                    signExtend32ToPtr(reg, reg);
+            } else {
+                if constexpr (sizeof(ArgumentType) == 1)
+                    zeroExtend8To32(reg, reg);
+                else if constexpr (sizeof(ArgumentType) == 2)
+                    zeroExtend16To32(reg, reg);
+                else
+                    zeroExtend32ToWord(reg, reg);
+            }
+        }
+    }
+#endif
+
     template<typename OperationType, unsigned gprIndex>
     constexpr void finalizeGPRArguments(std::index_sequence<>)
     {
@@ -770,6 +801,17 @@ private:
                 GPRReg argReg = GPRInfo::toArgumentRegister(gprIndex);
                 signExtend32ToPtr(argReg, argReg);
             }
+#if CPU(PPC64LE)
+            // ELFv2 likewise makes the caller widen an integer argument narrower than a register to
+            // 64 bits, sign- or zero-extending by its type, and callees rely on it: compiled code
+            // uses an int32_t parameter directly as a 64-bit index. JIT code keeps 32-bit values in
+            // registers whose upper half is unspecified (a DFG int32 may even still carry the
+            // number tag), so widen every such argument here. ELFv2 assigns GPRs by argument
+            // position (an FP argument skips its GPR), so the register is the position's, not
+            // gprIndex's.
+            if (arityIndex < elfV2ArgumentGPRs)
+                widenNarrowIntegerArgument<ArgumentType>(GPRInfo::toArgumentRegister(arityIndex));
+#endif
 
             finalizeGPRArguments<OperationType, gprIndex + 1>(NextIndexSequenceType());
         } else
