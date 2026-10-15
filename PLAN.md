@@ -280,9 +280,13 @@ Build traps — both look like compile errors that contradict the file you just 
 
 - **POWER8 silicon** — the largest risk. Everything ran on POWER9/POWER10, with POWER8 paths tested
   only by capping the ISA level, which cannot catch an unguarded newer instruction.
-- POWER10/POWER9 performance candidates: prefixed `pli`/`paddi` for 34-bit immediates, pc-relative
-  addressing for far calls, POWER9 vector lane insert/extract (`vinsertw`, `vextublx`), `cmpeqb`
-  for Yarr character classes.
+- POWER9 performance candidates: vector lane insert/extract (`vinsertw`, `vextublx`), `cmpeqb` for
+  Yarr character classes.
+- Not worth doing: POWER10 prefixed `pli`/`pla`. Measured on POWER10, a pointer constant
+  (`li; sldi; oris; ori` vs `pli; sldi; ori`), an int32 (`lis; ori` vs `pli`) and a far call
+  (`li64; mtctr; bctrl` vs `pla r12; mtctr; bctrl`) run at the same speed, and only the far call
+  is smaller (12 bytes, mostly in cold slow paths). Prefixed instructions must not cross a 64-byte
+  boundary, which LinkBuffer's branch compaction and the allocator's alignment do not preserve.
 - Yarr: SIMD Boyer-Moore and multi-pattern searches are ARM64/x86_64-only;
   `maximumRegExpTestInlineCodesize` (500 bytes) is untuned for PPC64's larger code (~4 of 23 sample
   patterns inline).
