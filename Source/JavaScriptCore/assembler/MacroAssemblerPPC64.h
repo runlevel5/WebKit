@@ -2341,6 +2341,24 @@ public:
     void vectorReplaceLaneFromGPR(unsigned elementBytes, unsigned lane, RegisterID src, FPRegisterID dest)
     {
         ASSERT(src != dataTempRegister);
+        if (elementBytes < 8 && supportsISA3_00()) {
+            // POWER9 inserts in place. mtvsrwz puts src in word 1, whose low
+            // byte and halfword are where vinsertb/vinserth take their element.
+            unsigned byteOffset = elementBytes * isaElementForLane(elementBytes, lane);
+            if (elementBytes == 4) {
+                m_assembler.mtvsrwz(vsr(vecTemp0), src);
+                m_assembler.xxinsertw(vsr(dest), vsr(vecTemp0), byteOffset);
+                return;
+            }
+            m_assembler.mtvsrwz(vsr(vecTemp1), src);
+            copyToVR(dest, vecTemp0);
+            if (elementBytes == 1)
+                m_assembler.vinsertb(vecTemp0, vecTemp1, byteOffset);
+            else
+                m_assembler.vinserth(vecTemp0, vecTemp1, byteOffset);
+            copyFromVR(vecTemp0, dest);
+            return;
+        }
         unsigned perDoubleword = 8 / elementBytes;
         ASSERT(lane < 2 * perDoubleword);
         bool high = lane >= perDoubleword;
@@ -2429,6 +2447,13 @@ public:
     }
     void vectorReplaceLaneFloat32(TrustedImm32 lane, FPRegisterID src, FPRegisterID dest)
     {
+        if (supportsISA3_00()) {
+            // xscvdpspn leaves the single in word 0; xxinsertw takes word 1.
+            m_assembler.xscvdpspn(vsr(vecTemp0), vsr(src));
+            m_assembler.xxsldwi(vsr(vecTemp0), vsr(vecTemp0), vsr(vecTemp0), 3);
+            m_assembler.xxinsertw(vsr(dest), vsr(vecTemp0), 4 * isaElementForLane(4, lane.m_value));
+            return;
+        }
         // double -> single bits in word 0, then into a GPR and in as an i32 lane.
         m_assembler.xscvdpspn(vsr(vecTemp0), vsr(src));
         m_assembler.mfvsrd(memoryTempRegister, vsr(vecTemp0));

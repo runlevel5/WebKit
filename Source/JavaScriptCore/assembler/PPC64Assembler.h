@@ -1578,6 +1578,23 @@ public:
     // Math.min/max. A signalling NaN comes back unquieted, which wasm forbids.
     void xsmaxjdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 144)); }
     void xsminjdp(uint32_t vsrT, uint32_t vsrA, uint32_t vsrB) { insn(xx3Form(60, vsrT, vsrA, vsrB, 152)); }
+    // Insert word element 1 of XB / byte 7 of VRB / halfword 3 of VRB at byte
+    // UIM (big-endian numbering) of the target, leaving its other bytes.
+    void xxinsertw(uint32_t vsrT, uint32_t vsrB, unsigned uim)
+    {
+        ASSERT(uim <= 12);
+        insn(xx2Form(60, vsrT, vsrB, 181) | (uim << 16));
+    }
+    void vinsertb(VRegisterID vrt, VRegisterID vrb, unsigned uim)
+    {
+        ASSERT(uim <= 15);
+        insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 781) | (uim << 16));
+    }
+    void vinserth(VRegisterID vrt, VRegisterID vrb, unsigned uim)
+    {
+        ASSERT(uim <= 14);
+        insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 845) | (uim << 16));
+    }
     // Byte-reverse each halfword / word / doubleword of RS.
     void brh(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 219, /*Rc*/ 0)); }
     void brw(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 155, /*Rc*/ 0)); }
