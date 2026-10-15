@@ -2863,6 +2863,16 @@ public:
         m_assembler.or_(dest, dest, dataTempRegister);
         m_assembler.srdi(dest, dest, 63);
     }
+    // Zero / NonZero on all 128 bits of vec.
+    Jump branchTest128(ResultCondition cond, FPRegisterID vec)
+    {
+        ASSERT(cond == Zero || cond == NonZero);
+        m_assembler.mfvsrd(dataTempRegister, vsr(vec));
+        m_assembler.xxswapd(vsr(vecTemp4), vsr(vec));
+        m_assembler.mfvsrd(memoryTempRegister, vsr(vecTemp4));
+        m_assembler.or_(dataTempRegister, dataTempRegister, memoryTempRegister);
+        return branchTest64(cond, dataTempRegister);
+    }
     void vectorAnyTrue(FPRegisterID vec, RegisterID dest)
     {
         copyToVR(vec, vecTemp0);

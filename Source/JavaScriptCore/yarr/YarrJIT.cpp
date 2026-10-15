@@ -3874,7 +3874,7 @@ class YarrGenerator final : public YarrJITInfo {
                     m_jit.move(MacroAssembler::TrustedImm32(0), m_regs.firstCharacterAdditionalReadSize);
 #endif
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
                 // Try multi-pattern SIMD search first if available (more selective for alternation patterns)
                 if (op.m_maskedAltInfo) {
                     MacroAssembler::JumpList matched;
@@ -3932,7 +3932,7 @@ class YarrGenerator final : public YarrJITInfo {
                             break;
 
                         unsigned strideLength = endIndex - beginIndex;
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
                         // Try SIMD nibble table optimization first for any number of candidates.
                         // This includes the scalar loop internally for tail processing,
                         // following the same pattern as generateMultiPatternSIMDSearch.
@@ -5772,7 +5772,7 @@ class YarrGenerator final : public YarrJITInfo {
                 } else
                     dataLogLnIf(YarrJITInternal::verbose, "BM collection failed");
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
                 // Try multi-pattern SIMD search for alternations with 2 fixed alternatives
                 // This is more effective than bitmap lookahead for patterns like /agggtaaa|tttaccct/i
                 if (m_charSize == CharSize::Char8 && alternatives.size() >= 2) {
@@ -6150,7 +6150,7 @@ class YarrGenerator final : public YarrJITInfo {
         jumpIfAvailableInput(strideLength).linkTo(loopHead, &m_jit);
     }
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
     // Generate SIMD-accelerated multi-pattern search for alternation patterns like /agggtaaa|tttaccct/i:
     // The idea comes from the SkipUntilOneOfMasked optimization from V8.
     //
@@ -6487,7 +6487,7 @@ class YarrGenerator final : public YarrJITInfo {
             return std::nullopt;
 #endif
 
-#if CPU(ARM64) || CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)
         JIT_COMMENT(m_jit, "BitInTable SIMD search");
 
         // ==================== SETUP CONSTANTS (OUTSIDE LOOP) ====================
@@ -6566,7 +6566,7 @@ class YarrGenerator final : public YarrJITInfo {
 #if CPU(ARM64)
         // Use byte-wise shift (USHR)
         m_jit.vectorUshrInt8(m_regs.vectorInput0, 4, m_regs.vectorScratch1);
-#elif CPU(X86_64)
+#elif CPU(X86_64) || CPU(PPC64LE)
         // Use word-wise shift (VPSRLW). This shifts 16-bit lanes, but since we
         // immediately AND with 0x0F, the cross-byte contamination is masked out.
         m_jit.vectorUshr8(SIMDInfo { SIMDLane::i16x8, SIMDSignMode::Unsigned }, m_regs.vectorInput0, MacroAssembler::TrustedImm32(4), m_regs.vectorScratch1);
@@ -6607,6 +6607,12 @@ class YarrGenerator final : public YarrJITInfo {
 
         // Check if any match found
         auto matchInVector = m_jit.branchTest32(MacroAssembler::NonZero, m_regs.regT0);
+#elif CPU(PPC64LE)
+        // As on x86_64, but only test for any match in the loop: the byte mask is
+        // a long sequence before POWER10, so it is computed once a match is found.
+        m_jit.vectorAnd(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorScratch2, m_regs.vectorScratch3, m_regs.vectorScratch0);
+        m_jit.compareIntegerVector(MacroAssembler::Equal, SIMDInfo { SIMDLane::i8x16, SIMDSignMode::None }, m_regs.vectorScratch0, m_regs.vectorScratch3, m_regs.vectorScratch0);
+        auto matchInVector = m_jit.branchTest128(MacroAssembler::NonZero, m_regs.vectorScratch0);
 #endif
 
         // ==================== NO MATCH - ADVANCE ====================
@@ -6632,6 +6638,9 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.urshift64(MacroAssembler::TrustedImm32(2), m_regs.regT0);
 #elif CPU(X86_64)
         // BSF/TZCNT directly gives the byte index (no division needed since PMOVMSKB gives one bit per byte)
+        m_jit.countTrailingZeros32(m_regs.regT0, m_regs.regT0);
+#elif CPU(PPC64LE)
+        m_jit.vectorBitmask(SIMDInfo { SIMDLane::i8x16, SIMDSignMode::None }, m_regs.vectorScratch0, m_regs.regT0);
         m_jit.countTrailingZeros32(m_regs.regT0, m_regs.regT0);
 #endif
 

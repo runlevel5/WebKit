@@ -185,6 +185,22 @@ public:
     // ELFv2 returns a two-word aggregate (UGPRPair) in r3/r4.
     static constexpr GPRReg returnRegister = PPC64Registers::r3;
     static constexpr GPRReg returnRegister2 = PPC64Registers::r4;
+
+    // SIMD searches. VSR0-13 are volatile in ELFv2, and the searches are only
+    // used when the generated code makes no calls.
+    static constexpr FPRReg vectorTemp0 = PPC64Registers::f0;
+    static constexpr FPRReg vectorTemp1 = PPC64Registers::f1;
+    static constexpr FPRReg vectorTemp2 = PPC64Registers::f2;
+    static constexpr FPRReg vectorTemp3 = PPC64Registers::f3;
+    static constexpr FPRReg vectorTemp4 = PPC64Registers::f4;
+    static constexpr FPRReg vectorInput0 = PPC64Registers::f5;
+    static constexpr FPRReg vectorInput1 = PPC64Registers::f6;
+    static constexpr FPRReg vectorInput2 = PPC64Registers::f7;
+    static constexpr FPRReg vectorInput3 = PPC64Registers::f8;
+    static constexpr FPRReg vectorScratch0 = PPC64Registers::f9;
+    static constexpr FPRReg vectorScratch1 = PPC64Registers::f10;
+    static constexpr FPRReg vectorScratch2 = PPC64Registers::f11;
+    static constexpr FPRReg vectorScratch3 = PPC64Registers::f12;
 #endif
 };
 
