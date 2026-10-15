@@ -1,1638 +1,295 @@
-# JavaScriptCore PPC64LE (POWER8+) JIT & WASM Port — Plan
+# JavaScriptCore on PPC64LE — port notes
 
-## Goal
+JSC's JIT tiers and WebAssembly on 64-bit little-endian POWER. **POWER8 (Power ISA 2.07) is the
+baseline**; POWER9 (ISA 3.0) and POWER10 (ISA 3.1) instructions are used only behind runtime checks.
+Non-goals: 32-bit PPC, big-endian, AIX, pointer authentication.
 
-Bring JavaScriptCore's JIT tiers and WebAssembly engine up on **PPC64 little-endian**. **Baseline ISA: Power ISA v2.07** (POWER8). POWER9/POWER10-only opcodes (Power ISA v3.0/v3.1 additions: `darn`, VSX3, `lxvll`/`stxvll`, byte-reverse VSX, etc.) are **optional fast paths** — every such use must be guarded by a runtime capability check or compile-time feature flag and must have a v2.07-only fallback. "Working" means `jsc` shell runs the JSTests stress suite at JIT and FTL tiers, and the WASM BBQ/OMG tiers pass wasm conformance, on a POWER8 machine with no POWER9+ instructions executed.
+- Branch `ppc64` on the fork `github.com/runlevel5/WebKit-ppc64`, based on the **WebKitGTK 2.54.1**
+  tag (`webkitgtk-2.54.1` = `628d6ce1850e`, release branch `webkitglib/2.54`) since 2026-10-15.
+  The earlier `main`-based line is `ppc64-main-base` (`476f932e2234`); upstreaming to `main` starts there.
+- Sister port: SpiderMonkey PPC64 in `~/Work/firefox` (read-only; its `PLAN.md` documents the
+  traps it hit). Reference backends here: ARM64 for semantics, RISCV64 for the shape of a new port.
 
-Non-goals for v1: 32-bit PPC, big-endian, AIX, ARM64E-style pointer authentication.
+## Status
 
-## Target environment
+On by default, all tested on POWER9 and POWER10:
 
-| Purpose | Host | Role |
-|---|---|---|
-| Primary dev/test | `tle@192.168.1.247` | PPC64LE, build + run the new port |
-| Reference oracle | `tle@192.168.64.3` | ARM64, cross-check JIT behavior on identical inputs |
-| Workstation | local macOS | edit, agent loop, git |
+- LLInt (offlineasm backend), Baseline, DFG, FTL (B3/Air).
+- WebAssembly: IPInt (including SIMD), BBQ, OMG; SIMD, tail calls, wide arithmetic; signal-based
+  bounds checks (`useWasmFastMemory`, `useWasmFaultSignalHandler`).
+- Yarr RegExp JIT (all features ARM64 has except the SIMD searches), sampling profiler,
+  signal-based VM traps, jump islands, branch compaction.
+- Float16 JIT paths on POWER9+; POWER9/POWER10 fast paths (see ISA levels below).
 
-Workflow: edit locally, push to a branch, pull on the PPC64 box, build + run. Use the ARM64 box to produce golden outputs (bytecode dumps, DFG IR, test results) when something behaves oddly on PPC64 — `jsc --dumpBytecode=1`, `--dumpDFGGraph=1`, `JSC_dumpAirGraph=1` are the primary observability levers. Always diff PPC64 output against ARM64 output for the **same jsc binary flags on the same input**.
+Latest gates (2.54.1 suites):
 
-## ISA references (keep open)
+| Host, ISA level | JSTests/stress | JSTests/wasm.yaml | testmasm | testb3 / testair |
+|---|---|---|---|---|
+| power9, 3.0 | 82,176 / 0 | 19,812 / 0 | — | — |
+| power9, capped 2.07 | 82,176 / 0 | 19,812 / 0 | — | — |
+| power10, 3.1 | 82,176 / 0 | 19,812 / 0 | 386 / 0 | pass |
+| power10, capped 3.0 / 2.07 | — | — | 386 / 0 | pass (2.07) |
 
-- **Power ISA v2.07B** — POWER8 spec, **the baseline we target and the primary source of truth** for every instruction we emit unconditionally. Every opcode added to `PPC64Assembler` must be present in v2.07B unless gated behind a POWER9+ feature check.
-- **Power ISA v3.0B** — POWER9 additions. Only consult when implementing a **guarded** fast path. Any use must cite the v3.0B section in the source comment AND have a v2.07 fallback.
-- **Power ISA v3.1** — POWER10 additions (prefixed instructions, MMA). Out of scope for v1; do not emit.
-- **ELFv2 ABI (OpenPOWER)** — PPC64LE calling convention, register save/restore, TOC/PLT, red zone (288 bytes below r1).
-- **64-bit ELF V2 ABI Specification: Power Architecture, Rev 1.5**.
-- `/usr/include/linux/elf.h` + `<asm/ptrace.h>` on the test box for signal context / MachineContext.
+Also clean at some point on POWER9: ASSERT build, ASan + UBSan (no ASan reports; failures were
+sanitizer stack/memory overhead), concurrency stress, TestWTF / TestJavaScriptCore / testapi,
+RegExp yaml 85 / 0, RegExpTest.data 2,085 checks.
 
-Rule: do not write a single PPC instruction encoding from memory. Every opcode goes via a citation in PLAN notes or inline comment pointing to an ISA section — **and that citation must be Power ISA v2.07B** unless the opcode is behind a POWER9+ feature gate. Every calling-convention choice cites ELFv2.
+Benchmarks (POWER9, before the 2.54.1 move; `power9:/home/tle/bench/SUMMARY.txt` has the rest):
 
-## Architecture survey (what JSC needs per-arch)
-
-1. **Detection** — `Source/WTF/wtf/PlatformCPU.h` already defines `WTF_CPU_PPC64` / `WTF_CPU_PPC64LE`; `Source/cmake/WebKitCommon.cmake` + `WebKitFeatures.cmake` need a PPC64LE branch (mirror the `WTF_CPU_RISCV64` pattern at `WebKitFeatures.cmake:113`).
-2. **Assembler** — `Source/JavaScriptCore/assembler/`: new `PPC64Assembler.h` (ISA encoder) + `PPC64Registers.h` + `MacroAssemblerPPC64.h/.cpp` wired into `MacroAssembler.h` and `TargetAssemblerDefinitions.h`.
-3. **LLInt offlineasm** — `Source/JavaScriptCore/offlineasm/ppc64le.rb` backend; register it in `backends.rb` and `Source/JavaScriptCore/CMakeLists.txt:278` (the `OFFLINE_ASM_BACKEND` switch).
-4. **Baseline JIT / DFG** — mostly architecture-agnostic on top of MacroAssembler; the 64-bit paths in `dfg/DFGSpeculativeJIT64.cpp` light up once MacroAssemblerPPC64 is solid.
-5. **B3 / Air** — `Source/JavaScriptCore/b3/air/`: per-arch register info, `AirCCallingConvention` specialization, `AirOpcode.opcodes` entries, and any arch-specific lowering. Once Air supports PPC64, both **FTL and WASM OMG** light up together.
-6. **WASM** — BBQ (`WasmBBQJIT.cpp`) piggybacks on MacroAssembler; OMG piggybacks on B3/Air. `WasmCallingConvention.cpp` needs a PPC64 ABI block.
-7. **Runtime glue** — `MachineContext.h` (signal unwinding; PPC already has an entry), `FastTLS`, probe trampolines, and JIT cage / executable-memory allocation on Linux PPC64.
-
-**Primary reference: ARM64.** ARM64 is by far the most mature and exercised 64-bit backend in JSC — it covers every JIT tier, WASM tier, SIMD, concurrent JIT, the full Probe API, and is the platform Apple ships. When a design question comes up ("how does this interact with OSR exit?", "what does the calling convention look like for a slow-path call?", "how is the probe frame laid out?"), the ARM64 code is the authoritative answer. Every phase starts by reading the ARM64 equivalent file and understanding what it does before writing PPC64 code.
-
-**Secondary reference: RISCV64.** It is the most recent clean new-arch introduction, so its **shape** (how new files are structured, what the minimal set of new CMake/offlineasm/MacroAssembler entries looks like, what can be stubbed vs must be real) is the best template for "what does a new port look like in 2025." Use RISCV64 to answer "what do I need to add?" — then use ARM64 to answer "what does the addition need to do?" If RISCV64 and ARM64 disagree on approach, follow ARM64 unless there's a specific reason the RISCV64 path fits PPC64 better (e.g. both are bare non-Apple Linux ports, so page size / JIT cage / signal trampoline bits may track RISCV64 more closely than ARM64).
-
-Divergences to expect: PPC has condition registers, link register separate from GPRs, LR/CTR indirect-branch pair, TOC pointer in r2, and relaxed memory ordering requiring explicit `lwsync`. ARM64 shares none of these, RISCV64 shares none of these. These are the places where PPC64 will need genuinely original code, not a port.
-
-## Lessons from the Firefox SpiderMonkey PPC64 port (hard-won)
-
-A working PPC64 JIT was recently completed for SpiderMonkey (Firefox 151+, bug 1860412) and is documented in `~/Work/firefox/PLAN.md`. The bugs it hit are almost all **architecture-level** (not SpiderMonkey-specific), so they will show up in JSC too. Read this section before writing PPC64 code. Each item below is a concrete trap with a known workaround.
-
-### Scratch-register discipline (the top source of pain in the SM port)
-
-PPC64's scratch register story is more constrained than ARM64's. A careless borrow of a scratch mid-sequence is the single most common source of silent miscompiles.
-
-- **r0 is not a general-purpose scratch.** In many encodings (D-form loads/stores, `addi`), r0 means "literal zero" instead of "read register 0." Document this in `PPC64Registers.h`: `r0` is non-allocatable as a base register in load/store; the JIT can use it freely only for non-base operands. Every MacroAssembler method that takes a base register must assert it is not r0 in debug builds.
-- **Establish a fixed scratch pool early.** SM's convention: `r11` + `r12` = primary scratch pool (two regs always available), `r16` = secondary "saved scratch" (pool base register for constant pool loads). Adopt the same split and document it in `PPC64Registers.h`. When a macro needs a third scratch, the caller saves to the red zone or stack — don't borrow silently.
-- **`computeConditionCode` on the POWER8 overflow path clobbers r0.** This is an actual SM bug that survived into production and is tracked but deferred there. Refactor the overflow sequence (`mfxer + rlwinm + mtcrf`) to route through the scratch pool, not r0. Worth fixing in JSC from day one.
-- **IC machinery borrowing scratch regs needs audit.** SM's `EmitCallIC` uses `R2.scratchReg()` and the safety of that is "plausibly safe, needs deeper audit" — it's an open item. JSC's equivalent (`Repatch.cpp` IC patching) must explicitly document which registers are guaranteed live across an IC call and which are scratch.
-- **SIMD splats clobber source GPRs.** `splatX{8,16}` clobbers its source GPR on POWER8. Any variable-shift Int8/Int16 caller must `mr` (move) into a scratch before splatting. This is a footgun for any SIMD op that reuses a source operand.
-- **`replaceLaneInt32x4` POWER8 fallback needs an extra GPR scratch.** If the caller already holds both r11 and r12, the macro asserts. Either take the scratch as a parameter or document the callers that must free a register before invoking.
-- **Dest-aliasing matrix for every destructive op.** For every SIMD or GPR destructive helper, write test cases covering all four aliasing configurations: no-alias, `dest == lhs`, `dest == rhs`, `lhs == rhs`. The SM port's argon2 miscompile came from handling only `dest == lhs`. Prefer native PPC forms that are naturally non-destructive (e.g. `vmul{e,o}{u,s}w`) so the register allocator has freedom.
-
-### SIMD / VSX / VMX traps (Power ISA v2.07 baseline)
-
-- **`stxvx` vs `stfd` LE byte order.** On PPC64 LE, `stxvx` places a scalar double at bytes 8-15; `stfd` at bytes 0-7. For scalar FP save/restore (including probe frames and bailout stacks), **always use `stfd`/`lfd`, never `stxvx`/`lxvx`**. Cross-kind reads of the same slot (e.g. the B3 spill slot interpretation) depend on this.
-- **VMX vs VSX register-space confusion.** VMX instructions address VR0-31 (= VSR32-63); FPRs are VSR0-31. A Simd128 encoded in VSR0-31 will need a VR-staging round-trip for every VMX op. Decide the encoding early: SM moved Simd128 into the VR namespace (VSR32-63) in Phase 2 and saved ~80 dynamic instructions across extmul/dot/widen. **Do the same in JSC from the start.** *(JSC decided otherwise, 2026-10-08: JSC's allocators and calling convention treat vectors as FPRs, so v128 lives in VSR 0-31 and VMX ops stage through v0-v5. See "Status — 2026-10-08, wasm SIMD".)*
-- **`ScratchSimd128Reg` must be distinct from `ScratchDoubleReg`.** SM's post-Phase-2 convention: `ScratchDoubleReg = f0`, `ScratchSimd128Reg = v0`. They are different physical registers. Do not alias them; scalar FP X/A-form ops (`fcfid`, `fctiwz`, `lfdx`, `fcmpu`) encode only a 5-bit FRT/FRB and will corrupt the opcode if given a Simd128-encoded register. Bridge scalar↔SIMD via `ScratchDoubleScope` + `xxlor` (XX3-form).
-- **`xxsel XT,XA,XB,XC` is `(XA & ~XC) | (XB & XC)` — opposite of the intuitive reading.** Wrap this in a named helper the first time you use it. Wasteful to rediscover.
-- **`xxpermdi DM`: DM bit 0 selects XA dword for result DW0; DM bit 1 selects XB dword for result DW1.** DM=2 swaps both halves. Document the table; do not reason from the spec under time pressure.
-- **PPC64 LE inverts VMX "high"/"low".** `vupkhsb` unpacks the LOW wasm lanes on LE; `vupklsb` unpacks the HIGH. VMX naming is big-endian by spec — **all JSC code comments must use wasm-lane-direction naming, not VMX-spec naming.**
-- **`splatX4` only fills word elements.** Byte/halfword shifts need `splatX16`/`splatX8`; substituting is a silent miscompile.
-- **Red-zone stash pattern.** ELFv2 reserves 288 bytes below SP. Three SM SIMD helpers (`extAddPairwiseInt*`, `dotInt8x16Int7x16ThenAdd` 4-arg, `swizzleInt8x16`) use 16-32 bytes of red zone when a proper temp would be a bigger cross-file change. Acceptable workaround but must be documented at the call site.
-- **Verify against ISA, not comments, not AI.** Never trust an AI agent's PPC64 semantic claim. Always cross-check against the Power ISA v2.07B manual AND a minimal empirical C program compiled with GCC that exercises the exact opcode.
-
-### Constant pools and FP-constant routing
-
-- **Do NOT retry `bcl + mflr + lfd/lfs` for hot FP scalar constants.** The SM port built it, tested it correct, then saw ~200× slowdown from Return Address Stack (RAS) thrash on POWER8. POWER8 stays inline (GCC-style `lis + ori + rldimi`) by design; there is no POWER8 equivalent to POWER9's `addpcis`.
-- **POWER9 FP constants via `addpcis` + `lfd/lfs`** — no branch, no LR clobber, no RAS push. Gate behind `HasPOWER9()`.
-- **Trap-site / pool-flush ordering.** Any `wasmLoad`/`wasmStore`/atomic helper that records a trap-site offset must `flushPool()` **before** the offset is recorded. Otherwise a constant-pool body inserted between `currentOffset()` and the actual load shifts the load past the recorded offset and the trap fires at the wrong PC. This is subtle and only triggers under specific wasm memory-access patterns.
-- **`loadConstantSimd128` should always go via an inline pool entry**, not `movePtr × 2 + mtvsrdd`. ~60% smaller.
-- **Pool base register.** SM uses `r16` (not `r12`) as the pool base to avoid scratch-pool conflict. JSC should do the same: reserve one non-volatile GPR for pool loads and keep it out of the scratch pool.
-
-### Branch and call size constraints
-
-These hard limits dictate every `enterNoPool` guard and `ma_b` size reservation. Get them wrong and a late pool flush shifts your branch past its target.
-
-- Conditional branches (BC-form): 16-bit displacement, **±32 KB**.
-- Unconditional branches (B-form): 26-bit displacement, **±32 MB**.
-- Patchable near-call (`PatchWrite_NearCallSize`): **40 bytes = 10 instructions** (ELFv2 TOC-safe call stanza).
-- `ma_b` forward / long branch worst case: reserve **14 instructions** of no-pool space (POWER8 overflow-condition adds 3 insns vs POWER9's `mcrxrx`).
-- `toggledCall` / `call(ImmPtr)` / `nopPatchableToCall` / `callWithPatch`: reserve **10 instructions**.
-
-**Stanza invariant**: every `label->bound()` code path needs both short-form AND long-form handling. If the label is bound and the offset fits in 16/26 bits, emit the short branch; otherwise emit a full `load64 + mtctr + bctr` (or `bctrl` for calls) stanza with a relocation entry. Unbound labels always emit the long form as a trap stanza for `bind()` to resolve. JSC's `LinkBuffer` is the place to enforce this invariant — do not let any backend path short-circuit to a single-form emit.
-
-### Validation traps
-
-- **POWER8 forced testing ≠ real POWER8 silicon.** The SM port has a `MOZ_PPC64_FORCE_POWER8=1` flag that flips runtime gating but the CPU still executes POWER9 instructions if something slipped past the gate. SM's original 4-instance bug (unguarded `xxinsertw` in SIMD replaceLane) passed the forced-POWER8 suite and would have crashed on real P8 silicon. **Design the JSC equivalent as `JSC_forcePOWER8=1` but treat results as provisional** — the definitive POWER8 validation requires actual POWER8 hardware (or possibly qemu-power8, untested at scale).
-- **Always run forced-POWER8 alongside POWER9** as a matrix, not as an afterthought. The SM argon2 postmortem uncovered a *second independent bug* (ExtractLaneToGPR scratch clobber) that only forced-POWER8 would have caught.
-- **Never trust single-tier self-verify tests.** Crypto or hash-based benchmarks that re-run their own hash inside one tier are blind to miscompiles — both the reference and the result go through the same buggy codegen. Hash against a native reference (Python, OpenSSL, node on another arch).
-- **Add a differential baseline-vs-FTL harness early.** Diffing observable state between `--useFTLJIT=0` and `--useFTLJIT=1` on a handful of representative wasm/JS programs would have flagged SM's argon2 miscompile on day one. In JSC terms: baseline-vs-DFG-vs-FTL, three-way diff.
-- **`wasm-reduce` + differential predicate** is the fastest minimal-repro tool for SIMD miscompiles. SM reduced a 30 KB / 40-function module to 486 B / 7 functions in ~20 minutes, unattended. Set this up before you need it.
-
-### Concurrency / memory ordering
-
-SM ran into a **compare-exchange-fail-path reservation leak** and three workarounds all pessimised the success path; the hazard is narrow per ISA and remains open. JSC's `Atomics*` implementations will need the same care. PPC's `lwarx`/`stwcx.` (and `ldarx`/`stdcx.`) reservation semantics require the fail path to explicitly clear the reservation via a dummy `stwcx.` or an intervening event — and doing it cleanly without slowing the success path is an unsolved problem in SM's port. Assume you will hit this and design the compare-exchange macro with a separate success-path and fail-path exit so the fail path can be enlarged without regressing success.
-
-### Audit methodology (learn from the SM experience)
-
-The SM author repeatedly found that subagent code audits produced **plausible-looking file:line claims that were pure extrapolation**. The pattern: an agent sees `if (HasPOWER9()) { fast } else { fallback }` and fabricates "the POWER8 fallback is a missed optimization" without opening the file. On 2026-04-20 this generated a bogus "P8 slowdowns" list that cost real investigation time.
-
-Rules for any audit subagent in this port:
-
-1. **Ask for evidence, not conclusions.** Every claim must quote the exact code at the cited line AND state what would falsify the claim. No quote = claim rejected.
-2. **Embed known failure modes in the prompt.** A `HasPOWER9()` branch with a fast path present is not a missed optimization; it's a hardware gap. Instruction count ≠ cycle count on out-of-order POWER9.
-3. **Two-pass verification.** First pass produces claims + citations; second pass (you or a narrow agent) opens every cited file:line. Claims that don't survive are dropped, not downgraded.
-4. **No subagent output enters PLAN.md in the same turn it was produced.** Draft → verify per-item → commit.
-5. **Measure on the dev box. Don't estimate.** Five minutes on real hardware beats arithmetic.
-
-Bucket every audit finding into one of:
-
-| Bucket | Pattern | Implication |
-|---|---|---|
-| (a) | `UNREACHABLE_FOR_PLATFORM()` reachable from a current caller | Real gap — fix |
-| (b) | `UNREACHABLE_FOR_PLATFORM()` in a `default:` or behind a gate no caller flips | Defensive — leave |
-| (c) | POWER9 fast path + POWER8 fallback, fallback is the tightest P8 encoding | Not a gap — hardware limit |
-| (d) | POWER9 fast path + POWER8 fallback, fallback is suboptimal | Real gap — fix |
-
-### Quick reference: register convention to adopt (mirrors SM, ELFv2-compliant)
-
-| Reg | Role |
-|---|---|
-| r0 | Scratch only; not valid as load/store base |
-| r1 | SP |
-| r2 | TOC pointer |
-| r3 | Return (also arg 0) |
-| r3–r10 | Argument GPRs |
-| r11, r12 | Scratch pool (MacroAssembler may borrow freely) |
-| r13 | Linux TLS (**do not reuse**) |
-| r14–r15 | Non-volatile, generally allocatable |
-| r16 | Reserved for constant-pool base |
-| r17–r30 | Non-volatile, allocatable |
-| r31 | FP (frame pointer) |
-| f0 | `ScratchDoubleReg` |
-| f1–f13 | FP argument / volatile |
-| f14–f31 | FP non-volatile, allocatable |
-| v0 | `ScratchSimd128Reg` (VSR32) |
-| v1–v19 | Volatile SIMD |
-| v20–v31 | Non-volatile SIMD (in `NonVolatileMask`) |
-| LR | Link register — saved to frame before nested calls |
-| CTR | Indirect-call pointer; also used by loop `bdnz` (conflict!) |
-| CR0 | Default condition-register field for MacroAssembler compares |
-| XER | Carry / overflow; needs care on branchAdd32/branchSub32 POWER8 path |
-
----
-
-## Phase 0 — Bring-up (build & test infra) — ✅ DONE 2026-04-23
-
-Gate (met): `jsc` runs on the PPC64LE box via **C_LOOP interpreter only**, passes the smoke subset of `JSTests/stress/`.
-
-### Verified working recipe
-
-**Box**: `tle@192.168.1.247` — Fedora 44, ppc64le, kernel 6.19.10, POWER9, 32 cores, 63 GiB RAM, **64 KiB page size**, GCC 16.0.1, clang 22.1.1, CMake 4.3.0, Ninja 1.13.2, Ruby 4.0.1, Perl 5.42.2, Python 3.14.3, ICU 77.1. No extra packages needed beyond a stock Fedora 44 Workstation with standard devtools.
-
-**Ship the source** (local → box):
-```sh
-# Exclude .git (12 GB of 18 GB total) — clone from GitHub on the box if you need git state.
-# Default ssh cipher; rsync over ssh runs at ~10 MB/s on the local LAN so this takes ~10–15 min for ~6 GB.
-rsync -a --progress \
-  --exclude='.git/' --exclude='WebKitBuild/' \
-  --exclude='.DS_Store' --exclude='**/.DS_Store' \
-  /Users/tle/Work/WebKit/ \
-  tle@192.168.1.247:/home/tle/Work/WebKit/
-```
-
-**Configure and build** (on the box):
-```sh
-cd /home/tle/Work/WebKit
-CXXFLAGS="-Wno-error=sfinae-incomplete" \
-  Tools/Scripts/build-jsc --jsc-only --release \
-    --cmakeargs="-DENABLE_C_LOOP=ON \
-                 -DENABLE_JIT=OFF \
-                 -DENABLE_WEBASSEMBLY=OFF \
-                 -DENABLE_STATIC_JSC=OFF \
-                 -DUSE_SYSTEM_MALLOC=ON"
-# ~15m45s on POWER9/32-core. Produces WebKitBuild/JSCOnly/Release/bin/jsc (~550 KB).
-```
-
-**Why each flag is needed:**
-- `-DENABLE_C_LOOP=ON -DENABLE_JIT=OFF -DENABLE_WEBASSEMBLY=OFF` — the Phase 0 scope: interpreter only.
-- `-DUSE_SYSTEM_MALLOC=ON` — **required**. The CMake "unknown CPU" default branch in `Source/cmake/WebKitFeatures.cmake` leaves `USE_SYSTEM_MALLOC_DEFAULT=OFF` and `USE_MIMALLOC_DEFAULT=OFF`, so bmalloc falls through to `libpas`, which in turn hits `Source/bmalloc/bmalloc/BPlatform.h:437` → `#error "libpas, mimalloc, or system malloc needs to be specified"` because libpas has no PPC64 port. System malloc is the cheapest Phase 0 fix; we'll revisit with mimalloc later.
-- `-DENABLE_STATIC_JSC=OFF` — matches the JSCOnly default; explicit to avoid surprise.
-- `CXXFLAGS="-Wno-error=sfinae-incomplete"` — **required on GCC 16** (Fedora 44). GCC 16 added `-Wsfinae-incomplete` which trips on WTF's forward-declared `WTF::String` / `WTF::CString` used in SFINAE contexts within `<iterator_concepts.h>`. This is a compiler-version issue, not PPC64-specific — same fix would be needed for an x86_64 Fedora 44 build. Demote to warning. (On GCC ≤ 15 or clang, the flag is a no-op.)
-
-### Known CMake quirk (latent, not yet blocking)
-
-`Source/cmake/WebKitCommon.cmake:125-130` has a buggy elseif ordering:
-```cmake
-elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(ppc|powerpc)")  # matches "ppc" in "ppc64le"
-    set(WTF_CPU_PPC 1)
-elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64")          # unreachable
-    set(WTF_CPU_PPC64 1)
-elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64le")        # unreachable
-    set(WTF_CPU_PPC64LE 1)
-```
-On `ppc64le`, `WTF_CPU_PPC=1` gets set (wrong), which means `WebKitFeatures.cmake` falls through to the `else()` "unknown CPU" branch (C_LOOP=ON, JIT=OFF, MALLOC=OFF) — which is what we want for Phase 0. Since no `CMakeLists.txt` reads `WTF_CPU_PPC*`, this latent bug has no runtime effect in Phase 0. **Fix in Phase 1** when we start wiring JIT defaults — reorder to most-specific-first (`ppc64le` → `ppc64` → `ppc`) and add a PPC64LE branch to `WebKitFeatures.cmake` with proper JIT/malloc defaults.
-
-### Smoke test (working)
-
-```sh
-# Small smoke subset:
-cd /home/tle/Work/WebKit
-mkdir -p /tmp/smoke
-cp JSTests/stress/{Number-isNaN-basics,Number-isNumber-basic,16bit-code,32bit-code}.js /tmp/smoke/
-Tools/Scripts/run-jsc-stress-tests \
-    --jsc WebKitBuild/JSCOnly/Release/bin/jsc \
-    --no-jit -c 8 \
-    /tmp/smoke
-
-# Results live in ./results/:
-cat results/resultsByFamily   # per-source-file PASS/FAIL
-cat results/results           # per-test-mode PASS/FAIL
-cat results/passed            # list of passing runs
-```
-
-**Observed result**: 4 source tests × 4 interpreter-compatible modes (`default`, `bytecode-cache`, `mini-mode`, `lockdown`) = **16/16 PASS**.
-
-**Critical flag**: `--no-jit` is required. Without it, the runner tries JIT-only modes (`no-llint`, `dfg-eager`, `ftl-*`) which fail with `INCOHERENT OPTIONS: at least one of useLLInt or useJIT must be true` or segfault, since our binary has no JIT.
-
-**Minor cosmetic**: runner prints `Warning: did not find json or highline; some features will be disabled.` and exits with code 1 even on all-PASS runs. The ruby `json`/`highline` gems are optional — test execution and results are unaffected. Install with `sudo gem install json highline` if you want the summary output / clean exit.
-
-### Quick smoke invocation
-
-```sh
-# One-liner sanity:
-/home/tle/Work/WebKit/WebKitBuild/JSCOnly/Release/bin/jsc -e 'print(40+2)'   # → 42
-```
-
-### Full JSTests/stress/ run — 2026-04-24
-
-Command: `run-jsc-stress-tests --jsc ... --no-jit -c 16 -o /tmp/stress-results JSTests/stress`
-Duration: ~30 min. Results: **17894 PASS / 11 FAIL out of 17905 test runs** (4978 source files × 4 modes = ~19912 scheduled; ~2000 skipped by the runner for non-jit reasons).
-
-All 11 failures are expected and explained:
-
-| Test | Modes | Cause | Notes |
+| | DFG / LLInt | FTL / DFG | M1 Pro reference (DFG/LLInt, FTL/DFG) |
 |---|---|---|---|
-| `typed-array-oom-in-buffer-accessor.js` | default, bytecode-cache, mini-mode, lockdown | `//@ memoryHog` + `--useGC=0` → OOM killer fires on 63 GB box | Not PPC64-specific; would fail on any large-RAM machine |
-| `map-forEach.js` | default, bytecode-cache, mini-mode, lockdown | `ReferenceError: Can't find variable: WebAssembly` | We built with `-DENABLE_WEBASSEMBLY=OFF`; remove this flag to fix |
-| `many-substrings-of-rope-shouldnt-use-excessive-memory.js` | default | Expected ≤7 MB but used 25 MB | **PPC64LE 64K pages**: allocations rounded to 64 KB; threshold is tuned for 4K-page platforms |
-| `codeblock-destructor-access-unlinkedcodeblock.js` | default | SIGTERM (timeout) | Test has `//@ skip if $cloop` — the runner doesn't auto-skip, C_LOOP is too slow for the 3s test window |
-| `proxy-set-failure-inline-cache.js` | bytecode-cache only | `shouldBe(setCalls, 1e7)` → `setCalls=0` | **Upstream cross-platform JSC bytecode-cache race** — see dedicated section below. Happens on ARM64 too at sufficient concurrency. Not PPC64-specific. |
+| microbenchmarks | 5.3× | 1.17× | 4.0×, 1.20× |
+| Octane | 12.4× | 1.43× | 12.3×, 1.68× |
+| LongSpider | 13.5× | 1.55× | 10.8×, 1.41× |
 
-**Verdict**: all 11 failures are either config/environment artifacts or (in the case of `proxy-set-failure-inline-cache.js.bytecode-cache`) an upstream cross-platform JSC bug. Zero PPC64-specific regressions found.
+JetStream2 (1 GB pool, packed allocations): Baseline 33.0, DFG 84.3, FTL 89.8. POWER10 fast paths
+vs the POWER8 sequences: Math.max −32%, 3-operand Math.min −50%, int `%` −21%, big-endian
+`getFloat64` −40%. Epiphany Speedometer 3.1 (Fedora RPM, Xvfb software rendering): 3.45 → 4.85.
 
-### ARM64 reference oracle cross-check — ✅ DONE 2026-04-23
+## Design notes
 
-**Box**: `tle@192.168.64.3` — Fedora 43, aarch64, 8 cores, 7.8 GB RAM.
+### Registers
 
-Built the same C_LOOP JSC with the same flag set (plus `-DENABLE_SAMPLING_PROFILER=OFF` which was required because ARM64 CMake defaults enable the sampling profiler, and that conflicts with `ENABLE_C_LOOP`). Ran:
+| Register | Role |
+|---|---|
+| r0 | Assembler scratch. As a base in D-form/`addi`, RA = 0 means literal zero, so never a base. |
+| r1 / r2 / r13 | sp / TOC / TLS (never touched) |
+| r3–r10 | Arguments, `regT0–7`; the 8 volatile allocatable GPRs |
+| r11, r12 | MacroAssembler `dataTempRegister` / `memoryTempRegister`; not allocatable. Any operation may clobber them (immediates, wide offsets, absolute addresses). r12 also carries the callee address for an ELFv2 global entry. |
+| r14–r19 | `regCS0–5`, allocatable callee-saves (in `dfgCalleeSaveRegisters`) |
+| r20–r23 | `regCS6–9`: metadataTable, jitData, numberTag, notCellMask |
+| r19 | Yarr `regT3` (always saved) |
+| r24–r28 | Yarr scratch (saved by Yarr, like x86_64's rbx/r12–r15); Air also allocates r24–r30 |
+| r29, r30 | JIT-side `nonArgGPR0/1`, `wasmScratchGPR`: ELFv2 callee-saved but scratch to JSC (LLInt/IPInt temporaries, saved by `pushCalleeSaves` at C→VM entry, never allocated by Air) |
+| r0, r27–r30 | offlineasm's own scratch; offlineasm `ws0/ws1` stay r11/r12 |
+| r31 | frame pointer (`cfr`) |
+| f0 | `fpTempRegister`; f1–f13 FP arguments; f14–f21 VM callee-saves |
+
+ELFv2 callee-saves are r14–r31 and f14–f31; the VM models only r14–r23 and f14–f21. Anything that
+crosses a C↔JS boundary must preserve what offlineasm uses beyond that set: vmEntry saves r24
+(csr10) and r25–r30; the FTL IC slow-path clobber set is `registersToSaveForCCall`; BBQ must not
+allocate f22–f31.
+
+### ELFv2 calls
+
+- A callee writes CR at **sp+8**, LR at **sp+16**, TOC at **sp+24** of the *caller's* frame; the
+  parameter save area starts at sp+32. **Any C call made with live data in [sp, sp+32) is a bug**:
+  lower sp first (`makeSpaceOnStackForCCall`, `maxFrameExtentForSlowPathCall` = 96). This was the
+  most frequent bug class (~20 sites). Diagnostic: a frame header holding code addresses; the
+  clobbered offset names the save (8 CR, 16 LR, 24 TOC).
+- Argument *position* counts both banks: an FP argument skips its GPR. Integers at positions 0–7 go
+  in r3–r10, FP arguments in f1–f13, and anything in memory at `sp + 32 + 8 * position`. 96 bytes
+  covers every in-register call; `setupArguments` static_asserts the operation fits.
+- The caller sign/zero-extends narrow integer arguments to 64 bits (callees use an `int32_t` as an
+  index directly). `CCallHelpers` widens by C type at the ELFv2 position, except `GPRReg`-typed
+  entries in FTL's synthesized `void(ArgumentTypes...)` signatures, which name registers, not
+  parameters. B3 CCallSpecial still sign-extends every Int32 (wrong for `uint32_t` ≥ 2^31).
+- C calls go through CTR with r12 = target (global entry builds the TOC from it). `farJump` to a C
+  function must set r12 too. JS→JS calls use a bare `bl`/`bctrl` and never touch r2.
+- `__builtin_frame_address` is not used (`USE(BUILTIN_FRAME_ADDRESS)` is off): wasm operations need
+  the frame stored into the instance's `temporaryCallFrame` before the call.
+
+### Link register
+
+`linkRegister` is an r0 placeholder: LR is an SPR. Every return-address save/restore must use
+`mflr`/`mtlr` (`moveFromLR`/`moveToLR`), never a register move — the arity-check entries, CTI thunk
+prologue/epilogue, DataIC handlers and tail-call shuffles all broke on this. Baseline DataIC handlers
+are entered as leaves with the return address in LR and must spill it before a nested call
+(`emitDataICPrepareForCall`). OSR entry reads LR from `context.spr(lr)`.
+
+### Memory model
+
+- Fences are real: `lwsync` (acq/rel), `sync` (seq_cst), `isync` after a failed CAS compare.
+- LL/SC is RCsc (leading `sync`), matching ARM64's ldaxr/stlxr. `storeRel*` is `sync; st`;
+  `loadAcq*` is `ld; lwsync`. Strong CAS never stores back after a mismatch.
+- Cross-modifying code: Power allows concurrent modification only of `b`/`nop`-class words. The
+  icache flush is hand-written (`dcbst; sync; icbi; sync; isync`, block size from
+  `AT_DCACHEBSIZE`/`AT_ICACHEBSIZE`): `__builtin___clear_cache` compiles to nothing on ppc64le.
+  `crossModifyingCodeFence()` is `isync`.
+
+### Code layout and patching
+
+- Branch reach: `bc` ±32 KB, `b`/`bl` ±32 MB. Jump/call slots are fixed 8 instructions; the far form
+  is `nop; li64 r12; mtctr; bctr[l]`, so word 0 is always a `nop` or `b` and retargeting within
+  reach is one aligned store. Near calls to JIT code are `nops; bl`; `call()` slots keep `li64 r12`.
+  `call()` is `Linkable`, only `nearCall()` is `LinkableNear`; both link through `applyCallSlot`.
+- Jump islands: `nearJumpRange` 32 MB, 2 MB island area per 32 MB region (65,536 islands; ~28 MB of
+  code per region). An island is a whole jump slot, so islands never chain. Only concurrent wasm
+  retargets use islands; other repatching happens on the owning or a stopped thread. Concurrent
+  retargets never free islands (upstream behaviour). The executable pool is 1 GB with allocations
+  packed at the bottom (locality only).
+- Branch compaction shrinks unpatched jumps (b / bc / bc+b / full slot). 64-bit immediates take 1–5
+  instructions; `moveWithPatch` keeps the fixed 5-instruction li64, patched at its start.
+- VM-trap halt is `ld r0,0(0)` (SIGSEGV; `trap` would be SIGTRAP, which VMTraps does not handle).
+
+### SIMD
+
+- A v128 is the full VSR aliasing FPR fN (VSR 0–31); doubleword 0 is the scalar. VMX-only operations
+  stage through v0–v5 (VSR 32–37) inside one MacroAssembler call; nothing is live in VSR 32–63
+  between calls. Callee-saves stay 64-bit (f14–f31 doubleword 0), the ARM64 d8–d15 model.
+- Layout is lxvd2x/stxvd2x: doubleword 0 = bytes 0–7 as a little-endian u64; loads/stores need no
+  permute. Wasm lane i of an S-byte element is ISA element `i ^ (8/S − 1)`. VMX pack/unpack see the
+  doublewords swapped (add `xxswapd`); "high"/"low" in VMX names are big-endian.
+- f32 lives in double format in FPRs, so f32x4 lane 0 is *not* the scalar. Scalar FP spills use
+  `stfd`/`lfd`, never `stxvx`.
+- IPInt SIMD: offlineasm v0/v1/v2 = VMX 0/1/14, VMX 2–7 scratch, same lane layout. Handler slots are
+  512 bytes (`IPInt::initialize()` validates the stride).
+- POWER8 leaves some result words undefined (`xvcvdpsp`, `xvcvdpsxws/uxws`, `xscvdpspn`); the
+  sequences read only defined words.
+
+### ISA levels
+
+`MacroAssemblerPPC64::isaLevel()` reads `AT_HWCAP2` (ARCH_3_00 → 300, ARCH_3_1 → 310), capped by the
+option `maximumPPC64ISALevel` (`JSC_maximumPPC64ISALevel=207|300|310`). Gated instructions:
+
+- 3.0: `cnttzw/d`, `modsw/uw/sd/ud` (DFG, BBQ, Air `Mod32/UMod32/Mod64/UMod64`),
+  `xsmaxjdp/xsminjdp`, `xscvhpdp/xscvdphp` (Float16).
+- 3.1: `brh/brw/brd`, `setbc/setbcr`, `vmulld`, `vextract{b,h,w,d}m`.
+
+`xsmaxjdp/xsminjdp` return a signalling NaN unquieted: fine for JS (NaNs are purified), wrong for
+wasm, so B3 keeps the FMin/FMax expansion when `Procedure::isWasm()` and BBQ keeps its sequence
+(`JSTests/wasm/stress/min-max-signalling-nan-is-quieted.js`). Divide and remainder results are
+undefined for x/0 and INT_MIN/−1: callers guard both. Float16 lives in bits 48:63 of VSR
+doubleword 0.
+
+### Other invariants
+
+- 32-bit values are kept zero-extended in 64-bit registers (offlineasm `i` ops and
+  `move(TrustedImm32)` clear the upper word; PPC `addi`/`lis` sign-extend).
+- **IPInt is mandatory for wasm.** BBQ/OMG are tier-ups from IPInt; `useWasmIPInt=false` means "tier
+  up immediately", not "skip IPInt".
+- Arch gates that omit PPC64 compile cleanly and emit nothing or the x86 shape — the most common
+  silent bug. Air opcode gates live on individual form sub-lines in `AirOpcode.opcodes`.
+  `PPC64_UNSUPPORTED()` marks deliberately absent operations; hitting one means a gate leaked.
+- offlineasm: resolve PtrTags symbolically (never re-implement a WTF hash in Ruby); `ppc64le.rb` is a
+  CMake dependency of LLIntAssembly.h.
+- GC scans the 288-byte red zone below sp. Pages are 64 KB (memory-threshold tests are tuned for 4 KB).
+
+## Testing
+
+Rule: never weaken, skip or special-case a test to make it pass.
+
+- **power9** (`ssh power9`): `/home/tle/stressgate.sh` (stress, IPINT, `-c 24`, compares against the
+  empty `/home/tle/stress-baseline-fails.txt`), `/home/tle/wasmrun.sh` (wasm.yaml →
+  `/home/tle/wsuite`), `/home/tle/isagates.sh 300 207` (stress + wasm per ISA level →
+  `stress-<lvl>`, `wsuite-<lvl>`), `/home/tle/assertgate.sh <BUILD>`, `/home/tle/sangate.sh`
+  (both run `~/Work/WebKit/WebKitBuild/<BUILD>`; the ASSERT and SAN builds exist only in
+  `~/Work/WebKit-main-base`, so configure them in the 2.54.1 tree first)
+  (ASAN_OPTIONS `detect_leaks=0:handle_segv=0:handle_sigbus=0:handle_sigill=0:allocator_may_return_null=1`,
+  6 GB memory limit, ~29 h), `/home/tle/concgate.sh` (7 DFG/FTL/wasm compiler threads, 8 GC markers).
+  Yarr: `/home/tle/yarr/{allgates,quick,fuzz}.sh`, `rxdata.js`, `rxlong.js`/`rxlong-plain.js`.
+  SIMD: `/home/tle/simd/` (encoding check, per-op harness, differential test in `diff/`).
+  VM traps: `/home/tle/traps/`. Test-binary driver: `/home/tle/drive.sh`.
+- **power10**: `/home/fedora/p10gates.sh` (testair/testb3 at 310 and 207, then stress + wasm at 310).
+- Runner settings: `--memory-limited` is mandatory (otherwise an OOM test kills the workers),
+  `JSCTEST_memoryLimit=2147483648` (64 KB pages), `TZ=America/Los_Angeles`, `TMPDIR` off `/tmp`.
+  Launch from a script file: `pkill -f run-jsc-stress` matches your own ssh command line.
+- testmasm/testb3/testair need a DEVELOPER_MODE build. testmasm has PPC64 litmus tests (MP, SB, R,
+  weak/strong CAS), cross-modifying-call, many-mixed-C-arguments, Float16 and ISA-level tests.
+  TestWTF needs `TZ=America/Los_Angeles`; pipe gtest through `stdbuf -oL`.
+- `sampling-profiler-*` tests occasionally time out under full load; rerun before investigating.
+- There is no PPC64 disassembler: check encodings with `as -mpower8/-mpower9/-mpower10` + `objdump`,
+  and read JIT code with gdb (`/home/tle/yarr/dis.sh`) or `perf` + `--useJITDump`
+  (`/home/tle/bench/jitdump2map.py` converts the dump, which `perf inject` ignores).
+- Debugging that worked: valgrind memcheck runs the JIT (`--smc-check=all-non-file`); an ASSERT build
+  turns silent corruption into a named assertion; gdb record/reverse watchpoints found the linkage
+  clobbers; for perturbation-sensitive bugs write to a `volatile` global and read the core.
+
+## Hosts and builds
+
+- **power9** — `tle@192.168.1.247`, POWER9, 32 threads, 63 GB, Fedora 45. `~/Work/WebKit` is the
+  2.54.1 tree (no `.git`, synced by rsync) with builds `IPINT` (Release GCC, the gate build),
+  `CLANG` (Release clang 23), `GTK-VSX`. The old `main`-based tree `~/Work/WebKit-main-base` holds
+  `ASSERT`, `SAN` and `DEV` builds.
+- **power10** — `fedora@140.211.169.158`, 8 vCPU, 15 GB, ~20 GB free, Fedora 44, GCC 16, ccache.
+  Sparse shallow clone at `~/Work/WebKit` (JSTests, Source, Tools, PerformanceTests/{JetStream2,
+  Speedometer2.1}, LayoutTests/imported/w3c/web-platform-tests/{wasm,resources},
+  LayoutTests/imported/w3c/resources — wasm.yaml needs the WPT paths). Builds `IPINT` and `DEV`.
+  Files are synced from the Mac with rsync.
+- **power8** — `fedora@140.211.11.222`; the host key has not been verified, so nothing has run there.
+
+Build recipe (JSCOnly, as on power9):
 
 ```sh
-JSCTEST_timeout=60 \
-  Tools/Scripts/run-jsc-stress-tests \
-    --jsc WebKitBuild/JSCOnly/Release/bin/jsc \
-    --no-jit --memory-limited -c 8 \
-    JSTests/stress
-```
-
-(`--memory-limited` skips 119 tests tagged `memoryHog!` to avoid OOM hangs on the 7.8 GB box.)
-
-Result: **17604/17604 PASS, 0 failures** at the default runner concurrency level (`-c 8`).
-
-Initial verdict of "PPC64-specific bug" for `proxy-set-failure-inline-cache.js.bytecode-cache` was **wrong** — see next section. It reproduces on ARM64 too once concurrency is high enough.
-
-### Upstream cross-platform bug: bytecode-cache race under concurrent writers — investigated 2026-04-24
-
-`proxy-set-failure-inline-cache.js.bytecode-cache` appeared as a single PPC64 failure in the original `-c 16` stress run. Further investigation showed it is **a cross-platform JSC bug in the bytecode cache serialization path, not PPC64-specific**.
-
-**Reproducer** (works on both PPC64LE POWER9 and ARM64 Fedora 43):
-```sh
-# Copy the test 20× and run 20 parallel workers, each doing a pass-1 cache write + pass-2 forceDiskCache read
-for i in $(seq 1 20); do mkdir -p w$i; done
-for i in $(seq 1 20); do
-  ( JSC_diskCachePath=$(pwd)/w$i ./jsc proxy-set-failure-inline-cache.js > /dev/null
-    JSC_diskCachePath=$(pwd)/w$i JSC_forceDiskCache=true ./jsc proxy-set-failure-inline-cache.js > w-$i.out 2>&1
-  ) &
-done
-wait
-# Both platforms: 20/20 FAIL with `Exception: Error: Bad value: 0!`
-```
-
-**Root cause, narrowed** (not fully diagnosed):
-Diffing the cache files written under sequential vs concurrent pass-1 runs (`jsc -d` on the cached bytecode):
-
-| | Sequential (good) | Concurrent (bad) |
-|---|---|---|
-| PPC64LE cache size | 15024 B | 16992 B |
-| ARM64 cache size | 15024 B | 15808 B |
-| Proxy `set` handler bytecode | 7 insns / 134 bytes / 5 params | **3 insns / 5 bytes / 1 param** |
-
-On both platforms, the Proxy handler's `set` method is serialized as an **empty stub function** (body ≈ `function() { return undefined; }`) when pass-1 runs alongside other pass-1 instances. On the forceDiskCache pass-2, loading that stub makes `proxy.foo = i` trigger a no-op `set` trap that returns `undefined` (falsy). The caller is non-strict, so the falsy return is silent — the loop completes with `setCalls === 0` and the assertion fails.
-
-**What's been ruled out**:
-- Not LLInt IC caching (`--useLLIntICs=false` still fails 20/20)
-- Not concurrent JIT (`--useConcurrentJIT=false` still fails)
-- Not concurrent GC / marker threads (`--useConcurrentGC=false --numberOfGCMarkers=1` still fails)
-- Not CPU affinity (`taskset` per-core still fails 19/20)
-- Not specific to identical sources — 20 copies with distinct-but-equivalent source content all fail
-- Not specific to PPC64LE — ARM64 aarch64 fails identically
-
-**What triggers it**: the specific 4-block structure of the real test (IIFE with Proxy + `shouldThrow` with Proxy, each with a 1e7 loop). Simpler proxy tests — even with identical concurrency load — do not reproduce it. Reduced 1-block or 2-block versions pass 20/20.
-
-**Why we never saw this on the ARM64 oracle run**: the default stress runner concurrency is `-c 8` (one worker per core on the 8-core aarch64 box). At that level, the 17904-test batch hits the race rarely enough that this specific test happens to not land in a racing window. On the 32-core POWER9 box running `-c 16`, the race is likelier per-batch but still sporadic (we saw 1 of 17905 test instances fail). The reproducer amplifies it by running 20 identical racing pass-1 writers at once.
-
-**Status**: not a blocker for the PPC64 port. All 11 PPC64 failures from the original stress run are now accounted for (10 config/environment + 1 upstream cross-platform race). Will be reported to WebKit upstream separately; does not need resolution before Phase 1 starts.
-
-### What Phase 0 did NOT prove
-
-- **mimalloc path not attempted** — using system malloc. Switching to mimalloc is a Phase 1 pre-req; test whether it handles 64K pages cleanly.
-
-### Success criteria
-
-- ✅ `jsc` binary built and executes JavaScript.
-- ✅ 16/16 smoke-subset stress tests pass under C_LOOP.
-- ✅ Full `JSTests/stress/` run: 17894/17905 pass; all 11 failures explained.
-- ✅ CMake elseif-ordering bug fixed; PPC64LE branch added to `WebKitFeatures.cmake`.
-- ✅ ARM64 reference oracle cross-check: 17604/17604 PASS at default concurrency.
-- ✅ `proxy-set-failure-inline-cache.js.bytecode-cache` root-cause investigation: cross-platform JSC upstream race, not a PPC64 port issue. Zero PPC64-specific bugs identified in Phase 0.
-
-## Phase 1 — Assembler skeleton + register map
-
-Gate: `MacroAssemblerPPC64` compiles and links into a JSC built with `ENABLE_JIT=ON`, even if every macro is `UNREACHABLE_FOR_PLATFORM()`.
-
-1. Write `PPC64Registers.h` defining the GPR set (r0–r31), FPR (f0–f31), VSR/VSX (vs0–vs63), condition register fields (cr0–cr7), LR, CTR, XER. Map ELFv2 roles: r1=SP, r2=TOC, r13=thread pointer, r14–r31 nonvolatile, r3–r10 arg regs, r3/r4 return, r12 function entry (for TOC). **Do not reuse r13** — Linux uses it for TLS.
-2. Write `PPC64Assembler.h` with an opcode buffer and one instruction per ISA form (D-form, X-form, XO-form, I-form, B-form, DS-form, VX-form, XX3-form). Start with `addi`, `add`, `ori`, `ld`, `std`, `mfspr`, `mtspr`, `b`, `bc`, `bclr`, `bcctr`, `nop`. Encode per **Power ISA v2.07B Book I**. Any opcode you cannot find in v2.07B is either POWER9+ (guard it) or you are reading the wrong manual.
-3. Write `MacroAssemblerPPC64.h/cpp` as a `AbstractMacroAssembler<PPC64Assembler>` subclass. All methods stub to `UNREACHABLE_FOR_PLATFORM()` except `nop`, `breakpoint` (use `trap` 0x7fe00008), `move`, `load64`, `store64`, `add64`, `sub64`, `jump`, `call`, `ret`, `push`, `pop`. Just enough to compile.
-4. Wire into `assembler/MacroAssembler.h` and `TargetAssemblerDefinitions.h`.
-5. Flip CMake default `ENABLE_JIT_DEFAULT=ON` for PPC64LE. Build must succeed; `jsc` still uses LLInt C_LOOP, but the binary contains a MacroAssembler.
-
-**Verification**: unit-test each opcode's encoding against GNU `as` output. Script: `echo 'addi 3,4,5' | powerpc64le-linux-gnu-as - -o /tmp/x.o && objdump -d /tmp/x.o` vs `PPC64Assembler().addi(r3, r4, 5); dump()`. Check byte-by-byte. Do this for every single opcode as it is added.
-
-## Phase 2 — LLInt offlineasm PPC64LE backend
-
-Gate: LLInt runs native on PPC64LE; `--useJIT=0` runs the full stress suite at speeds comparable to native arm64 LLInt.
-
-1. Copy `offlineasm/riscv64.rb` to `offlineasm/ppc64le.rb` as a structural starting point (RISCV64 is the smallest, most recent new-arch offlineasm backend — easier to diff against as you add PPC-specific rewrites). For the semantics of each pseudo-op lowering (what `cCall4` must actually do, how OSR-exit-adjacent ops must be preserved, how the Wasm tiering slow path interacts with `cloopDo`), **consult `offlineasm/arm64.rb`** — it is the reference implementation. Rewrite lowering tables for PPC64 ops. Use the PPC64 ABI for `cCall*` pseudo-ops. Honor red-zone semantics carefully — PPC64LE ELFv2 has a 288-byte red zone, bigger than ARM64's.
-2. Add backend to `offlineasm/backends.rb` WORKING_BACKENDS and the `CMakeLists.txt:278` `OFFLINE_ASM_BACKEND` switch.
-3. Expect initial breakage in `LowLevelInterpreter.asm` due to missing pseudo-op lowerings. Walk the bytecode opcodes in order, implement each as it's hit.
-4. Probe infrastructure (`LLIntData::setEntrypointAndInitializeLLIntData`) needs to know about LR/CTR saving and TOC setup per ELFv2.
-
-**Verification**: `run-jsc-stress-tests` parity against C_LOOP run from Phase 0. Any new failure is a bug in the PPC64 offlineasm backend. Cross-check specific failing tests against ARM64 `--dumpBytecode=1` to confirm bytecode is identical (if not, the bug is in bytecode generation, not LLInt).
-
-### Phase 2 status — IN PROGRESS (updated 2026-07-13)
-
-**Where we are.** The offlineasm ppc64le backend assembles all of `LowLevelInterpreter*.asm` through GAS; jsc builds and links with `ENABLE_JIT=ON, ENABLE_C_LOOP=OFF, ENABLE_WEBASSEMBLY=ON` (BBQ/OMG off), `USE_SYSTEM_MALLOC=ON`, `CXXFLAGS=-Wno-error=sfinae-incomplete` on the power9 box (`ssh power9`, repo at `/home/tle/Work/WebKit`, build dir `WebKitBuild/JSCOnly/Release`).
-
-**What works**: `jsc --useJIT=0 --useWasm=0 -e 'print(40+2)'` prints `42`. Native LLInt executes JavaScript correctly for simple evaluations.
-
-**Current crash (the active debugging front)**: after printing the correct result, the process segfaults at `op_call_return_location`, i.e. on the return path of an `llint_op_call` (gdb: frame #0 `op_call_return_location`, frame #1 `llint_op_call`, "frame did not save the PC"). With JIT or Wasm left enabled the crash happens before any output (expected — MacroAssemblerPPC64 is still largely stubs; always test with `--useJIT=0 --useWasm=0` in Phase 2). **Confirmed unchanged after the 2026-07-13 rebase** (clean rebuild on power9: `print(40+2)` → 42 then SIGSEGV).
-
-**~~Second known bug — silent integer overflow wraparound~~ FIXED 2026-07-14** (commits `0fee2379768d` + `17425477775f` + `9a44b9d5285e`). Two stacked miscompiles: (1) the `badd*o/bsub*o` lowerings used `addo./bso`, but the dot form copies the STICKY XER[SO] into CR0 (not this op's OV), `addic.` never sets OV at all, and `addo` detects 64-bit overflow which two int32s can never produce — so `baddio` never branched and int32 adds wrapped mod 2^32; (2) `ci2ds` converted the full 64-bit boxed register (`fcfid` of `0xFFFE…0001` = −(2⁴⁹−1)) instead of the signed low word, corrupting every int+double add once a value became a double. Fixed XER-free (extsw+cmpd exact-64-bit check for int32; sign algebra for int64; `mtvsrwa/wz/d + fcfid*` for the whole int→float family), all v2.07B/POWER8-safe, all formulas hardware-verified against `__builtin_*_overflow` oracles. The `s+=i` 100k loop prints 4999950000 exactly; mixed int/double accumulation exact. Also fixed en route: `offlineasm/ppc64le.rb` was missing from CMake's `OFFLINE_ASM` dependency list, so backend edits didn't regenerate LLIntAssembly.h (`ninja: no work to do`) — that masked one fix iteration entirely.
-
-**~~Call-return crash~~ FIXED 2026-07-14** (commit `5ac37ef259e0`): the Ruby-replicated makePtrTagHash matched no real tag value, so every indirect call was classified JS and emitted a bare `bctrl`. Host functions live in the jsc binary (different module → different TOC); with no `ld r2, 24(r1)` after `bctrl`, the first TOC-relative dispatch (`ld rX, off(r2)` loads the opcode table) after any host-call return faulted. Both the two-print crash and the exit-path crash were this one bug. Fix: capture offlineasm's constexpr name→value resolution via a `Module#prepend` hook on `ConstExpr#resolveOffsets`, classify symbolically (JS-entry tags → bare call; C tags + all untagged register calls → full ELFv2 stanza with 32-byte linkage frame, r2 save/restore, r12=entry), raise on unknown tags. **Never replicate a WTF hash in Ruby.**
-
-**~~i-op width convention~~ FIXED 2026-07-14** (commit from this session): offlineasm `i` ops must zero-extend their 32-bit result into the 64-bit register (x86/arm64 hardware semantics). Our 64-bit lowerings let JSValue tag bits survive in the upper word; `op_switch_imm`'s `subi min, scrutinee` then indexed the jump table with `(numberTag<<2)+base` — every generator/async/iterator test crashed (generators dispatch resume points through a switch). All i-form ops now clear their result (`rldicl dst,dst,0,32`); hardware probe matrix documented in the arith section of ppc64le.rb. Inputs may stay dirty — 32-bit PPC ops read only low words and 64-bit op low-words equal the 32-bit result, so output-cleaning is a complete contract.
-
-**Also fixed 2026-07-14**: runtime defaults `useJIT=false`/`useWasm=false` for PPC64LE (`jitEnabledByDefault()`/`canUseWasm()` — stubs abort on tier-up; no validated wasm engine; both overridable with `--useJIT=1`/`--useWasm=1`); C-tagged tail calls (`jmp reg, CustomAccessorPtrTag`) set r12 for the callee's GEP; offlineasm `addis` (add-and-set-flags, misimplemented as PPC add-immediate-shifted) now raises pending a real consumer.
-
-### Phase 2 GATE MET — 2026-07-14
-
-Full `JSTests/stress` on power9, LLInt-only (`--no-jit`, useJIT/useWasm defaulted off): **19546 PASS / 18 FAIL (99.91%)**. Round 1 (before the i-op width fix) was 18619/945 — the width fix swept all 261 generator/async/iterator failures including the entire `waitasync` cluster. All 18 residual failures classified, **zero PPC64 codegen bugs**:
-
-| Failure | Count | Cause |
-|---|---|---|
-| `typed-array-oom-in-buffer-accessor` (all modes) | 4 | memoryHog + OOM-killer, known since Phase 0 |
-| `map-forEach`, `resizable-array-constant-folding` | 5 | need the WebAssembly global; useWasm defaults off on PPC64LE |
-| `many-substrings-of-rope…` | 1 | 64K-page memory threshold, known since Phase 0 |
-| `proxy-set-failure-inline-cache`, `call-var-args-phantom-*` (bytecode-cache mode) | 4 | upstream cross-platform bytecode-cache race under concurrent runners (Phase 0 investigation); all pass in isolation |
-| `*-on-non-promise`/`-on-non-regexp`, `string-replace-…` ("too many recompiles") | 4 | JIT-assumption tests running in default mode with useJIT defaulted off — test-harness artifact, not codegen |
-
-Remaining Phase 2 polish before calling it fully closed: remove the `call C/JS` classification comments if noise bothers, and IPInt validation (wasm) can begin any time — the offlineasm backend now assembles it. Otherwise: **proceed to Phase 3 (Baseline JIT)**.
-
-**Latent bugs (not yet exercised by any passing path — fix before their opcodes go live)**:
-- `cd2i`/`truncated2is` clobbers its source FPR (`fctiwz src, src`) AND reads the wrong half of the stored double on LE (`lwz dst, 4(1)` reads the ISA-undefined high word; fctiwz's int32 lands at offset 0 on LE). Correct shape: FPR-Tmp expansion + `fctiwz ftmp, src; mfvsrwz dst, ftmp` (both v2.07B).
-- `bdneq`/`bfneq` lowering is an explicit placeholder (`:lteq`) — ordered not-equal needs blt+bgt (NaN must not branch).
-- `countTrailingZerosi` emits `cnttzw`, a POWER9 (ISA 3.0) instruction, unguarded — violates the POWER8 baseline; needs a v2.07 fallback or a gate.
-- Shift-by-register count masking: JS `<<`/`>>` need count&31 (x86/arm64 hardware behavior); PPC `slw`/`srw` yield 0 for counts 32–63. Unverified whether LLInt feeds unmasked counts — test `x << 32` semantics and add explicit masking if needed.
-
-**Hypothesis space being worked**: PPC64's call/return discipline vs LLInt's calling convention. `bctrl`/`bl` put the return address in LR (not on the stack like x86, and unlike ARM64 there is no guarantee the LLInt frame layout absorbs it the same way). Three commits circle this area:
-- `pushCalleeSaves` uses an 80-byte sub-frame to avoid LLInt frame overlap;
-- LABEL-form `call` (direct C slow-path calls) wrapped with an ELFv2 linkage area (`stdu/std r2/.../ld r2/addi`);
-- WIP (committed, does NOT yet fix the crash): indirect `call` discriminates C callees from JS callees via the PtrTag operand — C callees need full ELFv2 (r12=entry for GEP, linkage area, r2 save/restore), JS callees must get a bare `mtctr/bctrl` because makeJavaScriptCall has already arranged the frame and an extra `stdu` shifts the callee's cfr.
-
-**Debug aid in place**: the `call` lowering emits an asm comment (`ppc64le call dbg: nops=... tag_val=... c=...`) at every call site. Inspect the generated `LLIntAssembly.h` on the box to enumerate call sites and their resolved tags. Remove before Phase 2 is declared done.
-
-**Next debugging steps**:
-1. Enumerate every `call` site in generated LLIntAssembly.h by tag class; verify the C/JS classification is right at each (the PtrTag-hash matching in ppc64le.rb is fragile — consider having offlineasm resolve tag names symbolically instead of replicating WTF's `makePtrTagHash`).
-2. Trace the JS→JS call/return convention end to end: where does the return address live when LLInt JS code calls LLInt JS code (`makeJavaScriptCall` → callee prologue → `ret`)? On ARM64 `call` sets lr and the callee's `functionPrologue` pushes it; our backend must put the return PC where `op_call_return_location`'s frame teardown expects it. The "frame did not save the PC" gdb note says the frame chain is already broken at entry to the return location.
-3. Compare against ARM64: same test, `-d` disassembly of llint_op_call surroundings on the ARM64 box, and map each instruction to the PPC64 emission.
-
-### Rebase log
-
-- **2026-07-13**: rebased all 96 port commits onto `origin/main` @ `08160f69fe42` (previous base 2026-04-13, ~5850 upstream commits). Single conflict: `jit/GdbJIT.cpp` (upstream added RISCV64 to the same CPU guards where we added PPC64LE — resolved as union). Upstream changes reviewed for impact: new offlineasm instructions `adcq/sbcq/umulhq/smulhq/addqs/subqs` (wasm wide arithmetic) are per-arch **opt-in** lists in `instructions.rb` — no backend action required until we want the fast paths; `op_try_get_by_id` removed; wasm tail calls use a lazy restore frame; relaxed wasm SIMD landed (Phase 5+ concern). Pre-rebase branch preserved as `ppc64-pre-rebase-20260713`.
-- **2026-10-15**: moved `ppc64` onto the **WebKitGTK 2.54.1 release** (tag `webkitgtk-2.54.1` = `628d6ce1850e`,
-  on the `webkitglib/2.54` release branch). Our base `08160f69fe42` is an ancestor of the tag (1,086 newer
-  upstream commits: `main` up to the branch point plus release cherry-picks), so all 377 port commits were
-  replayed onto the tag. Two conflicts: `wasm/WasmAddressType.{h,cpp}` (upstream now guards the B3::Type
-  paths with `!PLATFORM(PLAYSTATION) && ENABLE(JIT)`; took upstream's) and `llint/InPlaceInterpreter64.asm`
-  (`br_on_cast` now reads `allowNull` from metadata; kept upstream's and re-applied `loadis` to all six
-  `toHeapType` loads). Three follow-ups: `WTFGetBacktrace` uses `Thread::currentSingleton().stack()`
-  (`StackBounds::currentThreadStackBounds()` is private on 2.54); JSCOnly did not export
-  `wtf/linux/HighPriorityThreads.h`, which a 2.54.1 TestWTF cherry-pick includes (upstream bug, any JSCOnly
-  Linux build); the 2.54 Yarr JIT needs `regT3` (PPC64: callee-saved r19, always saved). Gates on 2.54.1's own
-  suites: stress 82,159 / 0, wasm.yaml 19,798 / 0. The `main`-based history is preserved as `ppc64-main-base`
-  (= old `ppc64` @ `476f932e2234`), which is where upstreaming to `main` would start. On the box,
-  `~/Work/WebKit` is now the 2.54.1 tree; the old tree (with its ASSERT/SAN/DEV builds) is `~/Work/WebKit-main-base`.
-
-## Phase 3 — Baseline JIT
-
-Gate: `jsc --useDFGJIT=0 --useFTLJIT=0 --useWasmJIT=0` (Baseline only) passes the stress suite.
-
-### Phase 3 status — IN PROGRESS (2026-07-15)
-
-**Done** (commits `c62d2e2f5f86`, `9714382cca82`):
-- **Linking architecture**: RISCV64-style fixed 8-instruction slots for jump/branch/call, rewritten in place at link time (near `b`/`bc` or far `li64(r12)+mtctr+bctr(l)`); call slots keep the branch LAST so the return address is fixed; full link/relink/repatch/readPointer surface; `cacheFlush` via `__builtin___clear_cache`; patchable sizes = 32 bytes.
-- **MacroAssembler core**: CR0 condition mapping, branch/compare families, 32/64-bit arith+logical with the zero-extension contract, masked shifts, overflow branches (Phase 2 technique), full load/store matrix with DS-form alignment fallback, farJump, `getEffectiveAddress`, JSC frame prologue/epilogue ([fp]=caller-fp, [fp+8]=return-pc; LR spilled via scratch). Scratches r11/r12 (SM convention).
-- **testmasm harness operational** — with caveats below.
-
-**Hard-won harness lessons**:
-- **testmasm MUST run with `JSC_useJIT=1`** — our PPC64LE runtime default disables the executable pool; without it EVERY LinkBuffer silently finalizes to a NULL code pointer in Release and the harness calls address 0. Symptom: SIGSEGV at PC=0 with ctr=0, lr in the test-runner dispatch.
-- **testmasm prints test names from worker threads** — a printed name does NOT mean the test passed; an "earlier test passed" reading cost a debugging detour. Judge only by the exit status of a single-filter run.
-- The 32MB+guard-pages RWX pool reservation works on 64K-page Linux ppc64le.
-
-**Grind progress (2026-07-16)**: JSC::initialize fully passes with the JIT live — all LLInt glue thunks emit and run, including the ELFv2 C-call round-trip (r2 saved at sp+24 inside the 96-byte maxFrameExtentForSlowPathCall reservation; was wrongly 0). Landed: call family (compile-time PtrTag discrimination), full FP surface (classic PPC float model, CR-logic single-branch DoubleConditions via cror/crandc), conditional moves (aliasing-safe bc-skip), 64-bit shifts, signed loads, pairs, memory-form arith, **and the full Probe API** (commit 32b42ab79387): handwritten ctiMasmProbeTrampoline saving/restoring all GPRs/FPRs + pc/cr/xer/lr/ctr, all 5 probe tests pass. testmasm caught several real bugs (getEffectiveAddress base-aliasing; resolveAddress(BaseIndex) addis-overflow ≥ 0x7FFF8000; probe pc-vs-lr conflation; r12 GEP-clobber round-trip; the initializeStackFunction TOC-save landing on the State's offset-24 field). **testmasm: 58 tests passing** (`JSC_useJIT=1`; stubs self-identify via PPC64_UNIMPLEMENTED — the grind loop is run-read-implement-repeat). Next stub: `or32(TrustedImm32, AbsoluteAddress)`. Continue the testmasm grind (memory-operand logical ops, atomics, remaining families), then jsc baseline bring-up.
-- Open design item: JIT→C call TOC discipline (r2 save/restore + ELFv2 linkage headroom in JIT frames) — decide when CCallHelpers-level C calls first appear in the grind.
-
-1. Expand MacroAssemblerPPC64 to cover the full Baseline surface: all integer arith, logical, shift, comparison, branches, loads/stores across sizes, float arith, truncation, conversion. Use ISA XO-form for arith, X-form for loads/stores, B-form for conditional branches via CR fields.
-2. Implement `nearCall`/`farCall` — PPC64LE needs a local-call fast path (direct `bl`) and an external-call path that restores TOC via r2 reload (`ld r2, 24(r1)` per ELFv2 §2.3.2).
-3. Implement probe trampolines for the Probe API (`Probe.cpp` hooks).
-4. Flush icache correctly. On PPC the sequence is `dcbst; sync; icbi; sync; isync`. **Do not use
-   `__builtin___clear_cache`: GCC compiles it to a bare `blr` on ppc64le** (verified by `objdump`), so
-   the port ran without any icache invalidation until 2026-08-21. It is now written by hand, with the
-   block size taken from `AT_DCACHEBSIZE`/`AT_ICACHEBSIZE` (128 on the test box, 32 fallback). PPC64
-   also needs a real `crossModifyingCodeFence()` (`isync`) — it was falling through to a seq-cst `sync`,
-   which orders memory but does not discard prefetched instructions.
-
-**Verification**: Baseline vs LLInt parity. Any test that passes in LLInt and fails in Baseline is a pure codegen bug; isolate with `JSC_useBaselineJIT=true JSC_jitPolicyScale=0.001`.
-
-### Phase 3 status — Baseline JIT surface COMPLETE, correctness debugging begins (2026-07-18)
-
-**testmasm: 87/87 GREEN** — the entire MacroAssembler surface the harness exercises is verified on POWER9 (arith, logicals, shifts, all loads/stores/addressing modes, branches, compares, conditional moves, calls, full FP, and the complete Probe API). Run it with `JSC_useJIT=1` (mandatory — see harness lessons).
-
-**Baseline JIT: full function compiles.** Driven by `jsc --useJIT=1 --useDFGJIT=0 --useFTLJIT=0 --useWasm=0 --thresholdForJITAfterWarmUp=10`, the grind (run → read the PPC64_UNIMPLEMENTED name → implement → repeat, batching related overloads to amortize the ~90s jsc rebuild) drove the Baseline tier until a whole JS function compiles with **zero remaining MacroAssembler stubs on the hot path**. Everything since testmasm-green is committed (memory-operand branches/tests, calls, callOperation, pairs, transfers, conditional moves, FP-memory arith, 64-bit immediate arith, fences).
-
-**BASELINE JIT EXECUTES JAVASCRIPT (2026-07-19).** `g(41)`→42, `f(1000)`→499500, and a broad gauntlet (recursion incl. `n*fact(n-1)`, array iteration, exceptions, higher-order functions, `this`-methods, closures, float accumulation, string methods) all correct under `--useJIT=1 --useDFGJIT=0 --useFTLJIT=0`. **First correctness bug FIXED** (commit: mulp/muli 3-operand form): the `mulp/mulq/muli` lowering only handled 2-operand `dst*=src`, hardcoding dest=operands[1]; the 3-operand `mul(src1,src2,dst)` form (dst=LAST operand) wrote its product to the wrong register. The LLInt `argumentProfileLoop` (`mulp sizeof, t0, t2`) corrupted its loop counter and left the profile pointer unset → store walked into unmapped memory. Only surfaced under `--useJIT=1` because the argument-value-profile array is allocated only when JITting (JIT-off skips the loop via `btpz t3, done`) — which is exactly why LLInt-only passed all of Phase 2 while the first JIT call crashed. **Method to find it**: gdb the SIGSEGV → source-annotated generated LLIntAssembly.h → spot `mulli 3,3,24` where dest should be r5. **Next: run the stress suite at baseline tier for the Phase 3 gate.**
-
-**Baseline stress status (2026-07-19)**: mainstream JS is correct, but a baseline-vs-LLInt sweep of 400 `JSTests/stress` files (JIT on, DFG/FTL off, threshold 6) showed ~189 SIGSEGV/SIGABRT — real baseline codegen bugs in adversarial edge cases (add-overflow recovery with aliased registers, custom `valueOf` re-entrancy, OSR-adjacent, fuzzer-agent tests). None were PPC64_UNIMPLEMENTED (the hot surface is complete); they are miscompiles to grind down individually. **Caveats on that sweep**: (1) it was a crude hand-harness — the ~211 "DIFF"s are mostly noise because raw stress files lack the runner's preamble (`noInline`, `testLoopCount`, `shouldBe`) and honor `//@ runDefault(...)` directives the hand-harness ignored; trust the CRASH count, not the diffs. (2) Our jsc has DFG compiled in (ENABLE_JIT=ON gates it; only FTL is off), so **baseline must be measured with explicit `--useDFGJIT=0 --useFTLJIT=0`** — the runner's default modes would tier into the un-brought-up DFG (Phase 4) and crash everywhere, which is not a baseline signal.
-
-**Triage method that works** (used for the mulp bug): gdb the SIGSEGV → note the faulting instruction and that it's in LLInt glue vs JIT code → confirm JIT-on-specific (compare `--useJIT=0`) → open the source-annotated generated `LLIntAssembly.h` (grep the function label, the `// LowLevelInterpreter*.asm:NNNN` comments map each instruction to source) → spot the wrong register/opcode → fix the ppc64le.rb lowering or the MacroAssembler method. **Next session: grind the baseline stress crashes**, then run the formal Phase 3 gate (full stress at baseline via a proper runner invocation forcing `--useDFGJIT=0`). **Triage over 500 stress files (2026-07-19, baseline-only crashes, i.e. crashes gone under `--useJIT=0`): 243/500 (~49%)** — 181 SIGSEGV, 62 SIGABRT. Harness: `/tmp/triage.sh` on power9 (writes `/tmp/crashers.txt`, `/tmp/asserts.txt`); repro individual tests with `/tmp/pre.js` = `globalThis.testLoopCount = 50;` prepended and `--useDollarVM=1`. The crashes cluster into two classes:
-
-### Phase 3 GATE — MET (2026-07-22)
-
-**Full `JSTests/stress/` run at baseline tier (`--useJIT=1 --useDFGJIT=0 --useFTLJIT=0`, single `default` mode): ZERO baseline-specific codegen bugs.** 5447 stress files, ~5368 test-runs. 42 unique failing files, ALL classified out-of-scope by the LLInt-vs-baseline filter (a failure is a real baseline bug only if it PASSES under `--useJIT=0` but FAILS at baseline — none did):
-- **~38 DFG/tier-up-requiring tests** (fail identically under LLInt): all `arith-*-on-various-types` (self-check `numberOfDFGCompiles`/"should have detected polymorphic"), `big-int-negate-jit`, `big-int-spec-to-this`, `bit-op-with-object-returning-int32` (asserts `numberOfDFGCompiles<=1`), `bitwise-not-fixup-rules`, `compare-strict-eq-on-various-types`, `arith-abs-to-arith-negate-range-optimizaton`, `for-of-const-closure-captured-tier-up`, `int8-repeat-in-then-out-of-bounds`, and `promise-prototype-catch-on-non-promise`/`regexp-prototype-{test,symbol-search}-on-non-regexp`/`string-replace-regexp-with-own-property` (these throw "too many recompiles: 1000000" — baseline keeps jettisoning/recompiling because DFG tier-up is disabled). These require Phase 4 (DFG) and are correctly out of scope.
-- **4 environment artifacts** (same as Phase 2, fail under LLInt too or only under load): `typed-array-oom-in-buffer-accessor` + `unlinked-code-block-destructor` (`memoryHog!` OOM/timeout on the loaded 64 GB box — both PASS run standalone), `many-substrings-of-rope-shouldnt-use-excessive-memory` (PPC64LE 64 KB pages vs 4 KB-tuned threshold), `map-forEach` (`ReferenceError: WebAssembly` — built `ENABLE_WEBASSEMBLY=OFF`).
-
-**Method** (mirrors Phase 2): forced baseline in `run-jsc-stress-tests` by adding `--useDFGJIT=false` to `BASE_OPTIONS`, adding `powerpc64` to the `$isFTLPlatform` exclusion (kills DFG/FTL/Wasm modes), and short-circuiting `defaultRunConfig` to the single `default` mode; then classified every failure by re-running under `--useJIT=0` vs baseline. Runner edits were local to the power9 checkout and reverted after. **Phase 3 (Baseline JIT) is complete — proceed to Phase 4 (DFG).**
-
-### Phase 3 status — ALL 243 baseline crashes fixed (2026-07-22)
-
-**The last crasher `allocation-sinking-puthint-control-flow.js` is FIXED (commit "reserve linkage area in throw-from-call thunks").** It was NOT a DFG issue — it was another **ELFv2 LR/TOC save collision**, same class as the nativeForGenerator fix. `throwExceptionFromCallGenerator`/`throwExceptionFromCallSlowPathGenerator` (ThunkGenerators.cpp) call `operationLookupExceptionHandler` from a tiny frame without reserving the C-call linkage area, so the callee's `std LR,16(sp)`/`std r2,24(sp)` clobbered a live call frame's codeBlock(+16)/callee(+24) slots. `genericUnwind`→`vm.topJSCallFrame()`→`isZombieFrame()`→`jsCallee()->realm()` then asserted (`JSObject.h:575`, "realmless structure") on the garbage callee while unwinding a thrown exception (the test calls a non-callable `d()` inside a hot baseline function). Fix: reserve `maxFrameExtentForSlowPathCall` before the call (exception handler resets sp). Found by instrumenting `genericUnwind` to log `vm.topCallFrame`'s callee/codeBlock — the codeBlock was a code pointer (the tell-tale of the LR-save clobber). **All 243 original baseline-only stress crashers now pass.** Next: re-run the full 500-file triage (remove the now-invalid `--maxDFGNodeCount=0` from `/tmp/triage.sh`) and run the formal Phase 3 gate (full JSTests/stress at baseline tier).
-
-### (historical) Phase 3 status — 239/243 baseline crashes fixed (98%), 4 remain (2026-07-21)
-
-**Session result: the 243 baseline-only stress crashers dropped to 4** via two root-cause fixes plus two missing-method stubs (all committed): (1) ELFv2 native-call LR/TOC save collision in `nativeForGenerator` [205 fixed]; (2) `farJump(TrustedImmPtr)` implemented; (3) r24/csr10 not preserved across vmEntry [eval + ~28 arith tests]; (4) `and64(TrustedImmPtr, RegisterID)` implemented. **The 4 REMAINING crashers are distinct edge cases, NOT part of the two big clusters** — investigate fresh next session:
-- `array-flatmap.js` — SIGSEGV in `llint_op_tail_call` (called from `llint_op_new_array_with_species`). Tail-call frame-shuffling bug.
-- `array-iterators-next-with-call.js` — SIGSEGV (likely also tail-call / call-related).
-- `allocation-sinking-puthint-control-flow.js` and `ArgumentsEliminationPhase-…-nodeIndex-pass-zero.js` — DFG-phase-named; may be DFG-adjacent even with --useDFGJIT=0, or unrelated. Get backtraces first.
-
-**RESOLVED (2026-07-21, commit "fix PPC64LE numberTag/notCellMask swap in saved-tags thunk path").** Root cause: `emitSaveThenMaterializeTagRegisters` (AssemblyHelpers.h) took the x86 `#else` branch on PPC — `push(numberTag); push(notCellMask)` lays the pair out `[sp+0]=notCellMask, [sp+8]=numberTag`, but `nativeForGenerator`'s saved-tags native entry pops with `popPair(numberTag, notCellMask)` (`numberTag←[sp+0]`) → the two tag registers came back SWAPPED. It only broke cell-checks of the pure-immediate values undefined(0xa)/null(0x2)/bool (their 0x2 OtherTag bit is exactly what moves), so mainstream JS survived. Reached via `h(){return f.call({}, ...)}` tail-calling the native `Function.prototype.call`. Fix: add `CPU(PPC64LE)` to the `pushPair`/`popPair` branch in `emitSaveThenMaterializeTagRegisters`/`emitRestoreSavedTagRegisters` so the producer matches the `popPair` consumer. **All 243 baseline stress crashers now pass.** The decisive step was catching the swapped register values (numberTag=0xfffe…02, notCellMask=0xfffe…00) with reliable register reads at the crash, then recognizing 0xa as `undefined` (not the int 10) — the empirical fix confirmed the mechanism.
-
-**(historical) DEEP DIAGNOSIS of the 2 tail-call crashers (2026-07-21) — root cause is a TAG-REGISTER CORRUPTION, not tail-call frame shuffling.** Both `array-flatmap.js` and `array-iterators-next-with-call.js` share ONE root cause. Minimal repro: `var f=[].flatMap; function h(){return f.call({}, ()=>{})} for(i<300)h()` — crashes ONLY under `--useJIT=1` (any threshold, even 100000 where nothing JIT-compiles), works under `--useJIT=0`. The trigger is flatMap on a plain object with a MISSING `.length` (`flatMap.call([])` and `flatMap.call({length:0})` both WORK).
-- **Symptom (definitive, via reliable register reads):** at the crash, `numberTag`(r22)=`0xfffe000000000002` and `notCellMask`(r23)=`0xfffe000000000000` — the two are SWAPPED (correct is numberTag=`...000`, notCellMask=`...002`). This ONLY breaks cell-checks of `undefined`(0xa)/`null`(0x2)/bool, so mainstream JS survives. `undefined & notCellMask` becomes 0 → undefined mis-identified as a cell → `arrayProfileForCall` (op_call/op_tail_call prologue, LowLevelInterpreter64.asm:2454) does `loadi JSCell::m_structureID[undefined]` → SIGSEGV. That's why the fault is `lwz r6,0(r3)` with r3=0xa in `llint_op_tail_call`/`llint_op_call`.
-- **Localized to:** the corruption happens under useJIT=1 during flatMap's execution BEFORE `op_new_array_with_species` (tags already swapped at its entry), around the `op_get_by_id` path for `array.length` (the `{}`-miss slow path `llint_slow_path_get_by_id`). Tags are CORRECT at `llint_op_get_by_id` entry but wrong by the crash. The corrupting write happens inside a call gdb's register-watchpoint single-stepping doesn't decompose on PPC (so the exact instruction isn't pinned yet).
-- **ELIMINATED (verified correct, do NOT re-investigate):** `pushPair`/`popPair` (MacroAssemblerPPC64.h — consistent), `preserveCalleeSavesUsedByLLInt`/`restoreCalleeSavesUsedByLLInt` for csr8/csr9 (store `csr9→-8,csr8→-16`; load `csr8←-16,csr9←-8` — consistent), `or64(TrustedImm32,src,dest)` 3-operand lowering (generates `addi 23,22,2` correct), the prologue tag setup (LowLevelInterpreter.asm:1831-1832 `move TagNumber,numberTag; addq TagOther,numberTag,notCellMask` → correct), the get_by_id IC scratch allocation (PPC `numberOfRegisters=8`, pool is r3–r10 only, never r22/r23), `performGetByIDHelper`/`valueProfile` (use t0–t3, not tags), and get_by_id-miss in isolation (doesn't repro).
-- **NEXT STEP:** the swap points to a store/load or push/pop PAIR with mismatched order somewhere in the useJIT=1 get_by_id/call glue that gdb steps over — candidates not yet checked: `copyCalleeSavesToBuffer`/restore-from-buffer csr8/csr9 offsets (LowLevelInterpreter.asm ~1085/1200, the `storep csr10,80[buffer]` region), `storePair64`/`loadPair64` PPC lowering, baseline `emitSaveCalleeSavesFor`/`emitRestoreCalleeSavesFor` RegisterAtOffsetList ordering for r22/r23, and `emitSaveThenMaterializeTagRegisters`/`emitRestoreSavedTagRegisters` (AssemblyHelpers.h:425/438 — PPC uses the `#else` individual push/pop while `nativeForGenerator` consumes with `popPair`). Best tool: get a working JIT disassembler for PPC, or gdb `stepi` (not `continue`) through the get_by_id slow-path return to catch the exact swap. Then re-run the full 500-file triage (remove the now-invalid `--maxDFGNodeCount=0` from `/tmp/triage.sh`) and run the formal Phase 3 gate.
-
-### Phase 3 status — Class A SOLVED, 205/243 baseline crashes fixed (2026-07-20)
-
-**Class A ROOT CAUSE FOUND AND FIXED (commit "fix PPC64LE native-call frame corruption (ELFv2 LR/TOC save collision)").** All the prior Class-A theories (setupArguments marshaling, callLinkInfo load, frame arithmetic) were RED HERRINGS — the gdb register reads at JIT-operation breakpoints on PPC are systematically unreliable (they returned r3=0, r31==r4==small values across unrelated functions), which sent the earlier sessions chasing ghosts. **The reliable technique was C++ instrumentation, not gdb**: added a temporary probe in `CallFrame::callerSourceOrigin` (gated on `getenv("PPC_FRAME_PROBE")`) that walks the raw frame chain with `reinterpret_cast` memory reads and dataLogs each slot — memory reads ARE reliable on PPC, register reads at these break points are not.
-
-The probe showed the native (host-function) call frame's **codeBlock slot (`[fp+16]`) held `intFuncThunk+0x54` — a return address into the thunk — instead of null** (LLInt correctly stores null there; baseline did not). `StackVisitor::readFrame` (DFG compiled in) reads `callFrame->codeBlock()`, sees non-null, treats the host frame as a JS frame, and dereferences the bogus pointer via `codeBlock->hasCodeOrigins()` → crash. Mechanism: **ELFv2 requires a called C function to save the caller's LR at `16(sp)` and TOC at `24(sp)` BEFORE allocating its own frame.** `nativeForGenerator` (ThunkGenerators.cpp) called the host with `sp` still at the bare 2-word JS call header, so the host's prologue wrote LR/TOC onto the JS frame's codeBlock(+16)/callee(+24) slots. Non-walking natives (Math.max, charCodeAt) never noticed; stack-walking natives (Function ctor, Error().stack) and returns from allocating natives (parseInt, sort) crashed. **Fix: reserve `maxFrameExtentForSlowPathCall` below the frame before the host call** (every other C-call site already does this; `emitFunctionEpilogue`/exception handler reset sp from fp so no restore needed). **Result: 205/243 known baseline crashers now pass (84%).** Also implemented `farJump(TrustedImmPtr)` (was a PPC64_UNIMPLEMENTED stub the arith-*-on-various-types tests hit).
-
-**SECOND BUG — FIXED (commit "preserve r24 (csr10) across vmEntry; implement and64(TrustedImmPtr)").** The eval/callee-save leak below was root-caused and fixed: `pushCalleeSaves()` (LowLevelInterpreter.asm, the vmEntry callee-save save) saved r25–r30 but SKIPPED r24 (csr10). r24 is C-callee-saved and used by JS-entry dispatch (r24 held `llint_eval_prologue` at the crash) yet is NOT in GPRInfo's regCS0–9 (r14–r23), so `preserveCalleeSavesUsedByLLInt` (which only saves csr6–9) never covered it — r24 was preserved by nobody. A nested C→JS entry (`executeEval` running `eval(...)` under --useJIT=1) corrupted the C caller's r24 → wild store into LLInt code. Fix: grow the vmEntry callee-save area 80→96 bytes and save/restore r24 (r25–r30 and the csr6–9 window keep their exact cfr offsets; `copyCalleeSavesToBuffer` already treated csr10 as live). This unblocked all ~28 `arith-*-on-various-types` crashers (they now throw a benign DFG-required exception, not crash) plus general eval. Also implemented `and64(TrustedImmPtr, RegisterID)` (a stub the eval/arith paths reached once the leak was fixed). **NOTE the general lesson: JSC's offlineasm uses C-callee-saved GPRs (r24–r30) that are NOT in GPRInfo's regCS set; any C↔JS boundary must preserve the full set offlineasm uses, not just the JIT's regCS0–9.**
-
-**(historical) SECOND BUG diagnosis — r24–r30 callee-save leak across a nested C→JS boundary (useJIT=1-specific).** Minimal repro: `function h(){return eval("1+2")} for(i<50)h(); print(h())` crashes under `--useJIT=1` (any threshold, even with h staying LLInt) but WORKS under `--useJIT=0`. Fault: `stb r9,-8710(r24)` inside `executeEval` (C++) writing into LLInt executable code (SIGSEGV) — because **r24 (a C-callee-saved GPR that JSC's offlineasm uses as `csr10`, and r25/r26=ws2/ws3, r27–r30=Tmp scratch per PPC64LE_EXTRA_GPRS in ppc64le.rb) is garbage after `executeEval` calls into the eval'd LLInt code**. r24–r30 are NOT in GPRInfo's regCS0–9 (=r14–r23) nor in `RegisterSet::vmCalleeSaveRegisters()`, so the useJIT=1 vmEntry/callee-save path fails to preserve them while the LLInt clobbers them. Next: find where the useJIT=1 JS-entry (vmEntry thunk / the nested eval entry) saves callee-saves and make it preserve the full C-callee-saved set r14–r31 that offlineasm actually uses (or add r24–r30 to the vm callee-save set + buffer). The ~28 arith-*-on-various-types crashers are all blocked on THIS eval bug (their `shouldBe` harness uses eval); the remaining ~10 (8bit-*, array-flatmap, aggregate-error, etc.) are unclassified — recheck after the eval fix. Triage harness note: the `--maxDFGNodeCount=0` flag in `/tmp/triage.sh` is now REJECTED as invalid (rc=134 artifact) — remove it before re-running.
-
-**Class A (historical, now SOLVED) — Stack-walk / native-call frame corruption (DOMINANT cluster; high-leverage).** gdb-sampling shows most crashers abort in `StackVisitor::StackVisitor`. Repro even minimally: `function h(){var f=Function("return 1");return f()} for(i<100)h(); h()` crashes, as does `Error().stack` in a hot loop — ANY stack walk through a native call made from baseline-JIT code. FULLY DIAGNOSED: the abort is `RELEASE_ASSERT(result)` in `JSObject::realm()` (JSObject.h:575), inlined into the walk, because a frame's callee has no realm. Root cause pinned by manually walking the frame chain in gdb (break `JSC::CallFrame::callerSourceOrigin`, `set $cf=$r3`, read `*(long*)$cf` etc.): the **native callee frame's CallerFrame slot (`[cf+0]`) holds a JSObject pointer (e.g. 0x101cf388, which has a valid structureID 0x14b50) instead of the caller's stack fp** (should be a `0x7fff…` address). The native thunk `nativeForGenerator` (ThunkGenerators.cpp:466) sets this via `emitFunctionPrologue`, which stores `framePointerRegister`. Verified `framePointerRegister == callFrameRegister == r31` (GPRInfo.h:868) and `calleeGPR == regT0 == r3` (no *direct* r31 collision), so the corruption is subtler than a register-constant clash — likely the baseline op_call/op_construct frame-construction arithmetic (JITCall.cpp ~L141-160) or a CallFrameShuffler writing a value into the CallerFrame slot / a store landing at the wrong offset on PPC. Fixing this should clear a large fraction of the 243.
-- **Class B — Arithmetic/opcode miscompiles** — like the mulp bug; fix in ppc64le.rb / MacroAssembler as they surface.
-
-**Class A investigation progress (2026-07-19, session 2)** — narrowed substantially, not yet fixed:
-- An **assertion-enabled jsc now exists**: `WebKitBuild/Asserts/bin/jsc` on power9 (configured with `-DENABLE_ASSERTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo`, same JIT flags; `-O2` so it's usable). Rebuild it with `ninja -C WebKitBuild/Asserts -j4 jsc`. Under it the minimal repro `function h(){var f=Function("return 1");return f()} for(i<200)h(); h()` fires `ASSERTION FAILED: m_ptr` in `Ref<JSLock>::operator->()` — i.e. `operationDefaultCall`'s `owner->vm()` where `owner = callLinkInfo->ownerForSlowPath(calleeFrame)` returns garbage.
-- **Key finding (gdb, assertion build, `break operationDefaultCall`)**: at entry, `calleeFrame`(r3)=`0x44000002` and `callLinkInfo`(r4)=`0x38210080` are **garbage instruction-like words** (`0x38210080` = `addi r1,r1,128`), while `cfr`(r31)=`0x7fffffffd3a0` is VALID. So the `defaultCallThunk`'s `setupArguments<decltype(operationDefaultCall)>(GPRInfo::regT2)` (LLIntThunks.cpp) is NOT marshaling `callFrameRegister`→argumentGPR0(r3) and regT2→argumentGPR1(r4) correctly, OR the baseline caller (JITCall.cpp) loads `callLinkInfo` into regT2 via a miscompiled load (the instruction-byte values suggest a load reading CODE as data). NOTE: argumentGPR0..7 ALIAS regT0..7 (r3..r10) on PPC — watch for move-ordering clobbers in setupArguments. This could be Class B (a load/address miscompile) rather than a pure frame bug, and if it's in the shared slow-path-call marshaling it would explain a large share of the 243 crashes.
-- **ELIMINATIONS (session 2, verified — do NOT re-investigate)**: (a) baseline callee-save save/restore works — `fib(20)=6765` and `fact(10)=3628800` are correct, and recursion round-trips regCS6-9 = metadataTable(r20)/jitData(r21)/numberTag(r22)/notCellMask(r23) across nested calls; (b) `setupArguments` for ordinary operations works — arithmetic slow paths (operationValueAdd/Mul) run correctly; (c) `loadPairPtr` handles the `dest1==base` aliasing in `emitMaterializeMetadataAndConstantPoolRegisters` correctly (traced by hand); (d) `emitFunctionPrologue` works (testSimple + probe tests); (e) JS→JS stack walks work (`arguments.callee.caller` returns the caller). So the bug is NARROW: the **native/host call path from baseline specifically** (Function() ctor, Error.stack machinery) — JS→JS calls and walks are fine, only native-involved frames corrupt. The RELEASE conditional watchpoint that caught `operationDefaultCall` writing `0x101cf388` was a RED HERRING (a reused stack slot during call *linking*, not the crash frame — the crash frame is built later by the native thunk). Prime remaining suspects: `CallLinkInfo::emitFastPath` (the actual call emission), the native `nativeForGenerator` thunk path, or op_construct-specific frame setup — all where a native callee's frame gets linked. The assertion-build "garbage args to operationDefaultCall" may be a separate assertion-build-codegen artifact (release links fine and crashes later in the walk); prefer reproducing on RELEASE.
-- **Original do-next**: `gdb break operationDefaultCall`, read `$lr` on the RELEASE build (assertion build's `$lr` is polluted by the abort's `_Unwind_Backtrace`), disassemble ~20 insns before `$lr` to see the thunk's actual argument setup; and read the baseline caller's `callLinkInfo` load in `JIT::compileOpCall`/`JITCall.cpp`. Confirm whether r3/r4 garbage is the marshaling (thunk) or the callLinkInfo load (caller).
-
-**Original NEXT-SESSION note**: build an **assertion-enabled jsc** (Debug or RelWithDebInfo + forced `ASSERT_ENABLED`). StackVisitor.cpp:137 already has `dataLogLn("Invalid codeblock type: ", *cell); dataLogLn("Callee: ", …)` under `#if ASSERT_ENABLED` — it will print the exact bad frame contents. Assertions also preserve locals for gdb and fire earlier/closer to the real corruption. Then finish Class A (inspect JITCall.cpp op_call frame setup + the generated baseline code — note the disassembler isn't wired for PPC, so either decode raw bytes at the JIT code range or add a minimal PPC path to the JSC disassembler). Then grind Class B and run the formal Phase 3 gate.
-
-**(historical) First crash signature**: the compiled code segfaulted at runtime. `jsc … -e 'function f(x){var s=0;for(var i=0;i<x;i++)s+=i;return s} print(f(1000))'` (expect 499500) → SIGSEGV in `llint_function_for_call_prologue+384`, at `std r5, 0(r6)` where `r6 = <frameslot> - 24`. Frame #1 in gdb is a garbage return address `0x3821002048dec9ad` — those are raw PPC instruction bytes (`0x38210020` = `addi r1,r1,32`), i.e. an epilogue instruction sitting in a return-address slot. This is the **JIT↔LLInt shared-frame ABI**: the argument-copy / arity-fixup loop in the LLInt call prologue reads/writes bad frame slots when entered from (or transitioning with) baseline-JIT code. Likely suspects: CallerFrameAndPCSize / CallFrame header layout on PPC64, the `move`/`store` of the return-PC into the frame header vs LR handling, or the caller-frame slot arithmetic in `makeJavaScriptCall`-adjacent code. This is a focused frame-ABI investigation, distinct from the surface grind — start here next session. Repro is deterministic and single-function.
-
-## Phase 4 — DFG (Data Flow Graph) JIT
-
-Gate: `jsc --useFTLJIT=0 --useWasmJIT=0` (Baseline + DFG) passes the stress suite.
-
-### Phase 4 status — DFG BRINGING UP (2026-07-23)
-
-DFG is compiled (`ENABLE_DFG_JIT=1`, FTL off) and defaults on when JIT is on — that's why Phase 3 used explicit `--useDFGJIT=0`. **Bring-up command:** `--useJIT=1 --useBaselineJIT=1 --useDFGJIT=1 --useFTLJIT=0 --useConcurrentJIT=0 --thresholdForOptimizeAfterWarmUp=10 --thresholdForOptimizeSoon=10` (concurrent off ⇒ synchronous compile so crashes land on the main thread; `--useBaselineJIT=1` needed to make tier-up engage in short tests). **Diagnostic note:** `numberOfDFGCompiles(f)` returns the sentinel `1000000` when DFG is effectively OFF (TestRunnerUtils.cpp:74) — not a real recompile count; with DFG genuinely on it returns 1 for stable code.
-
-**Working now** (verified correct results): monomorphic arithmetic/compare/double, array read/write, object-property inline caches, OSR exit (int→double / int→string type-change deopt), closures, `n*fact(n-1)`, float accumulation, try/catch. **DFG MacroAssembler gaps implemented this session** (all in MacroAssemblerPPC64.h, committed): `branchAdd32`/`branchSub32`/`branchMul32` (reg+imm and Address/AbsoluteAddress memory-modify forms — the store is emitted BEFORE the branch, 64-bit overflow check reused); `abortWithReason` (reason/misc→scratch, trap); `moveFixedLi64` + `moveWithPatch(TrustedImmPtr)` / `storePtrWithPatch` (fixed 5-insn li64, patchable in place by the assembler's `repatchPointer`/`linkPointer`, DataLabelPtr at the sequence START); `repatchCall` (via `relinkCall`); `replaceWithJump`/`replaceWithNops` (via the assembler jump-slot / `fillNops`). Grind method identical to Phase 3: run a DFG gauntlet with the bring-up flags, `grep unimplemented`, implement, rebuild (~2 min), repeat.
-
-**NEXT BUGS (not fixed):**
-
-(1) **DFG two direct calls — PARTIAL FIX committed (2026-07-25, commit `3a2c366e9ac9`); a deeper heisenbug remains.** Repro: `function f(x){return x<2?x:f(x-1)+f(x-1)} noInline(f); print(f(N))`.
-
-> **✅ ROOT CAUSE OF THE "HEISENBUG" FOUND & BASELINE FIXED (2026-07-27, commit `49191d1`).** Valgrind memcheck WITH the JIT (`valgrind --smc-check=all-non-file --track-origins=yes` — it *runs* jsc's JIT fine) plus the rebuilt asserts build cracked it. The probabilistic corruption was **`MacroAssemblerPPC64::call(PtrTag)` returning `Call::LinkableNear` instead of `Call::Linkable`** (it was identical to `nearCall()`). `call()` is the general repatchable call used by `callOperation`; JITMathIC does `linkBuffer.locationOf(slowPathCall)` to repatch the arithmetic inline-cache slow-path call, and `locationOf` `RELEASE_ASSERT`s `!Near`. With the bogus `Near` flag, RELEASE builds silently computed the WRONG location and **repatched the wrong PC → JIT code corruption**; whether that landed somewhere fatal was ASLR/layout-sensitive → the "intractable heisenbug". Fix: `call()` → `Call::Linkable` (only `nearCall()` is `LinkableNear`; on PPC both link via the same `applyCallSlot`, so the flag only routes location/repatch). **Result: baseline JIT is now solid** — `a+b/a-b/a*b` MathICs fixed; the whole baseline gauge (push, user-call, array-write, object-write, 100k-iter loops) went from probabilistic crashes to **0/15 crashes**; default multi-tier clean. Methodology that worked (use it again): **valgrind runs the JIT**; the **asserts build** (`WebKitBuild/Asserts`, rebuilt from current source) turns silent corruption into a named `RELEASE_ASSERT`/`ASSERT` at the fault site — infinitely better than gdb/probe/ASLR whack-a-mole.
->
-> **✅ SECOND FIX — DFG call-linking (commit `608c4d5`).** The `pc=0` (null call target) was `MacroAssemblerPPC64::linkCall` routing a **non-Near** call to `PPC64Assembler::linkPointer` (5-insn li64, no `mtctr`/`bctrl`) instead of `applyCallSlot`. That branch was **dead code** while `call()` wrongly returned `LinkableNear`; correcting `call()`→`Linkable` (fix #1) started taking it → the target was materialized but never called → fall-through to `pc=0`. Every `call()`/`nearCall()` emits the same 8-insn slot and must link via `applyCallSlot`; only a tail call is a jump. **Result: DFG regular calls (`g→h`) fixed, and DFG works broadly.**
->
-> **✅ NET RESULT (2026-07-27): the port is largely working.** Default config (real-world) is clean — fib(30), sort, 100k push loops, Math.sqrt loops, JSON all correct. Baseline-only: 0 crashes across the gauge. **DFG with DEFAULT thresholds (the Phase 4 gate config `--useDFGJIT=1 --useFTLJIT=0`): fib(20)=6765, direct-call recursion f(12)=2048, loop-calls, array-push all 0/3 crashes.** Three real bugs fixed this session (`3a2c366` linkage-area, `49191d1` call() flag, `608c4d5` linkCall) — the first turned the "intractable probabilistic heisenbug" into deterministic bugs, the latter two fixed them.
->
-> **✅ THIRD FIX — DFG direct-call relink stale calleeGPR (commit `29c0993`). The direct-call heisenbug is RESOLVED.** The `threshold=10` `f(x-1)+f(x-1)`/classic-fib crash was the `JSObject::realm()` realmless assert in `operationLinkDirectCall` because `calleeGPR` was **stale**: it's dead once the callee is stored into the staged frame (before `mainPath`), so the register allocator reused it; on a RELINK (callee tiers up → near-call reset → slow path re-enters at `mainPath`, after the materialization) the slow path passed the stale register. **A non-perturbing global-variable probe (write to `volatile` globals, read from the core — NOT gdb breakpoints, which perturbed the run to a passing execution and created the "valid callee yet realmless" paradox) proved the callee was a type-`0x12` `CodeBlockType` object with null `m_realm`, not the JSFunction.** Fix: reload `calleeGPR` from `calleeFrameSlot(CallFrameSlot::callee)` (where it was just stored) right before the operation. Result: f(6..12), fib(20)/fib(25) at threshold=10 all pass (8/8-crash → 0/5); no regression. **KEY LESSON: for perturbation-sensitive JIT bugs, capture ground truth with a `volatile`-global write + core read, never a gdb breakpoint.**
->
-> **STATUS: the DFG call path is working.** Four fixes this session (`3a2c366` linkage-area, `49191d1` call() flag → baseline, `608c4d5` linkCall applyCallSlot → DFG regular calls, `29c0993` direct-call relink calleeGPR). Baseline solid; DFG works at default AND threshold=10; direct/regular/native calls, recursion, fib all green. Next: run the full Phase 4 gate (JSTests/stress at Baseline+DFG, `--useFTLJIT=0`) to find the remaining long tail.
-
-> **🚨 CRITICAL (2026-07-28): BOTH the Phase 3 and Phase 4 stress gates were INVALID — they ran in LLInt, not JIT.** On PPC64LE `useJIT` defaults to **false** (and so do `useBaselineJIT`/`useDFGJIT`), and `Tools/Scripts/run-jsc-stress-tests`'s `BASE_OPTIONS` (line 688) never forced them on. So every "gate" test ran under the interpreter. Proof: `numberOfDFGCompiles(f)` returns the sentinel `1000000` (its `!useJIT||!useBaselineJIT||!useDFGJIT` path) with the runner's exact flags, and the first "Phase 4 gate" (48307 runs, 0 crashes, 0 real bugs) was LLInt. **This does NOT invalidate the direct `--useJIT=1` testing** (the heisenbug fixes, fib, push, recursion, arith — all verified with JIT explicitly on) — but it means the STRESS SUITE has never actually exercised baseline/DFG, so there is an unquantified tail of real JIT bugs. **RUNNER FIXED**: added `BASE_OPTIONS += ["--useJIT=1","--useBaselineJIT=true","--useDFGJIT=true"] if $architecture == "powerpc64"` after line 688 (backup `/tmp/rjst2.bak`; the `$isFTLPlatform=false` edit, backup `/tmp/run-jsc-stress-tests.bak`, is also live — revert both when done). The repro commands now carry `useJIT=1 useDFGJIT=true`. **A valid gate is now running** (`/tmp/p4gate2.log`). **Real JIT bugs already surfaced once JIT is actually on:** (a) ✅ `branchConvertDoubleToInt32` was `PPC64_UNIMPLEMENTED` (DFG `compileArithRounding`: Math.floor/ceil/round/trunc) — **FIXED, commit `212e0f2`** (fctiwz + round-trip compare + neg-zero sign check); monomorphic Math.floor/ceil/round/trunc now correct. (b) ❌ `CallFrameShuffler::prepareForTailCall()` **aborts** in baseline `compileTailCall<OpTailCall>` — a tail-call bug the `arith-*-on-various-types` ("use strict") tests trip; a minimal `f(x){return g(x)}` tail call passes, so it's register/stack-config specific. (c) polymorphic `arith-*-on-various-types` fail (3/3, SIGABRT) — same tail-call abort. **Phase 4 is NOT done — the valid gate will enumerate the real tail; grind it down (tail calls next).**
->
-> **Phase 4 grind progress (2026-07-29):** Fixes landed with JIT actually on — `212e0f2` branchConvertDoubleToInt32 (DFG rounding); `6af2020` **prepareForTailCall** PPC branch (CallFrameShuffler, `m_newFrameOffset=-2` + `restoreReturnAddressBeforeReturn` mtlr) → **fixed-arg tail calls + tail recursion work** (`sum(100,0)`=5050, more/fewer/no-arg tail calls all correct); `2e8e519` **branchSub64** (was UNIMPLEMENTED: non-overflow via sub64+branchTest64, Overflow via `(a^b)&(a^result)<0`) + **prepareForTailCallSlow** PPC branch (CCallHelpers, mirrors ARM64). **STILL OPEN (WIP/next):** (a) **varargs tail calls** (`g.apply(null,arguments)` in strict mode → op_tail_call_varargs) get past the UNREACHABLE + branchSub64 but SIGSEGV in the frame shuffle downstream — the `prepareForTailCallSlow` PPC frame math/copy loop needs validation (no regression: crashed before too). (b-RESOLVED, 2026-07-29) **The baseline named-property crash was TWO separate PPC64 codegen bugs, both now fixed and committed:**
-  1. **`emitCompare32/64` register aliasing** (`b0c3a55`, MacroAssemblerPPC64.h): `branch32/64(cond, Address, TrustedImm32)` loads the memory operand into `dataTempRegister` as `left`, then `emitCompare` materialized an out-of-16-bit immediate ALSO into `dataTempRegister`, clobbering `left` → `cmpw r11,r11` (always-equal). Broke every compare-memory-vs-large-immediate, incl. the get_by_id/put_by_id IC structure check (structure IDs > 16 bits) and Asserts jitAsserts. Fix: `scratch = (left==dataTempRegister) ? memoryTempRegister : dataTempRegister`.
-  2. **`emitDataICPrepareForCall` was a no-op Phase-2 stub on PPC** (`cb5b619`, InlineCacheCompiler.cpp): the baseline DataIC handler is entered as a leaf with its return address live in LR (set by `bctrl` at the `jit.call(Address(handlerGPR,...))` IC site) and keeps the caller's cfr. Before its nested slow-path C call (operationGetByIdOptimize / getter / custom), the return address MUST be spilled since `bctrl` clobbers LR. The stub did nothing → handler returned through a stale LR (a JSCell in a temp) → base object landed in the frame returnPC slot → wild jump. Fix mirrors ARM_THUMB2: push a 16-byte `[fp][returnPC]` header (manual `moveFromLR` since linkRegister=r0 is a placeholder) WITHOUT changing fp, then reserve `maxFrameExtentForSlowPathCall`(96); matches `emitDataICRestoreAfterCall`'s `addPtr(96)+emitFunctionEpilogueWithEmptyFrame()`.
-  **VERIFIED PASSING at forced baseline (`--useJIT=1 --useBaselineJIT=1 --useDFGJIT=0 --useFTLJIT=0`):** monomorphic get_by_id/put_by_id, get_by_id-in-loop, 2-way polymorphic, JS getters, put-transitions, method calls (proto chain), JSON round-trip, string concat, array push/sum, for-in, recursion (fib). DFG-on (default) still works — no regression.
-  **UPDATE 2026-07-30: ALL THREE baseline bugs now FIXED. The two "remaining" sp-leaks were a single shared-thunk bug (`4e5d1d6`):** `emitCTIThunkPrologue/Epilogue` (CCallHelpers.cpp) did `pushPair/popPair(framePointerRegister, linkRegister)`, but PPC `linkRegister` is only an r0 placeholder — the real return address is in the LR SPR. So the shared `SlowPathCall` thunk spilled/reloaded r0 (garbage) while the true return address in LR got clobbered by the nested `callOperation` (bctrl); the tail-jump to CheckException then `blr`'d through the stale LR, re-entering the thunk epilogue in a tight loop that added `maxFrameExtentForSlowPathCall+16` to sp each turn until sp overran the stack top (SIGSEGV, sp≈0x800000000000). Fix: on PPC `moveFromLR(dataTempRegister)` before the push and `moveToLR` after the pop. This one fix cured BOTH `op_new_array_buffer`/`new_array_with_size`/spread AND the mono→poly get_by_id transition (3+ structures both route through SlowPathCall). VERIFIED PASSING at forced baseline: `[1,2,3]` in hot loops, array.length, `new Array(n)`, `Math.max` spread, 3-way & 8-way polymorphic get_by_id, typed arrays, closures, try/catch, regexp, Array.sort, Map/Set, arguments object — plus the earlier monomorphic/getter/transition/method/JSON/for-in/recursion set. No regressions. **Baseline JIT (--useDFGJIT=0) is now broadly healthy on PPC64; next: run the full JSTests/stress gate at baseline tier to quantify.**
-
-  **2026-07-30 (session 2): baseline validated against real stress tests + assembler gaps filled.** Direct-invocation sample of JSTests/stress at forced baseline (`-e "var testLoopCount=100;" -f <test>`; the harness global `testLoopCount` MUST be defined or tests abort spuriously — same class as the array.length artifact): **199/200 pass.** Fixed along the way: implemented the PPC64 set-from-condition assembler stubs that aborted (`PPC64_UNIMPLEMENTED`) when the baseline JIT emitted them — `compare8`(Addr,Imm/Reg,dest), `test8`(Addr,Imm,dest), `test32`(Reg/Addr,Imm/Reg,dest), `test64`(Reg,Imm/Reg,dest), `compare64`(Reg,Imm64,dest); added `setFromResultCondition` (ResultCondition analogue of setFromCondition). Commits `08099cf`, `ba84467`. The one remaining sample failure is **`ai-needs-to-model-spreads-effects.js`** — a genuine baseline-only bug (LLInt + DFG-default both pass; forced baseline aborts in `slow_path_throw_static_error`). Simple `[...generator]` spread works at baseline; the trigger needs the full test's interaction: a spread whose iterator has a side-effect that mutates an array's structure (`ary_2[0]={}`) mid-iteration, alongside a Float64Array. Deterministic. NEXT follow-up: narrow the spread/structure-transition interaction (likely op_spread / op_new_array_with_spread element-storage modeling when the source structure changes underneath, or the exception-throw/unwind path after it). Not a quick fix; 0.5% of the sample.
-
-  **2026-07-31 (session 3): broad stress triage + register-pressure and assembler fixes.** Stratified ~605-file sample of JSTests/stress at forced baseline (`-e "var testLoopCount=50;" -f`): **590/605 pass (97.5%)** → after this session's fixes, ~596/605. Fixes:
-   - **`04...` GPRInfo allocatable pool 8→14** (`git: expand pool`): PPC only exposed r3-r10 (8) as allocatable GPRs, so complex inline caches (put_by_val_direct, defineProperty) exhausted scratch and tripped `ScratchRegisterAllocator::allocateScratch`'s `CRASH()` inside `InlineCacheCompiler::generateWithGuard`. Added the 6 non-reserved callee-saves r14-r19 (regCS0-regCS5) to `numberOfRegisters`/`toRegister`/`toIndex`; they're already in `calleeSaveRegisters()` so the allocator preserves them. Fixed 3 sample crashes (put_by_val_direct, defineProperty-intrinsic, regexp-all-flags); no regressions across a 300-test sample; default (DFG) + baseline smoke still pass.
-   - **6 more assembler stubs** (`git: moveDoubleConditionallyDouble/shift/atomicLoad`): `moveDoubleConditionallyDouble` (fmr-based, both arities, dest-aliasing handled), `lshift32/rshift32/urshift32(TrustedImm32 value, RegisterID count, dest)` (shift immediate by register count), `atomicLoad64` (ld + lwsync acquire). Verified: `0x80000000>>>4`, Math.min/max doubles, Atomics load/store correct.
-   - Not a bug: `intl-datetimeformat` (exit 3 = ICU/feature, fails identically in LLInt).
-  **REMAINING crashes (well-characterized follow-ups):**
-   - **Generator resume is broken** (baseline AND default config; PRE-EXISTING, not a regression). Minimal repro: `function* g(){yield 42} function ff(){return g().next().value} noInline(ff); for(3000)ff()` → SIGABRT. Every generator variant crashes on `.next()`; generator *creation* (no `.next()`), async functions, plain `switch`/`switch-on-arg`, and manual iterators all work. Root: baseline calls `slow_path_throw_static_error` with a **wrong `pc`** — the opcode byte at the passed pc is 248 (invalid; only 215 opcodes exist), so `pc->as<OpThrowStaticError>()` reads a garbage message operand → `RELEASE_ASSERT(errorMessageValue.isString())`. The `@generatorResume` builtin does `[9] is_cell_with_type this,JSGeneratorType` → `[16] throw_static_error "|this| should be a generator"` and `[1] switch_imm scrutinee:arg2(state)`. So either `is_cell_with_type` misjudges the generator (spurious branch to the throw) or `switch_imm` on the state arg mis-dispatches, and the reached throw's slow-path pc is stale. NEXT: step through the `generatorResume` baseline codegen in the Asserts build; check the DEFINE_SLOW_OP pc/bytecodeOffset for op_throw_static_error and the op_switch_imm jump-table target resolution. This is the same `slow_path_throw_static_error` abort seen for `generator-containing-for-of-on-set`, `iterator-fast-path-mode-mixing`, `verify-can-gc-node-index`, `typedarray-constructor-byteoffset`, and `ai-needs-to-model-spreads-effects` — likely ONE shared generator/throw-pc bug.
-   - **2 SIGSEGV in JIT thunks** (`bound-function-inline-terminal`, `regexp-exec-dfg-strength-reduction-regExpObjectNode`): wild jump in the 0x7ffff07f… thunk region; not yet root-caused.
-
-  **2026-08-01 (session 4): multi-agent fan-out + the big arity fix → baseline essentially feature-complete for the common surface.** Ran 5 fork agents in parallel (worktree-isolated, encoding-verified against `as`, no builds — builds serialized): 3 implemented disjoint stub groups, 2 root-caused bugs. Integrated:
-   - **`4e5d1d6`-class arity fix (`JIT.cpp` ~836)** [agent E] — the baseline arity-check entry saved/restored the caller return address with `move(linkRegister, argumentGPR1)` (r0 placeholder → garbage) instead of `mflr`/`mtlr`, so EVERY under-applied baseline call returned into its own arity stub (hang → SIGSEGV). This ONE fix resolved **6 of the 7 previously-failing tests**: the generator-resume bug (which had eaten a huge earlier investigation — it was the resume chain's under-applied calls, exactly as agent D predicted after disproving op_switch_imm), `ai-needs-to-model-spreads-effects`, `iterator-fast-path-mode-mixing`, `verify-can-gc-node-index`, `typedarray-constructor-byteoffset`, `regexp-exec-dfg-strength-reduction`.
-   - **~50 assembler stubs** [agents A + C, + my redo of the lost atomics/FP agent B's FP conversions]: integer/logic/shift/bitfield/byteswap + branch-overflow/patch (A, empirically verified on POWER9); loads/stores/pairs/unaligned/sign-extend-abs + VSX vector moves incl. new `lxvd2x`/`stxvd2x`/`xxlor` in PPC64Assembler.h (C, encodings verified on POWER8 `as`); `convertInt/UInt32/64ToFloat` (mtvsr*+fcfids/fcfidus). One const-fix (`add64(imm,AbsoluteAddress)`).
-   **RESULT: stress sample 302/302 (was 296/302).**
-  **2026-08-02 (session 4 wrap-up): BASELINE JIT MILESTONE — broad ~605 stress sample now 605/605 (0 crashes, 0 unimplemented), up from 590/605 at session start.** Fixed the last failure, `bound-function-inline-terminal` — it was NOT the suspected tail-call frame-shuffle bug but an **ELFv2 linkage-area collision**: `boundFunctionCallGenerator` (ThunkGenerators.cpp) called `operationMaterializeBoundFunctionTargetCode` directly without reserving the C linkage/param area, so the callee's prologue `std r0,16(r1)` (LR save) clobbered the bound-target JS frame's argumentCount slot [cfr+32] with a code pointer → `AHInsaneArgumentCount`. Fix: wrap the call with `makeSpaceOnStackForCCall`/`reclaimSpaceOnStackForCCall` (no-op where maxFrameExtentForSlowPathCall==0). See [[reference_ppc_baseline_handler_abi]] for this recurring ELFv2 pattern.
-  **Baseline JIT (--useDFGJIT=0) is feature-complete for the reachable surface: 0 unimplemented aborts across the sample; Atomics (compareExchange/add/and/or on Int8/16/32) and Float16Array both work at baseline via runtime paths. No regressions; default (DFG) config verified clean.**
-   **DEFERRED to their phases (DFG/FTL/WASM-SIMD — NOT reachable from baseline, so cannot be validated until those tiers are up; implementing untested low-level atomic/FP/vector code now is a liability):** `branchAtomicWeakCAS8/16/32/64` (DFG inline CAS — PPC has native lbarx/lharx/lwarx/ldarx + st[bhwd]cx.; ARM64 contract is a JumpList with the value-mismatch + SC-status branches, PPC branches on CR0[EQ] after stcx.), the inline Float16 convert/load/store path (POWER8 has no HW fp16 — needs a soft path or xscvhpdp/xscvdphp guarded as POWER9), and full 128-bit vector/SIMD beyond the moves agent C added. These are the remaining PPC64_UNIMPLEMENTED stubs; none block baseline.
-
-  **2026-08-02 (session 5): DFG (Phase 4) grind started — see [[project_ppc64_dfg_status]] for the live handoff.** DFG stress sample (`--useDFGJIT=1 --useFTLJIT=0`, `testLoopCount=100`): **~275/302 (~91%)**, up from 262. Simple DFG is correct (string===, parseInt, object property, fib/sort/JSON). FIXED+committed: **`b84fd90` rapidHashMix64** (added mul64/uMulHigh64, extended the ARM64 RISC branch to PPC — was RELEASE_ASSERT_NOT_REACHED, aborting all DFG hash/Map/Set/string-radix compiles; +13 tests, Map/Set values correct). Committed but INCOMPLETE: `d4229d1` applyCallSlot near-call r12/TOC attempt (didn't clear tests; no regression). A 6-fork-agent fan-out (4 killed by a server rate-limit mid-work but returned findings) surfaced the root causes for the next round: **(1) DFG operation-call ELFv2 TOC/r12 bug** — DFG operation calls give the callee a wrong/zero r12 so its global-entry prologue computes a wrong TOC (r2); operations with a nested TOC-relative/PLT call crash (operationCompareStringEq→resolveRope PLT→pc=0), others survive — the biggest lever, needs the real DFG appendCall path fixed to set r12=operation address across relinking; **(2) callee-save leak** — the GPRInfo pool expansion added r14-r19 (callee-saves); verify pushCalleeSaves/RegisterAtOffsetList/DFG prologue save+restore them (the "correct-value-then-SIGSEGV-at-exit" symptom); **(3) ELFv2 FP-arg GPR-skip** — setupArguments doesn't advance the GPR index for FP args (operationArrayPushDouble puts array in the wrong reg); **(4) DFG stubs** — add64/sub64(FPR)=vector i64x2 (vaddudm/vsubudm), plus new-object/Math.pow paths. NO regression: baseline stays 605/605. DFG completion is a multi-session effort. Also noted: the Asserts build's DFG is unusable (addressOfDoesGC config mismatch — ENABLE_DFG_JIT missing a CPU(PPC64LE) branch in PlatformEnable.h:784-795), so debug DFG on the Release build.
-
-  **2026-08-02 (session 6): DFG grind — six fixes, 246→267/302 (my /tmp/dfgrun.sh sample, `--useDollarVM=1`), baseline unregressed (293/302, all 9 fails are non-JIT feature-gaps/timeouts).** Root causes #1/#3/#4 from session 5 fixed, plus three new: **(1) `b375ffc2` farJump r12/TOC** — `farJump(RegisterID)` emitted a bare `mtctr;bctr` without setting r12=target, so a tail-jump to a C operation's ELFv2 global entry got a stale r12 → wrong TOC (the StringEqual thunk→operationCompareStringEq→resolveRope PLT→pc=0). Fix: `mr r12,target` first. Cleared the rope/string cluster. **(2) `3baa331e` PlatformEnable DFG-enable** — added a CPU(PPC64LE) branch so ENABLE_DFG_JIT/ENABLE_DFG_DOES_GC_VALIDATION are consistent across TUs; unblocks the Asserts build. **(3) `53381945` FP-arg GPR-skip** — made `ArgCollection::argCount(GPRReg)` position-based (`numGPRArgs+numFPRArgs`) on PPC; ELFv2 skips a GPR per FP arg (verified with gcc -O2: `p(void*,double,void*)`→r3,r5). Fixed array-push-double etc. **(4) `c57be681` WTFGetBacktrace** — glibc backtrace() faults walking PPC JIT frames (fatal in EXCEPTION_SCOPE_VERIFICATION on Asserts + crash logging); replaced with a validated back-chain walker. **(5) `2d632706` add64/sub64(FPR)** — these are scalar 64-bit INTEGER add/sub on FP-reg bits for NaN-boxing (NOT vector ops as session-5 note #4 guessed); shuttle through GPRs. Fixed math-hypot, math-round-basics, parse-int-double. **(6) `92546aae` DFG CallDirectEval** — reserved `sizeof(CallerFrameAndPC)+maxFrameExtentForSlowPathCall`=112 (was 32) on PPC so the C-call's ELFv2 linkage/param scratch doesn't clobber the eval frame's callerFrame slot at [sp+16]. Fixed es6-default-parameters, eval-that-is-not-eval, function-name-scope. **Remaining ~26 DFG-specific fails** (see [[project_ppc64_dfg_status]]): :139 (object-rest, poly-setter-combo, having-a-bad-time-with-derived-arrays, map-delete, arrowfunction-lexical-bind-supercall-3, variable-initialization-error-check, op_urshift-ConstVar, type-for-get-by-val, perform-promise, iterator-forEach-map-set-close, yarr-auto-possessification, ftl-osr-exit-phantom, anyint-index, array-lastIndexOf-doublerepuse), :134 (array-unshift-intrinsic, b3cppi-ssa-dominance, check-sub-class, dataview-bytelength-ic-stub-stack-desync, redundant-array-bounds-checks), :124 timeouts (construct-varargs, load-varargs, setter-inlining, sloppy-mode-function-hoisting, v8-typedarray-atomics, v8-unregister-many, array-push-stack-overflow), plus the shared non-JIT feature-gaps. Diverse root causes — next levers: an IC-stub sp/LR desync (dataview, poly-setter), OSR-exit, and the varargs-tail-call frame math.
-
-  **2026-08-03 (session 6 cont.): +1 fix (`a328b1f` branchAtomicWeakCAS8/16/32/64), DFG 267→268/302; swept the remaining failures for tractability.** Implemented the atomic weak CAS family with larx/stcx. (verified: Atomics.compareExchange/add correct; b3cppi-ssa-dominance passes). Then triaged what's left, and it is NOT low-hanging: (a) **returnPC cluster** (5 tests: having-a-bad-time-with-derived-arrays, poly-setter-combo, object-rest-computed-inlined-numbers, anyint-index, array-lastIndexOf-doublerepuse) all wild-jump to `0x7fff00002000` — a re-entrant call stores a returnPC with correct high-32/garbage-low-32; needs a hardware watchpoint (writeLi64/repatchPointer/return-path all ruled out). (b) **Release-only miscompiles** (dataview-bytelength-ic-stub-stack-desync, redundant-array-bounds-checks, array-unshift-intrinsic) — PASS on the Asserts/RelWithDebInfo build, :134 only at Release -O (latent UB). (c) **real infinite loops** (:124: array-push-stack-overflow-exception-check confirmed still looping at 200s, plus construct-varargs/load-varargs/setter-inlining/sloppy-mode-hoisting/v8-unregister-many) — stack-limit-check and varargs frame-shuffle bugs. (d) **feature/FTL/harness gaps** (:3 and op_urshift-ConstVar `//@ runFTLNoCJIT`): async-*, intl-datetimeformat, shadow-realm-import-value, using-declaration-for-of, has-indexed-property-array-storage-ftl, regexp-prototype-test-on-too-long-rope — most fail at baseline/LLInt too (not JIT bugs). (e) **deep correctness** (array-indexof-includes-result-boundaries — the compare32 set-from-condition is correct, bug is deeper in the search loop; map-delete; check-sub-class null Ref<JSLock>). Net session: **8 commits, DFG 246→268/302, baseline unregressed.** The cheap wins are done; remaining tail is per-bug deep work.
-
-  **2026-08-03 (session 6 cont. #2): +1 high-value fix (`104861d` DFG arity-check LR), DFG 268→275/302 (91%).** A sustained reverse-engineering session on the returnPC-corruption cluster found the bug (though not the exact one for those 5 tests — it fixed 7 OTHERS): `DFGSpeculativeJIT::compile`'s function-entry arity check spilled/restored the return address around `nearCallThunk(LLInt::arityFixup())` using `move(linkRegister, reg)`/`move(reg, linkRegister)` — but `linkRegister` is the r0 PLACEHOLDER on PPC, so it saved/restored r0 instead of the real LR SPR. `nearCallThunk` (bl) clobbers the real LR, so any DFG-compiled function entered with fewer args than params returned through a stale LR and jumped wild. Fix mirrors the baseline arity check: `moveFromLR`/`moveToLR` (mflr/mtlr) on a `#elif CPU(PPC64LE)` branch. KEY INSIGHT: this also cleared most of the `:124` "infinite-loop" timeouts (construct-varargs-inline-smaller-Foo, load-varargs-then-inlined-call, v8-unregister-many, v8-typedarray-atomics, array-push-stack-overflow, sloppy-mode-hoisting) — they were NOT loops, they were arity-fixup victims spinning wild after returning to a stale LR. The 5-test returnPC cluster (having-a-bad-time-with-derived-arrays, poly-setter-combo, object-rest-computed-inlined-numbers, anyint-index, array-lastIndexOf-doublerepuse) STILL crashes identically (0x7fff00002000) — so it is a SEPARATE OSR-exit/inlined-frame returnPC bug (arity now ruled out; suspect reifyInlinedCallFrames / DFGOSRExitCompilerCommon on PPC). Net session so far: **9 commits, DFG 246→275/302, baseline unregressed.**
-
-  **2026-08-03 (session 6 finale): returnPC cluster SOLVED via gdb record/reverse-execution — `1e5d35a` DFG direct-native-call ELFv2 linkage fix, DFG 275→281/302 (93%).** The recorded reverse-watchpoint caught the corruptor in the act: the DFG's inline direct-call-to-native emission (DFGSpeculativeJIT64.cpp emitCallTarget ~1033) calls the host function with sp==cfr, so the ELFv2 callee's linkage-area writes land on the JS frame header — the CR save `stw rX,8(r1)` overwrites the LOW 32 bits of the returnPC slot (0x...f27ed4c4 → 0x...00002000 = the CR value = the cluster's signature garbage). Only CR-saving callees trigger it (hence exactly 5-8 tests). Fix: makeSpaceOnStackForCCall/reclaim around the call (same family as adc778d5, 92546aae). Cleared having-a-bad-time-with-derived-arrays, poly-setter-combo, object-rest-computed-inlined-numbers, anyint-index, array-lastIndexOf-doublerepuse, variable-initialization-error-check, type-for-get-by-val, yarr-auto-possessification. PORT-WIDE LESSON: audit every JIT-emitted C call for sp at/near live JS data — the ELFv2 callee always writes [sp+8..sp+32) (CR/LR/TOC saves) plus possibly the 288-byte protected zone below sp. Remaining 21 fails: mostly non-JIT feature gaps (:3), Release-only miscompiles, FTL-marked tests, and a small real tail (map-delete, perform-promise-then-one-handler, iterator-forEach :134, regress-153522603 :124). Net session: **11 commits, DFG 246→281/302 (93%).**
-
-  **2026-08-14: PHASE 4 (DFG) GATE MET — DFG 293/302 == BASELINE 293/302, IDENTICAL failure lists, ZERO DFG-specific failures.** Five more fixes closed the tail: **(1) `e141dbc` dfgCalleeSaveRegisters += regCS0-5 (r14-r19)** — the pool-expansion registers were allocated by the DFG but never saved; the leak through vmEntry explained map-delete/perform-promise AND the three "Release-only miscompiles" (dataview-bytelength, redundant-array-bounds-checks, array-unshift-intrinsic — r14-r19 corruption, not compiler UB). **(2) `25dce5c` move(TrustedImm32) zero-extension** — PPC addi/lis sign-extend but the MacroAssembler contract (ARM64 movz<32>/x86_64 movl) zeroes the upper word; boxing the DFG ArrayIndexOf miss -1 produced all-ones (prints -1, fails ===). **(3) `1081aaa` setupArguments immediate extension** — fix 2 regressed varargs because ELFv2 requires the CALLER to extend 32-bit args per signedness (callees may read the full register, unlike ARM64 AAPCS); the marshaller now materializes immediates with the C type's own extension, and its immediate path also got the FP-arg GPR-skip fix. **(4) `2666f53` exception-path TOC stomp** — the direct-native-call shim restored sp before the exception check, so the HandleException thunk's C call did its ELFv2 TOC save at [sp+24] == the frame's Callee slot; genericUnwind then read a TOC value as the callee cell (check-sub-class, iterator-forEach). Keep sp lowered through the check. **(5)** regress-153522603 confirmed ≥120s at baseline too (slow hardware, not a JIT bug). The remaining 9 failures are identical at baseline and DFG: async-harness ×2, explicit-resource-management (for-using/using-declaration), has-indexed-property-ftl, intl-datetimeformat, regexp-rope, shadow-realm, regress-153522603 — LLInt/runtime feature gaps, not JIT bugs. **Phase 4 complete; next: Phase 5 (FTL) or WASM.**
-
-  **2026-08-14 (final): 100% — 299/299 PASS on the NR%18 sample at BOTH tiers (DFG and baseline), 0 failures, 3 upstream-skipped.** The "remaining 9" were HARNESS ARTIFACTS, not feature gaps — zero runtime feature work was needed: (a) 5 tests need `//@ requireOptions` flags the crude runner ignored (`--useExplicitResourceManagement` ×3, `--useShadowRealm`, `--useAsyncStackTrace`) — the features are implemented in JSC core and work on PPC when enabled; (b) intl-datetimeformat needs `TZ=America/Los_Angeles` (the real runner sets it; the host is Australia/Sydney); (c) async-stack-trace also needs cwd=JSTests/stress so `error.stack` shows bare filenames; (d) regress-153522603 is designed for `//@ runDefault(... --watchdog=200 --watchdog-exception-ok)` — passes cleanly with its own config; (e) regexp-prototype-test-on-too-long-rope is `//@ skip` upstream and has-indexed-property-array-storage-ftl is FTL-only (`skip` on non-FTL platforms) — neither should ever have been counted. Measurement now uses a directive-aware runner (power9 /tmp/dfgrun2.sh: cd JSTests/stress, TZ, parses `//@ skip` / `isFTLEnabled` / `requireOptions(...)` / `runDefault(...)`); future gates should use it or the real run-jsc-stress-tests. **Phase 4 (DFG) closed at 100%.**
-
-  [Historical — the three fixes, in order: (1) `b0c3a55` emitCompare32/64 aliasing; (2) `cb5b619` emitDataICPrepareForCall stub; (3) `4e5d1d6` emitCTIThunkPrologue/Epilogue LR. All three share the theme: PPC's linkRegister=r0 is a placeholder, so any return-address save/restore must use mflr/mtlr, not a register move.]
-
-  **`array.length` was NOT a bug — it was FIXED earlier too.** The apparent failure was a test artifact: `for(...)ff([1,2,3])` builds a fresh array LITERAL every iteration (`op_new_array_buffer`), and THAT leaks. Hoisting the array (`var arr=[1,2,3]; ...ff(arr)`) → passes. So all get_by_id/put_by_id, incl. custom-value getters like `.length`, work at baseline.
-  **TWO genuinely-remaining, DISTINCT baseline bugs (both crash: sp climbs to the stack ceiling ~0x800000000000 over ~hundreds of calls — n≤100 ok, n≥500 crash — then a later handler faults on `ld r31,0(r1)`/`ld r0,8(r1)` from the corrupt sp, loading filesystem-path strings; it is an sp LEAK per fast-path call):**
-    1. **`op_new_array_buffer` fast-path handler leaks sp.** Repro: `function ff(){return [1,2,3]} noInline(ff); for(50000)ff()`. Also any inline `[1,2,3]` in a hot loop. Note: `slow_path_new_array_buffer` is NOT called (fast path taken), so the leak is in the baseline fast-path handler for op_new_array_buffer (baseline JIT emission, likely JITOpcodes/the new_array_buffer handler thunk — NOT InlineCacheCompiler). `{x:1,y:2}` object literals (op_new_object + put_by_id) do NOT leak — pass.
-    2. **3-way+ polymorphic get_by_id leaks sp.** Repro (array hoisted, so unrelated to #1): `var a=[{x:1},{x:2,y:3},{z:0,x:4}]; function ff(o){return o.x} noInline(ff); for(50000)ff(a[j%3])`. 2-way polymorphic and monomorphic PASS; only 3+ structures fail. Likely the polymorphic-list handler chain (`emitDataICJumpNextHandler` farJump between chained handlers) or the mono→poly IC transition running an `emitDataICRestoreAfterCall` without a matching `emitDataICPrepareForCall`.
-  Next: disassemble the op_new_array_buffer fast handler and the poly-list handler; grep for a restore reachable without a prepare; measure r1 drift by breaking at the mapped fast handler once JIT'd. [Original investigation trail — superseded but kept for method:]
-
-(b-orig) **`arith-*-on-various-types` SIGSEGV → earlier theory: BASELINE JIT named-property inline-cache bug, NOT DFG/OSR (correct direction, now root-caused above).** Tier isolation on the minimal repro proves it: `function ff(o){return o.x} noInline(ff); for(50000)ff({x:5})` → **LLInt (`--useJIT=0`) WORKS, forced BASELINE (`--useJIT=1 --useDFGJIT=0 --useFTLJIT=0`) CRASHES (139/134), DFG crashes too (it runs the baseline phase first), and DEFAULT config WORKS (tiers up to DFG fast, baseline phase too brief).** That is why the earlier "DFG" and "OSR-exit" theories were wrong and why `--dumpDFGDisassembly` was empty (never reaches DFG). Narrowed: crashes on **named-property access via the DataIC** — `get_by_id` (`o.x`) AND `put_by_id` (the `{x:5}` literal is `new_object` + `put_by_id IsDirect x=5`) both die; but **empty `{}` works, `put_by_val`/`get_by_val` (`o[k]`, `a[0]`) — wait `a[0]` also crashed, so it's broader indexed too — and passing an object without dereferencing works, and int/arith works.** Core proof of the corruption: at the crash `pc=lr=0xfffe000000000005` — a boxed JSValue (int 5 = `o.x`/the stored property value); the property value is written to the frame's **returnPC header slot** instead of the object's inline slot → the `blr` returns to a boxed-int address → wild jump (SIGSEGV/SIGABRT/SIGTRAP via `llint_op_call`), with `cfr` also zeroed. So the baseline inline-property IC (get_by_id/put_by_id DataIC) on PPC uses a **wrong base register or offset**, hitting the call frame instead of the object. **This is the single highest-leverage bug — inline named-property access is ubiquitous; it was hidden because the stress gate ran LLInt and the direct testing used DFG/default config which tiers past baseline.** POSSIBLE REGRESSION to rule out first: check whether the `linkCall`/`call()`-flag fixes (`608c4d5`/`49191d1`) broke the DataIC handler call — bisect by testing baseline `ff(o){return o.x}` at commit `49191d1` vs now. NEXT (deterministic, baseline): the fast-path store/load is inline in ff's function code (addr `0x…05c0`, NOT captured by the PPC_CODEDUMP hook which only caught the 0x7fff shared thunks) — use a WATCHPOINT: `setarch -R`, break at `op_enter_handler`, read r31 (ff cfr) on a baseline call, watch `[r31+8]`, continue to catch the store of `5`; or fix the code-dump to capture function code (0x…05c0 pool). Minimal repros: `function ff(){return {x:5}} noInline(ff); for(50000)ff()` and `function ff(o){return o.x} noInline(ff); for(50000)ff({x:5})`, both with `--useJIT=1 --useBaselineJIT=1 --useDFGJIT=0 --useFTLJIT=0`. [EARLIER (also superseded) "DFG frame-offset" note kept below for the minimization data:]
-
-(b-old) **DFG codegen frame-offset theory (SUPERSEDED — it is baseline, see b above):** Concrete proof from a core: at the crash `pc=0xfffe000000000004`, `lr=0xfffe000000000005` — both are **JSValues** (boxed ints 4 and 5), and 5 is exactly `o.x`'s value. So the DFG stored a **local/operand (the get_by_id result) into the frame's returnPC header slot**; the subsequent `blr` jumps to a boxed-int "address" → wild jump (seen as SIGSEGV/SIGABRT/SIGTRAP via `llint_op_call`). `cfr` (r31) is likewise corrupt. **Trigger = a DFG-compiled function that does a HEAP op (get_by_id `o.x`, get_by_val `a[0]`, or object allocation) — those spill; pure-int loops are fine.** Minimal deterministic repro: `function ff(o){var s=0;for(var i=0;i<40000;i++)s+=o.x;return s} noInline(ff); print(ff({x:5}))` (exit 139) with `--useJIT=1 --useBaselineJIT=1 --useDFGJIT=1 --useFTLJIT=0 --thresholdForOptimizeAfterWarmUp=10 --thresholdForOptimizeSoon=10`. Note `function f(o){return o.x}; for(i)f(g)` (same op, no inner loop, entered by call not loop-OSR) WORKS — so it correlates with functions that spill across a loop / have a larger frame. **This is the single highest-leverage Phase 4 bug** (gates all polymorphic + heap-in-loop tests). NEXT: it's a stack-slot/frame-size miscalculation — disassemble ff's DFG code (re-add the temporary `PPC_CODEDUMP` hook in Disassembler.cpp → `powerpc64le-objdump -b binary`) and find the store of the get_by_id result that lands at the returnPC offset; compare the DFG frame-slot→offset mapping / `frameRegisterCount` to baseline. `--useOSREntryToDFG=0` does NOT fix it (so it is not loop-OSR-entry). Baseline heap ops work, so it is DFG-codegen-specific. [SUPERSEDED HYPOTHESIS follows — kept for the minimization data:] Minimization: plain `int→double` OSR **works** (`function f(x){return x+1}` fed ints then doubles → 4.5 ✓), but transitioning the speculated value to a **cell** crashes — `int→string` (`function f(x){return x*2}` fed ints then `"s"+i` → abort) and **object structure-change** (`function f(o){return o.x}` fed `{x:int}` then `{x:double,y}` → SIGSEGV) both die. Every variant is a **wild jump into JIT code reached via `llint_op_call`** (no clean assertion even in the asserts build), i.e. OSR exit reconstructs a **corrupt baseline frame** when recovering a cell value, and the next call jumps wild. Since `int→double` (unboxed number) is fine and only cell recoveries fail, the bug is in the OSR-exit value-recovery / reboxing path for `DataFormatCell`/`JSValue` on PPC (DFGOSRExit / reifyInlinedCallFrames / the recovery emitter). Repro (deterministic, `--useJIT=1 --useBaselineJIT=1 --useDFGJIT=1 --useFTLJIT=0 --thresholdForOptimizeAfterWarmUp=10 --thresholdForOptimizeSoon=10`): `function f(o){return o.x} noInline(f); for(i<20000)f({x:i}); for(i<20000)f({x:1.5,y:2}); print(f({x:9.5}))`. **This is the single highest-leverage Phase 4 bug** — it gates all polymorphic-type tests. It is a wild-jump (not a stub), so use the ground-truth method (volatile-global write in the OSR-exit C path + core read, OR disassemble the OSR-exit stub at the crash), NOT gdb breakpoints. Monomorphic Math rounding is correct (rounding fix stands); this is orthogonal to the rounding op. **Method for the grind:** run each failing stress file directly with `--useJIT=1 --useBaselineJIT=1 --useDFGJIT=1 --useFTLJIT=0 --forceUnlinkedDFG=0 --useDollarVM=true`; asserts build (`WebKitBuild/Asserts`) names the fault; `PPC64_UNIMPLEMENTED` messages point at the next MacroAssembler gap. A valid gate is running (`/tmp/p4gate2.log`, JIT forced) — but it is on the PRE-tail-call-fix binary; **re-run it on the current binary for an accurate failure count** once the open items above are closed.
-
-> **⚠ CRITICAL REASSESSMENT (2026-07-26): the remaining heisenbug is NOT DFG-specific and NOT deterministic — it affects the BASELINE JIT too, and its manifestation is PROBABILISTIC per run (ASLR-sensitive).** A full day chasing a "deterministic DFG→native-call frame corruption" turned out to be an artifact of (a) a **stale binary** (an `rsync` that reported `ninja: no work to do` so my revert never rebuilt) and (b) **bad ASLR streaks**. On a clean rebuild the *same* repro `function g(n){var a=[];for(i<n)a.push(i)} noInline(g); for(50)g(20)` crashed 3/3, then passed 3/3, then 0/6 across consecutive commands — **pure per-run ASLR luck**. Confirmed: it hits **baseline-only** (`--useJIT=1 --useDFGJIT=0 --useFTLJIT=0`) as well as DFG; it hits **user-JS-fn calls too** (not just natives — natives/allocation just raise the per-run crash probability); the **default multi-tier config mostly passes** (tiers up fast, low incidence); a bare top-level `push` loop (no called function) passes far more often than a `noInline`'d called function. So the earlier "native-vs-user" and "DFG-vs-baseline" splits were **crash-probability differences, not categorical** — do not treat them as the boundary. **This means the Phase 3 "gate MET" is suspect** — baseline carries the same latent probabilistic corruption; the stress runner likely got lucky ASLR draws and/or its patterns have low incidence. **`setarch -R` (no-ASLR) makes a given (binary,repro) pair deterministic** and reproduces under gdb — but the outcome still flips across rebuilds (layout changes). **The root cause is a probabilistic memory-corruption in the PPC JIT call path (frame/callee slot clobber), exposed by exact process memory layout — the specifics below (realmless assert, wasm-thunk wild target, corrupt callee slot) are all faces of this one corruption.** NEXT: stop the gdb/probe/ASLR whack-a-mole — build with a **sanitizer (ASAN)** or run under **valgrind/memcheck** (accepting the JIT-code caveats) to catch the invalid store at its source deterministically, regardless of the probabilistic surface manifestation.
-
-**FIXED — ELFv2 linkage clobber in the direct-call link slow path** (DFGSpeculativeJIT64.cpp `emitCall`, `#if CPU(PPC64LE)`): the direct-call fast path stages the callee frame at `[sp+0..]` and re-enters `mainPath` *after* the callee/argCount/this stores; `operationLinkDirectCall` (a C fn) saved LR@`16(sp)`/TOC@`24(sp)` = the staged frame's argCount/this slots, and the mainPath re-entry never repaired them. Fix: reserve `maxFrameExtentForSlowPathCall` (96 B, verified nonzero for PPC in MaxFrameExtentForSlowPathCall.h) below the staged frame around the `callOperation`, restore after. This made **shallow** two-call recursion pass (f(3)/f(4)/f(5) → 4/8/16 ✓); no regression (baseline, single-call recursion, DFG arith/loops/object-ICs all green).
-
-**STILL BROKEN — perturbation-resistant heisenbug at deeper recursion** (n≥6, e.g. f(6)). Crash = the `JSObject::realm()` RELEASE_ASSERT (JSObject.h:575, "realmless structure") *inside* `operationLinkDirectCall`, called from DFG call-site 2 (return addr confirmed via op's saved LR in the core — NOT a stale-stack guess). **Extensively disproven this session (do NOT re-investigate these):** the codegen is correct — call site 2 bakes `calleeGPR`(r4) via `lis r4,9801; ori r4,r4,11008` = valid f, `std r4,8(sp)`, and **r4 is provably never rewritten between the callee store and the `bctrl`** (full core + live disasm). The staged frame `[sp+8]`=callee, `[sp+16]`=argCount=2, `[sp+24]`=this, `[sp+32]`=arg0 are all valid in the core. The callee object (header, executable, scope) and its Structure (`base 0x7ffe00000000 + structureID`, `m_realm` at struct+0x28) are valid. When observed at op entry via dprintf, `callee=…2b00`, `structureID=0x120e0`, `structure=0x7ffe000120e0`, `m_realm` NON-NULL — realm() *cannot* fail on what we observe, yet unobserved it asserts. **NOT concurrent-GC** (`--useConcurrentGC=0` still crashes). Single-threaded, layout/timing-sensitive: n=6 crashes but n=7 passes (non-monotonic); only `--thresholdForOptimizeAfterWarmUp=10` crashes n=6 (5/20/50/100 pass); `--collectContinuously=1` makes n=7/8 crash too (GC-timing gated). **Any in-process observation hides it** (WTFLogAlways, a single `volatile` global store, gdb breakpoints, even non-stopping `dprintf` at the realm check) → the value op reads as the callee/structure is transiently garbage from **uninitialized stack/heap or a register-liveness gap**, exposed by exact memory layout.
-
-**KEY TOOL for next session — no-ASLR gives a reliable repro under gdb:** `setarch -R <jsc> …` crashes deterministically AND reproduces under gdb (normal ASLR runs hide it under gdb). Get a core via `coredumpctl`, decode structure = `0x7ffe00000000 + (structureID & ~1)`, m_realm at `+0x28`. **NEXT:** build with a scrubbing/zap allocator (`--scribbleFreeCells=1`, JSC zap options) so the garbage callee becomes a recognizable pattern, OR audit DFG `emitCall` register liveness for `calleeGPR` across the *first* call's slow-path `callOperation` (does op clobber a caller-saved reg the 2nd call assumes live? the 2nd callee is re-baked so it *shouldn't* — but the arg0 reload `ld r4,-72(r31)` and spills `std r3,-64(r31)` interleave). Debug probes (PPC_DIRECTCALL_PROBE, PPC_LINK_PROBE, PPC_CODEDUMP, g_ppc_last_callee) all REVERTED — reintroduce via no-ASLR gdb dprintf, not in-process logging.
-
-**REFRAMED 2026-07-25 — the direct-call heisenbug is one facet of a broader, RELIABLE, deterministic bug: DFG calling a NATIVE/host function corrupts the caller frame.** Isolation (all `setarch -R`, minimal `50×g(20)`): DFG functions that call a **native** crash reliably — `a.push(i)`, `a.indexOf(2)`, `Math.abs(x)` all SIGSEGV; but calling a **user JS function** `h(i)` WORKS (→1275), and inline allocation `[]`/`{}` WORKS. Pure arithmetic works. **Not GC-dependent** (huge `--gcMaxHeapSize` still crashes), **not a heisenbug** (5/5 crash, reproduces under gdb without no-ASLR games). Crash signature (release core): a **misaligned return address** (e.g. `0x100d5691` — PPC insns are 4-byte aligned) in the DFG frame's returnPC slot, pointing into a **DATA region** (JSValues/metadata: `.long 0x2,0xd,0x7fff…`), so `blr` jumps into data → wild code (`wasm_to_js_wrapper_entry`/`operationGetWasmCalleeStackSize` are just nearest-symbol noise). ⇒ the DFG frame's returnPC (or an adjacent slot) is **overwritten during a native call** — the ELFv2 LR/TOC-save-into-caller's-linkage class (same family as the Phase 3 `nativeForGenerator`/`throwExceptionFromCall` fixes and the direct-call fix above), but on the DFG→native path specifically. Baseline→native works (Phase 3 gate passed), so it's DFG-specific: likely the DFG stages the native's call frame at an `sp` where the native entry's (or the host C fn's) `std LR,16(sp)`/`std r2,24(sp)` lands on a live DFG frame slot, and/or the DFG's callee-save (r14–r23 hold JS values) interaction with `nativeForGenerator`. The two-direct-call heisenbug (realmless assert, GC-gated) is plausibly the same clobber hitting the callee slot instead of returnPC, made timing-sensitive by GC. **LOCALIZED via the (now rebuilt) assertion build** (`WebKitBuild/Asserts/bin/jsc`, current source, has symbols; reproduces the crash): minimal repro `function g(n){var a=[];for(var i=0;i<n;i++)a.push(i);return a.length} noInline(g); for(i<50)g(20)` (no `setarch` needed — 3/3 crash). Symbolized: SIGSEGV in `Wasm::operationGetWasmCalleeStackSize(functionInfo=0x0)` ← `wasm_to_js_wrapper_entry` — **red-herring wasm symbols**; `useWasm=0`, and gdb can't unwind JIT frames so its `#2+` are data pointers on the stack (spilled JSValues/butterflies like `{structureID, 0x010e2400 typeblob, …}`), not real frames. The REAL caller (from the wasm thunk's LR at entry) is **`llint_op_call_ignore_result+360`**: `ld r8,32(r8); mr r12,r8; mtctr r12; bctrl` — i.e. the call loads the callee's code-entry from `[executable+32]` and it is `wasm_to_js_wrapper_entry` (WRONG). Reading the staged call frame at the thunk (r1): **`callee[cfr+24]=0`, `codeBlock[cfr+16]=0`, `argumentCount[cfr+32]=0x1008e328` (a POINTER where a small int belongs)** — the DFG staged a **malformed callee frame** (null callee/codeBlock, a pointer in the argc slot), so the generic call path dereferences garbage and lands in the wasm thunk. This is the ELFv2 frame-slot-clobber family (argc slot holding a pointer ↔ the `std LR/TOC,16/24(sp)` pattern) but on the **DFG→native staged-frame** path. **NEXT (tractable, deterministic): under the asserts build, `break wasm_to_js_wrapper_entry`, then walk back to the DFG code that staged the frame and dump the staged `[sp+0..40]` right after the DFG's call setup vs. right before the `bctrl` — find which store zeroes the callee/codeBlock slots or writes the pointer into argc. Compare the DFG native-call frame staging to baseline's (baseline + same workload PASSES). Prime suspect: the DFG's outgoing-call frame store sequence and/or a callOperation between the frame stores and the call whose ELFv2 LR/TOC save lands on the staged callee/codeBlock/argc slots (same fix shape as the committed direct-call linkage reservation, but for the general/native call path).**
-
-**ASSERTS-BUILD CAVEAT (2026-07-25):** `WebKitBuild/Asserts/bin/jsc` was rebuilt with current source (has symbols, `abortWithReason` now implemented). It reproduces the DFG→native crash AND gave the symbolized localization above — BUT it *also crashes the same workload under **baseline** (`--useDFGJIT=0`)*, which the **release** build does NOT (release baseline push → 200; Phase 3 gate passed). So the asserts build has an additional, PPC-specific crash of its own — almost certainly the debug-only jit-assert emission (`jitAssertCodeBlockOnCallFrameWithType` etc. at AssemblyHelpers.cpp, emitted only when ASSERT_ENABLED) exercising a buggy MacroAssembler path. Treat asserts-build baseline crashes as a *separate* bug; trust the release build for the DFG-vs-baseline distinction. The `wasm_to_js_wrapper_entry` wrong-target reproduces in the **release** core too, so the corrupt-frame finding is real. TODO(separate): fix the asserts-build baseline crash (audit the MacroAssembler ops used by AssemblyHelpers jitAssert* on PPC) — a working asserts build is valuable for all future JIT work. LLInt-only (`--useJIT=0`) passes everything.**
-
-(2) **reentrant natives** (`sort` with a comparator) crash — same DFG→native call-path bug as the reframed (1). (3) `moveWithPatch(TrustedImm32)`/`branchPtrWithPatch` still stubs — implement when hit (need `repatchInt32`/`readInt32` for the 2-insn lis+ori form). Then run the Phase-4 gate (stress at Baseline+DFG, `--useFTLJIT=0`).
-
-1. DFG is mostly architecture-agnostic — `DFGSpeculativeJIT64.cpp` and `DFGSpeculativeJIT.cpp` operate on MacroAssembler abstractions. Fill in whatever MacroAssemblerPPC64 holes show up. Expect gaps in SIMD-adjacent paths and fast-math conversion.
-2. OSR exit machinery needs MachineContext integration — verify PPC register save/restore in `MachineContext.h` covers all GPRs/FPRs and CR fields the DFG clobbers.
-3. Inline caches: PPC64 function-call ABI (TOC pointer in r2) complicates IC patching. **Read the ARM64 IC implementation first** (`jit/Repatch.cpp`, `bytecode/StructureStubInfo.*`, and the ARM64 MacroAssembler patching primitives) — it is the reference for what IC patching must guarantee. Then cross-check RISCV64 for the bare-Linux-port-shape patterns (cache flushing, W^X transitions without Apple JIT permissions). The PPC answer will likely use trampolines that keep r2 stable across the patched call site.
-
-**Verification**: diff `jsc --dumpDFGGraph=1` output between ARM64 and PPC64 on the same test — the DFG IR should be identical (it's arch-agnostic). Divergence means we're mis-reading the bytecode. Codegen divergence is expected at the Air level.
-
-## Phase 5 — B3 / Air backend — ✅ DONE 2026-08-26
-
-Gate: FTL and WASM-OMG both functional. This is the largest phase.
-
-**Gate met for FTL. `JSTests/stress` is fully green: 47,610 PASS / 0 FAIL** *(measured with a test harness that was stale on the box — see the 2026-10-07 correction under Immediate next actions)*, release FTL build,
-JIT enabled by default. WASM-OMG is *not* covered — WASM has no execution tier on PPC64 at all,
-so it moves to Phase 6 (see there). Run it with:
-
-```sh
-export TZ=America/Los_Angeles JSCTEST_memoryLimit=$((2*1024*1024*1024))
-Tools/Scripts/run-jsc-stress-tests --memory-limited \
-    --jsc WebKitBuild/FTL/bin/jsc -c 20 -o /home/tle/stress JSTests/stress
-```
-
-`--memory-limited` is **mandatory**: without it `StringObject-define-length-getter-rope-string-oom.js`
-invites the kernel OOM killer, which kills the workers and wedges the ruby driver — two runs died at
-that exact test while appearing to still progress. It in turn imposes a 1 GB `JSCTEST_memoryLimit`,
-which 64 KB pages push a typed-array test 0.06% past, hence the explicit 2 GB override. Launch from a
-script file: `pkill -f "run-jsc-stress"` matches your own ssh command line and kills the launch, and
-`pgrep -f run-jsc-stress-tests` self-matches so it always reports "running" — detect completion with
-`ps -eo args | grep -c "[j]sc-stress"`.
-
-**Two bug families accounted for nearly every runtime failure in this phase.** Both are worth checking
-first for any new crash:
-
-1. **ELFv2 lets a callee write into the CALLER's frame** — CR at `sp+8`, LR at `sp+16`, TOC at `sp+24`,
-   plus a parameter save area from `sp+32`. **Audit rule: any `emitFunctionPrologue()` followed by a C
-   call is a bug unless `sp` is lowered first** (`makeSpaceOnStackForCCall()`,
-   `maxFrameExtentForSlowPathCall` = 96). Six sites fixed: the FTL slow-path saving area, FTL's inline
-   native call, `CallDirectEval`, the FTL OSR-exit thunk and its materialization calls, and the
-   bound/remote function thunks. Diagnostic: a frame whose header slots hold *code addresses* while its
-   callers look healthy — match the clobbered offset to the save (8 = CR, 16 = LR, 24 = TOC) to name the
-   culprit.
-2. **r11/r12/f0 are the MacroAssembler scratches** (`dataTempRegister`, `memoryTempRegister`,
-   `fpTempRegister`) and are not allocatable. ELFv2 leaves **no** volatile GPR outside the argument
-   registers r3–r10 and those two scratches, so upstream code that assumes one exists breaks here.
-   Five sites fixed: Air's register pool, the ColdCCall callee, `nonArgGPR0` in the DFG ShadowChicken
-   nodes, `ensureShadowChickenPacket` holding a pointer across a compare that materialises into r11,
-   and `branchAdd32` re-reading an operand it had already clobbered.
-
-Almost nothing was a wrong instruction encoding — every encoding checked against
-`as -mpower8` was correct. The recurring defect was **an arch gate that omitted PPC**, either falling
-through to `RELEASE_ASSERT_NOT_REACHED` (DFG integer div/mod) or silently taking the x86 shape with the
-wrong operand count (`UMulHigh64`). Note Air opcode gates live on individual form *sub-lines* in
-`b3/air/AirOpcode.opcodes`, not just the opcode header.
-
-1. Per-arch Air bits: `b3/air/AirOpcode.opcodes` additions guarded by `arch(ppc64le)`; `AirCCallingConvention.cpp` ELFv2 specialization; Air register info covering GPR/FPR volatility per ELFv2 Table 2.1.
-2. Register allocator is arch-agnostic, but the register set sizes and constraints matter. PPC64 has 32 GPR / 32 FPR / 64 VSX, similar headroom to ARM64.
-3. Air lowering rules per Air opcode. Walk `AirOpcode.opcodes` and add PPC64 encodings.
-4. SIMD: POWER has VSX (128-bit vectors). **VSX on POWER8 is Power ISA v2.07B Book I Chapter 7** — the v2.07 VSX subset is what we target. POWER9 adds VSX3 (`xxspltib`, byte-reverse helpers, etc.); those are POWER9-gated fast paths, not baseline. Map B3's SIMD ops to v2.07 VSX first (`xvadddp`, `xxland`, `xxsel`, `xvcmpeqdp`, …); only reach for VSX3 opcodes behind a runtime feature check. This is the riskiest part of the port — punt to a later milestone if WASM SIMD tests blow up; gate `ENABLE_WEBASSEMBLY_SIMD` off initially.
-
-**Verification**: `JSC_dumpAirGraph=1` on the same test on ARM64 and PPC64 — the Air IR should be **structurally** similar. Air passes FTL through the full B3 optimizer, so correctness bugs here are extremely subtle. Use `--useConcurrentJIT=0 --validateAir=1 --validateB3=1` as the default dev flags.
-
-## Phase 6 — WASM (IPInt + BBQ + OMG) — ✅ DONE 2026-10-08
-
-Gate: `Tools/Scripts/run-jsc-stress-tests JSTests/wasm.yaml` green (1,777 test files, 27 groups).
-
-### GATE MET — 2026-10-08
-
-- **`JSTests/wasm.yaml`: 17,218 / 17,218 pairs pass** (the count grew from 13,434 once
-  `$isSIMDPlatform` admitted ppc64le and the SIMD variants started running).
-- **`JSTests/stress`: 80,818 pairs, 0 FAIL** with wasm, the Yarr JIT and the sampling profiler on.
-- Every wasm tier runs and is on by default: **IPInt** (the mandatory entry tier, including SIMD),
-  **BBQ** and **OMG**, with **SIMD**, **tail calls** and **wide arithmetic** (add128/sub128/mul_wide).
-  Every configuration resolves coherently, including JIT-less (`--useJIT=false`), where IPInt is the
-  engine.
-- Signal-based bounds checking works: `useWasmFastMemory` and `useWasmFaultSignalHandler` are on, and
-  the out-of-bounds tests pass. Faulting-PC extraction comes from `runtime/MachineContext.h`, whose
-  PPC64LE accessors index `gp_regs` by the kernel's `PT_*` names with layout `static_assert`s.
-- The path here, in order: BBQ/OMG MacroAssembler surface → IPInt port (vector transport, f32 in
-  double format, doubled 512-byte handler slots) → the register-budget fixes (Air given r24–r30; the
-  JIT's non-preserved scratches moved off the MacroAssembler's r11/r12) → nine ELFv2 linkage-area
-  fixes → tail calls → SIMD on VSX in all three tiers. Details are in the dated status blocks under
-  "Immediate next actions", newest first.
-- **Not proven:** nothing has run on POWER8 silicon (see Phase 7), and no performance has been measured.
-
-### (historical) Status — 2026-08-27
-
-Builds and links with `ENABLE_WEBASSEMBLY_BBQJIT/OMGJIT=1`. `typeof WebAssembly` is `object`.
-Options resolve coherently: `useWasm=true useBBQJIT=true useOMGJIT=true useWasmIPInt=false`.
-`new WebAssembly.Instance(...)` **traps in `ipint_entry`** — that is the whole remaining gap.
-
-### The architectural constraint — IPInt is mandatory (learned 2026-08-27, the hard way)
-
-**BBQ and OMG are tier-ups *from* IPInt, not alternative entry tiers.** A detour through
-"enable BBQ and skip IPInt" was attempted and is a dead end. Evidence, all in-tree:
-
-- `CalleeGroup`'s constructor *requires* `Ref<IPIntCallees>&&` and unconditionally builds an
-  `IPIntPlan` (`WasmCalleeGroup.cpp:75`); `m_wasmIndirectCallEntrypoints` are populated from
-  `m_ipintCallees->at(i)->entrypoint()`.
-- `IPIntPlan::compileFunction` sets the entrypoint to `LLInt::inPlaceInterpreterEntryThunk()`
-  **unconditionally** — it is not gated on `Options::useWasmIPInt()`.
-- `useWasmIPInt=false` does not bypass IPInt; it means *"do not interpret, tier up immediately"*.
-  `WasmIPIntSlowPaths.cpp:185` reads `if (!Options::useWasmIPInt() || needsSIMDReplacement)` inside
-  the prologue-OSR path, and `jitCompileAndSetHeuristics` then calls `plan->waitForCompletion()` —
-  a synchronous BBQ compile. `WasmIPIntTierUpCounter.h:77` asserts the contract outright:
-  `ASSERT(Options::useWasmIPInt() || checkIfOptimizationThresholdReached())`.
-- On PPC64 `ipint_entry` is `if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7) … else break end`
-  (`InPlaceInterpreter.asm:1357`) — literally a trap instruction.
-
-**Consequence:** with `useWasmIPInt=false` the executed IPInt path is exactly
-*entry → argumINT → prologue OSR → jump to BBQ*. No opcode handlers, no mINT/uINT. That subset alone
-yields running wasm; the full port is what unlocks a JIT-less wasm tier and the
-`wasm-no-jit` / `wasm-no-wasm-jit` suite variants.
-
-### Already landed (the BBQ/OMG detour was not wasted — BBQ needs all of it)
-
-- `WebKitFeatures.cmake`: `WTF_CPU_PPC64LE` now sets `ENABLE_FTL_DEFAULT ON` (was a stale Phase-2
-  comment), which is what turns on `ENABLE_WEBASSEMBLY_BBQJIT/OMGJIT`.
-- ~20 MacroAssembler primitives: `rotateRight32/64` (register + immediate forms),
-  `countTrailingZeros32/64` (POWER8 fallback — `cnttzw` is POWER9; uses `32 - clz(~x & (x-1))`,
-  hardware-validated including the `ctz(0)` edge case), `countPopulation32/64` + a `true`
-  `supportsCountPopulation()` (`popcntw`/`popcntd` are v2.06, inside baseline), `multiplySub32/64`,
-  `truncateFloat*`/`truncateDoubleToUint64` (floats are already double-format in PPC64 FPRs, so these
-  delegate), `atomicXchg*`/`atomicXchgAdd*`/`atomicStrongCAS*` (larx/stcx. loops, both the 3-arg and
-  5-arg CAS shapes), `threadSafePatchableNear{Call,TailCall}`, templated `transfer8/16/32/64/Vector`,
-  `store16(TrustedImm32, …)`. New assembler opcodes: `andc` (31/XO=60), `rldcl` (MDS-form, 30/XO=8).
-- **Three silent-wrong-code fixes**, all the same defect class (arch gate omitting PPC, compiling
-  clean, emitting a wrong or empty body):
-  - `WasmBBQJIT64.cpp` `emitAtomicOpGeneric()` had no `#else` for its store phase — PPC64 would emit
-    a load and a computation with **no store**, making every wasm atomic a silent no-op. Now wired to
-    the existing `loadLinkAcq*`/`storeCondRel*`, with an `#else #error` so a future backend fails loudly.
-  - `JSToWasm.cpp` never saved/restored PPC64's **8 FP argument registers** (the FP chain had no
-    catch-all) and the generic `USE(JSVALUE64)` GPR branch covers only 6 registers while
-    `wasmCallingConvention()` uses `GPRInfo::numberOfArgumentRegisters` = 8 here, dropping
-    `regWA6`/`regWA7`. Any wasm function taking floats or 7+ integer args got garbage.
-  - `ipintReloadMemory` and both `branchIfWasmException` sites had no PPC64 body, silently skipping the
-    reload of the pinned `memoryBase`/`boundsCheckingSize` registers.
-- `_wasm_restore_frame_return` moved from `InPlaceInterpreter64.asm` into `InPlaceInterpreter.asm`:
-  it is not IPInt-specific (BBQ/OMG call it via `emitRestoreInstanceFrameIfNeeded`) but lived in a file
-  included only where IPInt exists. Stays inside `_wasmIPIntPCRangeStart/End`, so ARM64/x86 are unchanged.
-- `IPInt::initialize()` is now called only when `Options::useWasmIPInt()` — it installs IPInt's own
-  dispatch bases and validates handler stride, neither of which is meaningful when wasm runs on BBQ.
-- `checkWasmStackOverflow` (RISCV64 `memoryTempRegister` form) and OSR-entry frame reconstruction in
-  `WasmOperations.cpp` now have PPC64 branches. The latter uses `context.spr(PPC64Registers::lr)`,
-  because **LR is a special-purpose register on PPC64, not a GPR**.
-- ~124 SIMD stubs re-labelled `PPC64_UNSUPPORTED()` (see below).
-
-### Plan — staged, each stage gated
-
-**6A. Make `InPlaceInterpreter64.asm` assemble for ppc64le.** The include gate at
-`InPlaceInterpreter.asm:~2103` (`if JSVALUE64 and (ARM64 or ARM64E or X86_64)`) now admits PPC64LE.
-Adding the file introduces new constant references, so `LLIntOffsetsExtractor` must be rebuilt before
-`asm.rb` will run. Then drive offlineasm to a clean pass. Known first blockers:
-- `nextIPIntInstruction()` ends in `else error end` — the computed-goto dispatch. PPC64 needs
-  `pcrtoaddr <base>, tmp` + `opcode << log2(alignIPInt)` + `add` + `jmp`, i.e. the X86_64 shape.
-- `ipint_dispatch_base` (and the gc/conversion/simd/atomic bases) are `const`s defined only under
-  `if ARM64 or ARM64E or X86_64`.
-- `saveIPIntRegisters`/`restoreIPIntRegisters`: take the `X86_64 or RISCV64` two-`storep`/`loadp` form;
-  PPC64 has no `storepairq`.
-- `pushQuad` and friends end in `else break end`.
-*Gate: `/tmp/k/oasm.sh` exits 0 and `jsc` links.*
-
-**6B. Port the entry path.** `ipint_entry`, `preserveCallerPCAndCFR`/`saveIPIntRegisters`,
-`unboxWasmCallee`, `ipintEntry` (argumINT argument marshalling),
-`argumINTInitializeDefaultLocals`/`argumINTFinish`,
-`preserveWasmArgumentRegisters`/`restoreWasmArgumentRegisters`, `ipintPrologueOSR`.
-*Gate: `new WebAssembly.Instance` runs a function to completion via BBQ; the targeted primitive smoke
-test (`/tmp/k/prim.js`) passes.* **This is the first milestone that produces executable wasm.**
-
-**6C. Audit the silent gates.** ~730 gates in `InPlaceInterpreter64.asm` cover only
-ARM64/X86_64/RISCV64. Those with no `else` emit **nothing** rather than failing — the exact class that
-produced every hard bug in this port. Enumerate, classify (needs a body / genuinely N/A), and make the
-N/A cases explicit. Do this *before* trusting any green test result.
-
-**6D. Port the opcode handlers plus mINT/uINT.** The bulk: control flow, memory, arithmetic,
-conversions, atomics, GC; mINT (call argument marshalling) and uINT (return marshalling).
-
-**6E. Satisfy the stride validation.** Re-enable `IPInt::initialize()` for PPC64 and make every handler
-fit its fixed slot: `alignIPInt` = 256 bytes (512 with LLINT_TRACING), `alignAtomicIPInt` = 512,
-`alignArgumInt`/`alignUInt`/`alignMInt` = 64. Handlers that overflow must move work out of line.
-PPC64 is fixed-width 4-byte, so a 256-byte slot is **64 instructions** — tighter than it sounds for
-handlers that ARM64 writes with load/store-pair. Expect overflow to be a real, recurring constraint.
-*Gate: `JSTests/wasm.yaml` green in the `wasm-bbq`, `wasm-omg`, `wasm-no-jit` and `wasm-no-wasm-jit`
-variants.*
-
-### Phase 6 items — all resolved (2026-10-08)
-
-1. ~~`WasmCallingConvention.cpp` needs a PPC64 entry~~ — **it does not.** The file is arch-generic: it
-   builds its register vectors from `GPRInfo::numberOfArgumentRegisters` / `toArgumentRegister()` and
-   the FPR equivalents, and already excludes `macroClobberedGPRs()` from its scratch set. (Independently
-   confirmed by `InPlaceInterpreter.asm`, which sets `NumberOfWasmArgumentGPRs = 8` for PPC64LE.)
-2. ~~WASM SIMD~~ — **done**: on in IPInt, BBQ and OMG (see "Status — wasm SIMD" and "6F" below). The
-   `PPC64_UNSUPPORTED()` vector stubs are gone except seven ARM64/x86-shaped forms nothing routes
-   PPC64 to (`vectorHorizontalAdd`, `vectorUnsigned{Min,Max}`, `vectorSshl`, the 5-operand x86
-   shifts). `PPC64_UNIMPLEMENTED` = a hole that should be filled (only the Float16 family remains);
-   `PPC64_UNSUPPORTED` = deliberately off here, so hitting one means **a gate leaked**.
-3. ~~WASM traps~~ — **works**. The faulting PC comes from `runtime/MachineContext.h` (Linux takes
-   `HAVE(MACHINE_CONTEXT)`, not `PlatformRegisters.h`'s legacy Darwin/Mach PPC branch), whose PPC64LE
-   accessors already existed and now use `PT_*` names with layout `static_assert`s (c2460939e090).
-   `useWasmFastMemory` and `useWasmFaultSignalHandler` are on and the out-of-bounds tests pass.
-4. ~~`add128`/`sub128`/`I64MulWide`~~ — **done** in IPInt, BBQ and OMG (f7deb73b3140); the
-   `#if X86_64/#elif ARM64` gates around them now end in `#error`.
-
-### Risks specific to this phase
-
-- **256-byte handler slots on a fixed-width ISA.** See 6E. The most likely source of grind.
-- **Silent empty bodies.** 6C exists because a passing test proves nothing if the handler emitted no code.
-- **Reservation loops and `break`.** IPInt macros that fall through to `break` produce a trap word
-  (`0x7fe00008`) rather than a link error, so mistakes surface as SIGBUS at runtime, not at build time.
-
-### Tooling for this phase (both established, both worth keeping)
-
-```bash
-# offlineasm alone, ~15s, no C++ build — the .asm iteration loop
-/tmp/k/oasm.sh                 # writes /tmp/k/LLIntAssembly_test.h
-
-# single C++ file syntax check, ~14s vs a 20-min full build.
-# MUST point -include at a cmake_pch.hxx copy with no .gch beside it, or a stale
-# PCH silently reports methods missing that you have already added.
-/tmp/k/syn3.sh
-```
-
-## Phase 7 — Hardening — NEXT
-
-Ordered by risk. Phases 0–6 are green on POWER9; nothing below blocks them.
-
-1. **POWER8 silicon validation — the largest open risk.** Every result in this file comes from a POWER9
-   box. The code keeps to Power ISA v2.07B by construction (every encoding checked with `as -mpower8`,
-   POWER9-only instructions avoided by hand, and the SIMD sequences read only the result words POWER8
-   defines for `xvcvdpsp`, `xvcvdpsxws`/`uxws` and `xscvdpspn`), but none of that has executed on POWER8.
-   Needs real POWER8 hardware or a faithful emulator; run the full stress and wasm gates there.
-2. **Benchmark.** *(2026-10-08: first measurement done — see "Status — benchmarks".)* No throughput had been measured on any tier. Compare against the LLInt and against
-   ARM64 on identical workloads (target: DFG ≥ 5× LLInt, FTL ≥ 2× DFG). Known PPC64 overheads to
-   quantify: VMX SIMD ops copy operands through v0–v5; IPInt handler slots are 512 bytes (double
-   ARM64's); 64-bit constants still take up to 5 instructions; branch compaction only shrinks jumps that
-   are not later repatched.
-3. ~~**Signal-based VM traps.**~~ *Done 2026-10-09 (240a9558eb0c) — see "Status — signal-based VM
-   traps".* `ENABLE_SIGNAL_BASED_VM_TRAPS` covered x86_64, ARM64 and RISCV64 only, so PPC64 polled.
-4. ~~**Build and run testmasm, testb3 and testair.**~~ *Done 2026-10-12 — see "Status — backend test
-   binaries".* They are not targets in the JSCOnly configuration used here, so the backend had only
-   been exercised through jsc. All three now pass in full on POWER9.
-5. ~~**Debug (`ASSERT_ENABLED`) build.**~~ *Done 2026-10-13 — see "Status — ASSERT build".* Every
-   gate so far ran on Release; assertion-only paths were unexercised.
-6. ~~**Address-sanitized + UBSAN builds pass.**~~ *Done 2026-10-14 — see "Status — ASan + UBSan build".*
-7. ~~**Concurrent JIT under stress**~~ *Done 2026-10-14 — see "Status — concurrent JIT and memory ordering".* (`--useConcurrentJIT=1`, the default, but stress it deliberately).
-   Already fixed: memory fences compiled to `nop` (910201507c0e), and LL/SC is now RCsc (leading `sync`,
-   118542349276 and 08abfedb7fbd). Still worth a litmus-test pass over every atomic path.
-8. ~~**JIT cage / `USE(JIT_CAGE)`**~~ *Checked 2026-10-15: nothing to do.* `ENABLE_JIT_CAGE` is defined only for
-   Darwin + ARM64E + the Apple internal SDK (PlatformEnable.h); the PPC64 build has no trace of it.
-9. **Smaller gaps** *(2026-10-15: Float16 done for POWER9+, Yarr multi-char compares done, Unicode
-   disagreements confirmed upstream — see "Status — item 9 smaller gaps"; the rest open)*: the `PPC64_UNIMPLEMENTED` Float16 family; Yarr's SIMD Boyer-Moore and
-   multi-character compare optimizations (off on PPC64) and the RegExp inline size limit (500 bytes,
-   tuned for denser code); `--sampleCCode` C-frame attribution (GCC does not keep r31 as a frame
-   pointer); the Yarr JIT/interpreter Unicode disagreements (see the RegExp status block — confirm
-   against current upstream ARM64 before calling them upstream bugs).
-10. ~~**Jump islands for PPC64.**~~ *Done 2026-10-09 (9a04be8f73ea) — see "Status — jump islands".*
-   Once more than 32 MB of JIT code is live, a call or tail call can
-   need the far (`li64`/`mtctr`/`bctr`) slot form, and rewriting that while another thread runs it
-   is not safe (Power ISA concurrent-modification rules allow only `b`/`nop`-class changes); wasm
-   tier-up does exactly that.
-
-## Testing strategy (applies to every phase)
-
-1. **Every phase must green the previous phase's gate before starting.** No "we'll come back to this."
-2. **Dual-machine diff.** On every non-trivial failure: re-run the same test on ARM64 with the same `jsc` flags, diff outputs. If ARM64 fails the same way, the bug is arch-independent (probably in our offlineasm or MacroAssembler use). If ARM64 passes, the bug is in PPC64 codegen.
-3. **Empirical opcode verification.** Every instruction encoding we write gets byte-compared against `powerpc64le-linux-gnu-as` output. No exceptions.
-4. **Golden bytecode files.** For small JS test programs, capture `--dumpBytecode=1 --dumpDFGGraph=1 --dumpAirGraph=1` on ARM64 and store as golden. Phase 1–4 must produce equivalent bytecode and DFG graphs (Air diverges, but bytecode and DFG must match).
-5. **Commit discipline.** One opcode per commit in early phases. One test-suite-passing green gate per merge.
-
-## Known risks & open questions
-
-See the "Lessons from the Firefox SpiderMonkey PPC64 port" section for concrete workarounds to most of these.
-
-- **TOC (r2) handling.** ELFv2 local calls don't restore r2, global calls do. Getting this wrong produces crashes deep in libc. Bake a `debugAssertR2Correct()` check into MacroAssemblerPPC64 in debug builds.
-- **Link register.** LR is not a GPR on PPC; every call clobbers it. Baseline/DFG call sequences must save LR into the frame before making nested calls. This differs sharply from ARM64 (where LR is just x30) and from RISCV64.
-- **Condition register.** PPC compares write to CR fields, not GPRs. Lower MacroAssembler's `branch32(...)`-style API to `cmpd` + `bc` via a specific CR field; adopt SM's convention of CR0 for the fast path and stick to it.
-- **Scratch-register pool.** r11/r12 as primary, r16 as pool-base, r0 **not** usable as a load/store base. See Lessons section — this is the top source of SM bugs.
-- **Memory ordering.** ARM64 has acquire/release loads/stores as primitives; PPC needs explicit `lwsync` / `isync` / full `sync` fences. *(2026-10-08: two real bugs found and fixed — every offlineasm fence compiled to `nop`, and LL/SC was only acquire/release where ARM64's is RCsc. See Phase 7 item 7.)*
-- **Compare-exchange reservation leak on fail path.** SM has this open and unsolved — all three workarounds pessimise the success path. Design the PPC64 `compareExchange` macro with separate success/fail exits so the fail path can be enlarged without regressing success. *(2026-10-08: strong CAS no longer stores back after a mismatch, dbfbd4ce1268. ARM64's `atomicStrongCAS` has the same retry-after-mismatch shape — upstream candidate.)*
-- **Executable memory.** ~~Use `__builtin___clear_cache`~~ — **RESOLVED, and the advice was wrong**: that
-  builtin emits nothing at all on ppc64le. The flush is now hand-written; see the Linking architecture
-  note above. This was almost certainly the cause of a long tail of "flaky" failures on this port.
-- **ELFv2 linkage-area clobbers — the most frequent bug class in this port** (16 fixed). A callee writes CR at sp+8, LR at sp+16 and the TOC at sp+24 in the *caller's* frame, and the MacroAssembler C call does not move sp, so any live data in [sp, sp+32) across a C call is corrupted. Air now always reserves the area (bd76611822cf); every new C-call site still needs checking.
-- **POWER8 validation gap — still open, now the top risk** (Phase 7 item 1). Runtime-gated POWER8-forced testing is not equivalent to real POWER8 silicon. Unguarded POWER9 instructions pass the forced test and crash on real P8. Acquire POWER8 hardware or qemu-power8 access before claiming POWER8 support.
-- **mimalloc + 64K pages.** Default on for RISCV64 and ARM64. 64K pages are standard on Linux PPC64LE (not 4K). Confirm upstream mimalloc supports PPC64LE page sizes; if not, default `USE_MIMALLOC=OFF` for PPC64LE initially.
-
-## Immediate next actions (updated 2026-10-08)
-
-**Where it stands:** Phases 0–6 are done. On the POWER9 box `JSTests/stress` is 80,818 / 0 FAIL and
-`JSTests/wasm.yaml` 17,218 / 0 FAIL, with every JS tier, every wasm tier (with SIMD and tail calls),
-the Yarr RegExp JIT and the sampling profiler on by default. **Next: Phase 7** — POWER8 validation
-first, then benchmarking. The dated status blocks below record how each piece landed, newest first;
-older blocks are kept for history and their numbers are superseded by the ones above them.
-
-
-### Status — POWER9 / POWER10 fast paths, 2026-10-15
-
-POWER8 (ISA 2.07) stays the baseline; newer instructions are emitted only behind runtime checks.
-`MacroAssemblerPPC64::isaLevel()` reads `AT_HWCAP2` (ARCH_3_00 → 300, ARCH_3_1 → 310) and is capped
-by the new option `maximumPPC64ISALevel` (default 310), so one POWER10 box tests all three levels with
-`JSC_maximumPPC64ISALevel=207/300/310`. `supportsFloat16()` now goes through it too.
-
-| ISA | Instruction | Used for |
-|-----|-------------|----------|
-| 3.0 | `cnttzw`/`cnttzd` | countTrailingZeros32/64 (was addi/andc/cntlz/subfic) |
-| 3.0 | `modsw`/`moduw`/`modsd`/`modud` | DFG ArithMod (Int32, Int52), BBQ rem, B3 Mod/UMod via new Air `Mod32`/`UMod32`/`Mod64`/`UMod64` |
-| 3.0 | `xsmaxjdp`/`xsminjdp` | DFG ArithMin/Max (2 and n operands), FTL via B3 FMin/FMax → Air DoubleMin/Max — **JS only** |
-| 3.1 | `brh`/`brw`/`brd` | byteSwap16/32/64 (big-endian DataView, wasm) |
-| 3.1 | `setbc`/`setbcr` | compare → 0/1 (`setFromCR0Bit`, was li/li/isel) |
-| 3.1 | `vmulld` | wasm i64x2.mul (was an 11-instruction GPR round trip) |
-| 3.1 | `vextract{b,h,w,d}m` | wasm *.bitmask (`xxswapd` + extract gives the wasm lane order directly) |
-
-All 19 encodings checked against `as -mpower10` (binutils 2.46). **`xsmaxjdp`/`xsminjdp` return a
-signalling NaN operand unquieted** (checked on POWER10), which JS never sees (its NaNs are purified)
-but wasm forbids: min/max must return an arithmetic NaN. So B3 keeps the FMin/FMax expansion when
-`Procedure::isWasm()`, and BBQ keeps its sequence. New test
-`JSTests/wasm/stress/min-max-signalling-nan-is-quieted.js` pins this. testmasm
-`testPPC64ISALevelSequences` checks ctz32, compare→bool, the four remainders and JS min/max against C++.
-
-POWER10 microbenchmarks (same jsc, ns/iteration, ISA 2.07 → 3.0 → 3.1): Math.max 2.07 → 1.46 → 1.41;
-3-operand Math.min 2.69 → 1.35; int `%` 3.01 → 2.41; DataView getUint32 BE 2.45 → 2.26 (3.1);
-getFloat64 BE 2.76 → 1.66 (3.1); compare→bool 2.59 → 2.49 (3.1). Earlier C microbenchmarks:
-i64x2.mul 4.28 → 1.03, bitmask 3.23 → 2.51.
-
-Gates (2.54.1 suites + the new wasm test): power9 at ISA 3.0 and capped to 2.07, stress 82,176 / 0 and
-wasm.yaml 19,812 / 0 each; power10 at ISA 3.1, stress 82,176 / 0, wasm.yaml 19,812 / 0; testmasm
-386 / 0 at 3.1, 3.0 and 2.07; testb3 and testair pass at 3.1 and 2.07. **First full POWER10 run**
-(before these changes, 89a8d2a4b98b): stress 82,175 / 1 (`sampling-profiler-line-column.js`
-ftl-eager, a timing flake: 5 / 5 on rerun), wasm.yaml 19,798 / 0. The POWER10 box (`ssh power10`,
-8 vCPU, Fedora 44) has a sparse clone with IPINT and DEV (DEVELOPER_MODE) builds; gate script
-`/home/fedora/p10gates.sh`.
-
-Not done (step 3 candidates): prefixed `pli`/`paddi` for 34-bit immediates and pc-relative addressing,
-POWER9 vector lane insert/extract (`vinsertw`, `vextublx`…), `cmpeqb` for Yarr character classes.
-
-### Status — item 9 smaller gaps, 2026-10-15
-
-- **Float16 (was the `PPC64_UNIMPLEMENTED` family) — done for POWER9+.** The eight MacroAssembler
-  operations are implemented (2e69530aa37d): a Float16 lives in an FPR as its 16 bits in bits 48:63 of
-  VSR doubleword 0; loads/stores/moves use lhz/sth + mtvsrd/mfvsrd (POWER8), the conversions use ISA 3.0
-  `xscvhpdp`/`xscvdphp` (encodings checked with `as -mpower9`). `supportsFloat16()` is true when
-  `AT_HWCAP2` has ISA 3.0, so POWER8 keeps the C++ paths every caller already falls back to. testmasm
-  `testFloat16Conversions` checks all 65,536 halves, every rounding midpoint and its neighbours, against
-  WTF's software conversions (10624ad3a7b7). Gates: stress 80,817 / 1 (`sampling-profiler-bound-function-name.js`
-  ftl-eager-no-cjit, a sampling-profiler timing flake: 30 / 30 on rerun), wasm.yaml 17,218 / 0. No
-  `PPC64_UNIMPLEMENTED` remains in the MacroAssembler.
-- **Yarr multi-character compares — done** (c4f4ca140543): 8 Char8 / 4 Char16 characters per 64-bit
-  compare, as on X86_64/ARM64/RISCV64. A long-literal JIT-vs-interpreter differential
-  (`power9:/home/tle/yarr/rxlong.js`, `rxlong-plain.js`) agrees on ~840,000 cases; all regexp gates
-  unchanged (stress 80,818 / 0, wasm 17,218 / 0, yaml 85 / 0, RegExpTest.data 2,085 / 0 JIT and
-  interpreter). Not done: the SIMD Boyer-Moore and multi-pattern SIMD searches (ARM64/X86_64 vector
-  code), and `maximumRegExpTestInlineCodesize` (500 bytes) is still untuned for PPC64's larger code.
-- **Yarr Unicode JIT/interpreter disagreements — upstream, the interpreter is wrong.** PPC64's JIT and
-  interpreter outputs are byte-identical to ARM64's (macOS system JSC) on the long-literal seeds, and
-  the PPC64 JIT's output on all 27 fuzzer seeds that show a disagreement is unchanged by the port's
-  Yarr work. The cases are case-insensitive folding of U+017F (ſ), U+212A (Kelvin) and U+0130 (İ):
-  without /u, Canonicalize must not map a non-ASCII character to ASCII, so ſ ≠ s and K ≠ k; with /u,
-  İ has no simple case folding, so İ ≠ i. The interpreter matches all three; the JIT does not.
-  An upstream Yarr interpreter bug.
-- **Not done:** `--sampleCCode` C-frame attribution (GCC does not keep a frame pointer; would need
-  `-fno-omit-frame-pointer` builds or an unwinder).
-
-### Status — concurrent JIT and memory ordering (Phase 7 item 7), 2026-10-14
-
-- **Concurrency stress.** `/home/tle/concgate.sh [TAG]` runs the stress and wasm.yaml gates on the
-  IPINT build with `JSC_numberOfDFGCompilerThreads=7`, `JSC_numberOfFTLCompilerThreads=7`,
-  `JSC_numberOfWasmCompilerThreads=7` and `JSC_numberOfGCMarkers=8` (JSC_ environment options;
-  per-test flags still win) at -c 24, so the box is heavily oversubscribed. Before and after the
-  fixes below: stress 80,818 / 0, wasm.yaml 17,218 / 0. Standard gates after: same.
-- **Audit** of every atomic, fence and concurrently patched code path (MacroAssembler LL/SC, CAS,
-  xchg, loadAcq/storeRel, fences; offlineasm and IPInt atomics; B3/Air lowering; WTF fences;
-  cacheFlush and the branch-slot/jump-island patchers) against the Power ISA and ARM64: no bug in
-  a path production code takes. Fixed as hardening:
-  - `storeRel*` was `lwsync; st` (release only); with `loadAcq*` it stands in for ARM64's
-    sequentially consistent stlr/ldar, and the Power model allows the R outcome. Now `sync; st`.
-    POWER9 never showed R with the old mapping in 300,000 runs (1a967842fb1e).
-  - `branchAtomicWeakCAS` had no `isync` when the compare failed (ARM64's ldaxr acquires anyway).
-    Added (1a967842fb1e); `loadLink*`/`storeCond*` assert a zero offset.
-  - `writeSlot` claimed a near -> far slot change was atomic but wrote the stanza and the branch
-    word with no instruction-storage sync between; it now `cacheFlush`es the stanza first
-    (00bd2bb49e63). Far -> far still needs a stopped slot; no concurrent caller uses it.
-  - Not changed, noted: a thread-safe call slot linked to a non-JIT target in the far form could
-    not be retargeted atomically (`RELEASE_ASSERT(!threadSafe || !isJITPC(to))`); unreachable with
-    the JIT on. Upstream: ARM64 non-LSE `atomicStrongCAS` overwrites `expectedAndResult` before its
-    store-back retry, so a spuriously failing stlxr can make a mismatching CAS store
-    (MacroAssemblerARM64.h ~8025-8046; PPC64's version avoids this).
-- **Litmus tests** in testmasm (ARM64/PPC64, 94661a9d9f91): MP (fence and acq/rel), SB (fence,
-  acq/rel, plain control), R, weak-CAS counters (32-bit, adjacent 8-bit), strong-CAS
-  mismatch-never-writes. Threads start at the same timebase value; the SB control shows the relaxed
-  outcome in 50-80% of 100,000 runs, the forbidden ones never. testmasm 382 / 382, testb3
-  212,760 / 212,760, testair 234 / 234.
-- **Cross-modifying code** (testmasm `testCrossModifyingNearCall`, near call and near tail call):
-  one thread calls through a thread-safe patchable site while another retargets it 3,000 times via
-  `prepareForAtomicRepatchNearCallConcurrently` + `repatchNearCall`, rotating between two in-reach
-  targets and one beyond 32 MB (the test fills reachable executable memory first and checks that an
-  island is used). Every call lands on a target. testmasm 384 / 384. The far-form slot change has no
-  concurrent caller, so it is not exercised.
-- **Island exhaustion (was unmeasured):** a concurrent retarget never frees or reuses islands
-  (`islandForJumpLocation` frees only when `!concurrently`; upstream behaviour). Each concurrent
-  retarget to an out-of-reach target permanently uses one 32-byte island in the call's region (2 MB
-  = 65,536 islands per 32 MB region) until the calling code is freed. Wasm tier-up retargets each
-  callsite a few times, so this is far from a limit in practice.
-
-### Status — ASan + UBSan build (Phase 7 item 6), 2026-10-14
-
-- **Build.** `power9:~/Work/WebKit/WebKitBuild/SAN`: the IPINT configuration plus
-  `-DENABLE_SANITIZERS="address;undefined"` (GCC 16 libasan/libubsan; Release, no asserts).
-  Gates: `/home/tle/sangate.sh` → `/home/tle/stress-SAN`, `/home/tle/wsuite-SAN`, with
-  `ASAN_OPTIONS=detect_leaks=0:handle_segv=0:handle_sigbus=0:handle_sigill=0:allocator_may_return_null=1`
-  (JSC owns SIGSEGV/SIGBUS/SIGILL; some tests expect large allocations to fail), UBSan reporting
-  without halting, and `JSCTEST_memoryLimit` 6 GB (ASan shadow + quarantine count toward jsc's
-  footprint). A full run takes ~14 h stress + ~15 h wasm.yaml at -c 24.
-- **Result:** stress 80,648 / 170, wasm.yaml 17,188 / 30, **no ASan reports**. Every failure is
-  sanitizer overhead: ASan frames are several times larger, so tests that cap the stack
-  (`--maxPerThreadStackUsage=147456` etc.) or count recursion depth fail (34 + 30 + the
-  reserved-zone / regexp / hasInstance / module-graph groups, all pass with a larger stack budget);
-  33 OOM, 10 over the 6 GB budget, 8 timeouts; FinalizationRegistry "keeps holdings alive" (stale
-  conservative roots in larger frames); one memory-accounting test; 10 variants of one test I
-  killed after 9.5 h (fixed, see below).
-- **Bugs found:**
-  - ASan use-after-return fake stacks broke the GC's conservative stack scan (it starts at a local's
-    address): segfaults in ~5% of tests, JIT-less ones too. Cocoa builds already disabled it; the
-    shared `ENABLE_SANITIZERS` path now does (5ac3e36f6560; GCC `--param=asan-use-after-return=0`).
-    Not PPC64-specific. (That commit message says "a third of JSTests/stress"; it was ~5%.)
-  - The PPC64 `WTFGetBacktrace` walker reads other frames' stack slots: `SUPPRESS_ASAN`
-    (801c5c88dec5), as for the conservative scan.
-  - `memcpyAtomicIfPossible` made an 8-byte (two-instruction) PPC64 code copy a misaligned 64-bit
-    atomic store; now only aligned copies are atomic (fda95bf4bcca). Generic.
-  - The stack-bounds check added in b179276def2f called `pthread_getattr_np` (parses
-    /proc/self/maps for the main thread) on every native backtrace, i.e. every throw under exception
-    scope verification: 3× slower in the ASSERT build, a 9.5 h hang under ASan. Uses the bounds
-    cached on `Thread` now (9f757d7cee30).
-- **UBSan:** 8.7 M reports at 397 distinct locations, none in PPC64 port code (checked against every
-  file the port's commits touch; the two overlaps, WasmOperations.cpp:863 and YarrJIT.cpp:677, are
-  upstream lines). Dominated by generic patterns: `memcpy(dst, nullptr, 0)` (Vector.h:122,
-  StdLibExtras.h:1139), deliberate unaligned loads (FastCharacterComparison.h, packed
-  BytecodeStructs.h), signed overflow in B3 constant folding. Upstream material, not port work.
-- **Release gates after these fixes** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0. The
-  cached-bounds fix was timed on the ASSERT build (7.3 s → 2.4 s); not re-timed under ASan.
-
-### Status — ASSERT build (Phase 7 item 5), 2026-10-13
-
-- **Build.** `power9:~/Work/WebKit/WebKitBuild/ASSERT`: the IPINT configuration plus
-  `-DENABLE_ASSERTS=ON` (Release optimisation, `-DASSERT_ENABLED=1` on every TU). A `-O0` Debug
-  build was not used: the stress gate would take many times longer, and assertions are the point.
-  Gates: `/home/tle/assertgate.sh [BUILD]` → `/home/tle/stress-<BUILD>`, `/home/tle/wsuite-<BUILD>`.
-- **First run:** stress 80,814 / 4 FAIL, wasm.yaml 17,115 / 103 FAIL; a JIT smoke test also crashed.
-  **Now:** stress 80,817 / 1, wasm.yaml 17,218 / 0 (table-grow re-verified 40/40 after its fix).
-- **Bugs found** (the first two are Release bugs too):
-  - B3LowerMacros' wasm GC allocation slow paths (struct.new / array.new in OMG) called
-    `operationWasm{Struct,Array}NewEmpty` without storing the frame into the instance's
-    `temporaryCallFrame`. PPC64 has no `USE(BUILTIN_FRAME_ADDRESS)`, so the operation took a stale
-    frame as `vm.topCallFrame` (67 wasm.yaml failures: `assertCalleeIsReferenced` found no
-    NativeCallee) (e385bf347525).
-  - The PPC64 `WTFGetBacktrace` back-chain walk could step just past the top of the stack and fault;
-    now bounded by `StackBounds` (b179276def2f). ASSERT builds capture a native trace on every throw.
-  - `clobberAllRegsInFTLICSlowPath` (ASSERT default) scribbled on everything outside the VM
-    callee-saves, but the slow path thunk does not save C-ABI callee-saves; on PPC64 those sets
-    differ (r24-r31, f22-f31), so live values were overwritten (FTL hash-probe segfault; jsc exit
-    status 0xef). Clobbers `registersToSaveForCCall` now — identical elsewhere (9dcff9141d97).
-- **Known limit, not fixed:** `stress/stack-overflow-llint-large-params-and-large-locals.js`
-  (`no-llint`) needs a single 35.6 MB baseline allocation in the ASSERT build. A PPC64 island region
-  holds at most ~28 MB of code (32 MB branch reach minus 2 MB of islands; ARM64 ~112 MB), and with
-  `--useLLInt=false` there is no fallback. Release fits. Lifting it means allocations spanning
-  island regions.
-- **Release gates after these fixes** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0.
-
-### Status — TestWebKitAPI (TestWTF, TestJavaScriptCore), 2026-10-12
-
-- **Build.** The IPINT default target failed in TestWebKitAPI: `MacroAssembler.h` includes
-  `MacroAssemblerPPC64.h`, which (with `PPC64Assembler.h` and `PPC64Registers.h`) was not in
-  JavaScriptCore's exported private headers (1ec517c2b5eb). The default target now builds.
-- **TestJavaScriptCore** 106 / 106.
-- **TestWTF** 1,819 / 1,821 (the first full run aborted part-way). Fixed:
-  - WTF `enumName`/`enumTypeName` under GCC skipped a fixed-length `__PRETTY_FUNCTION__` prefix that
-    GCC does not spell consistently (inside this build: `std::span<const char, 18446744073709551615>`),
-    so non-enumerators came back as signature text; "enum out of range" carried its NUL
-    (a5ded1c74ded). Not PPC64-specific — any GCC build. Upstream candidate.
-  - The EnumTraits test helper never compared lengths (an empty result passed anything; a longer one
-    read out of bounds → `_GLIBCXX_ASSERTIONS` abort); four "out of range" expectations were really
-    in-range gaps, which have no name (92b7f8561b55).
-  - Clamp tests used plain `char` as signed 8-bit; it is unsigned on PPC64/ARM64 Linux (c69d0649ae70).
-  - MetaAllocator's PPC64 bottom-first placement (ea64462f3a80) applied to every MetaAllocator and
-    broke two placement tests; it is now a protected `setAllocatesFromBottom` that only the JIT
-    executable pool turns on (libpas, and so `LIBPAS_JIT_HEAP`, is not built on PPC64) (f362e0debcd6).
-  - `WTF_InlineMap.RefKeysGrowth` left 50 entries in the shared RefLogger log, failing
-    `WTF_LazyRef.Basic` in a full run (ec6f36c67234).
-  - `WTF_WeakPtr.WeakHashSetComputeSize` retried until hash order matched insertion order; with
-    system malloc (no libpas) the same addresses recur and it looped forever (c56fb30f8973).
-- **Remaining 2, environmental:** `WTF_DateMath.calculateLocalTimeOffset` assumes US Pacific time
-  outside Windows (passes with `TZ=America/Los_Angeles`; the box is Australia/Melbourne);
-  `StackTraceTest.StackTraceWorks` symbolizes with `dladdr`, which cannot name WTF/test functions
-  statically linked into an executable that does not export them (no `-rdynamic`); not a PPC64 issue.
-- **Run:** `power9:~/Work/WebKit/WebKitBuild/IPINT/bin/TestWebKitAPI/{TestWTF,TestJavaScriptCore}`.
-  Redirect with `stdbuf -oL` — gtest output to a file is block-buffered and a slow test looks hung.
-- **Gates** (IPINT, with the EnumTraits and MetaAllocator changes): stress 80,818 / 0, wasm.yaml 17,218 / 0.
-
-### Status — CCallHelpers stack arguments (ELFv2), 2026-10-12
-
-- **Bug (latent).** `setupArguments`/`callOperation` (Baseline, DFG, thunks, ICs, wasm glue)
-  placed memory arguments the x86/ARM64 way: `calculatePokeOffset` packed them from sp+0
-  (`8*(gp-8) + 8*(fp-8)`), so the first overwrote the back chain; doubles used FPRInfo's 8 JS
-  argument registers, so doubles 9–13 went to memory while the callee read f9–f13;
-  `setupArgument(index, functor)` poked at `8*(index-8)`; a `ConstantMaterializer` argument chose
-  its GPR by integer count, not position. ELFv2: an argument not in a register is at
-  `sp + 32 + 8*position` (position counts both banks); doubles take f1–f13. GCC 16 on the box
-  confirms (12 ints + 14 doubles interleaved: ints at 96(r1)…208(r1), 14th double at 232(r1),
-  240-byte frame). No operation passes anything in memory, so jsc never hit it.
-- **Fix** (2670de9d60c5). Position-based slots, 13 FPRs, ints extended to the doubleword in memory
-  too, and the register-or-memory choice made with `if constexpr` (the runtime `if` instantiated
-  both paths per argument: 14 doubles could not compile and 25 arguments OOM'd GCC at 36 GB).
-- **Reservation.** A call with anything in memory needs `32 + 8*arity` bytes at sp, more than
-  `maxFrameExtentForSlowPathCall` (96 = linkage + 8 positions, which every in-register call fits).
-  Kept at 96, sized for the operations JSC has (as ARMv7's is); `setupArguments` and
-  `setupArgumentsForIndirectCall` now `static_assert` the operation's area fits it, so an operation
-  that would spill fails to compile instead of corrupting the caller's frame.
-  `setupArgumentsWithReservedArgumentArea<Op, bytes>` is for callers that reserve their own.
-- **Test** (6a053d97e600): testmasm `testCCallManyMixedArguments` — 12 int + 14 double args,
-  interleaved, 9 in memory, sources permuted, area pre-filled with garbage; every value checked.
-  Before the fix it did not compile; a 15-arg variant ran and failed (int at position 8 stored
-  over the back chain, 9th double sent to memory while the callee read f9). Passes after.
-- **Gates** (IPINT): stress 80,818 / 0, wasm.yaml 17,218 / 0; DEV testmasm 373/373, testair
-  234/234, testb3 212,760/212,760.
-- **Not verified:** POWER8; a real JIT operation with memory arguments (none exists); variadic C
-  calls through CCallHelpers (none exist); 32-bit *register* (not immediate) arguments are still
-  passed without extension to 64 bits, as on ARM64/x86_64 — the ELFv2 caller-extends rule is only
-  applied to immediates.
-
-### Status — backend test binaries (Phase 7 item 4), 2026-10-12
-
-- **Build.** `WebKitBuild/DEV` on the box: the IPINT options plus `-DDEVELOPER_MODE=ON
-  -DDEVELOPER_MODE_FATAL_WARNINGS=OFF` (`TMPDIR=/home/tle/tmp ninja -C WebKitBuild/DEV -j16 testmasm
-  testb3 testair testapi`). What DEVELOPER_MODE changes for JSCOnly: the test targets (testapi,
-  testRegExp, testmasm, testb3, testair, testdfg, testwasmdebugger) and PerformanceTests; `-Werror`
-  (turned off: GCC 16 warnings are not this work); `-fno-omit-frame-pointer`; `-fdebug-types-section`;
-  ld.lld instead of ld.bfd (`USE_LD_LLD=ON`); compile_commands.json and CLANGD_AUTO_SETUP.
-  `cmakeconfig.h` is byte-identical to IPINT's: still Release, `NDEBUG`, no assertions. Run with
-  `JSC_useJIT=1`; `WTF_numberOfProcessorCores=16` limits the worker threads.
-- **Harness.** A failing CHECK aborts the whole binary, so `power9:/home/tle/drive.sh` runs one
-  process per test function (a substring filter forces one worker) and records each exit status;
-  lists in `power9:/home/tle/bt/{masm.names,air.list,b3.names}` (testb3 `-list` gives 212,760 names,
-  940 functions).
-- **Before → after (POWER9).** testmasm 87/87 → 372/372 (285 tests newly run: generic tests had
-  been gated to x86_64/ARM64, some with an empty body that "passed"). testair 4 of 97 functions
-  failing → 234/234 (78 functions × 3 opt levels; 19 x86/ARM64-only). testb3 35 of 940 functions
-  failing → 212,760/212,760 in a full parallel run (12.6 s).
-- **Backend bugs fixed** (all production-unreachable today, which is why jsc never found them):
-  - B3 CCall stack arguments ignored the ELFv2 position-based parameter save area, and FP args 9–13
-    went to memory instead of f9–f13 (b641bfee10c8). No JIT operation takes more than 6 arguments.
-    CCallHelpers had the same bug (stack args packed from sp+0); fixed 2026-10-12, see "Status —
-    CCallHelpers stack arguments".
-  - No PPC64 Air forms or MacroAssembler ops for B3 fenced Load/Store (LoadAcq*/StoreRel*) —
-    aborted in Inst::generate (b18a36ddd0aa). sync; ld; lwsync / lwsync; st, RCsc like the LL/SC.
-  - moveConditionally32(…, TrustedImm32 right, TrustedImm32 thenImm, …) materialised thenImm in r11
-    and then a wide `right` over it (22aa1f73e5ae). DFG/BBQ callers happen to be immune.
-  - B3 Depend asserted ARM64 (a93fa9bbea2d); value-producing AtomicWeakCAS used an Xor32 immediate
-    form PPC64 lacks (8fc97f132688).
-- **Test-side changes** (each commit says why): r29/r30 preserved around directly-called JIT code
-  (the port's JIT-scratch callee-saves; the VM entry does this in production) (5c8ebd6e4f9e);
-  disassembly checks skipped without a disassembler (03ce535a746d); testair PPC64 arm /
-  disassembler gate / invalid-FPImm32 skip (4973aac4f596); testInt32BImmToFloatBitwiseCast reads a
-  Double as a float (71a2a6e4d0e1); testmasm gates (3f86d33b1db2).
-- **testapi.** All C-API tests pass ("C-API tests in C++ had 0 failures"); testCompareAndSwap then
-  hung: a plain load in the test's CAS loop let GCC reuse a stale value after a failed relaxed
-  `lbarx/stbcx.` CAS (test UB, not JIT). With an atomic load there (11a05f9c827f) testapi passes in full, exit 0.
-- **Gates** (IPINT, all backend commits together): stress 80,818 / 0, wasm.yaml 17,218 / 0.
-- **Not verified:** POWER8; testb3's lowering-shape (disassembly) checks on PPC64 — there is no PPC64
-  disassembler; testdfg, testRegExp, testwasmdebugger not run; Debug/ASSERT build of the binaries.
-
-### Status — jump islands (Phase 7 item 10), 2026-10-09
-
-- **The race, reproduced.** HEAD with bottom-packing switched off (a temporary env toggle in
-  MetaAllocator, never committed): tail_call.wast.js with the wasm-bbq flags failed 77/2,000 and
-  110/3,000 runs ("Maximum call stack size exceeded"); 0/2,000 and 0/3,000 with packing on.
-- **Fix (9a04be8f73ea).** Every site retargeted while another thread may run it now changes by one
-  aligned `b`/`bl` store (then the hand-written icache flush):
-  - Jump slots (jumps, patchable jumps, near tail calls): far form is now `nop; li64 r12; mtctr;
-    bctr`, so word 0 is always a nop or a `b`. Retargeting to anything a `b` reaches is the single
-    store of word 0 from either form; near → far writes the dead stanza first and then word 0, so it
-    is atomic too. Only far → far rewrites a live stanza.
-  - Near calls to JIT code: `nops; bl` (r12 is not materialised — JIT code never reads it; only ELFv2
-    C functions build their TOC from it). call() slots keep `li64 r12` (C callees and readCallTarget
-    need it). `threadSafePatchableNearCall()` (wasm only) tags word 6 with an executed no-op
-    `oris 0,0,0` and never takes the far form.
-  - `ENABLE(JUMP_ISLANDS)` on, `nearJumpRange` = 32 MB. Out-of-reach wasm targets go through an
-    island allocated by `prepareForAtomicRelink{Jump,Call}Concurrently` (old islands are kept: a
-    thread may be in one). A PPC64 island is a whole jump slot (`b`, or `li64 r12; mtctr; bctr`), so
-    islands never chain; ARM64's chained single `b`s were 5–21× slower on a hot cross-region call
-    (up to 36 hops in 1 GB). Island area 2 MB per 32 MB region (65,536 islands; 28 MB of code — 1/8
-    left 24 MB and broke stress/regress-169445.js, a single 26 MB allocation).
-  - All other repatching (JS calls/ICs, OSR exit jumps, jump replacement, C calls) happens on the
-    owning thread or with it stopped and keeps the inline far form. Routing it through islands too
-    cost 3.5% on JetStream2 (~300,000 sites through islands, because the island holes push code past
-    32 MB from the thunks).
-  - `useRandomizingExecutableIslandAllocation` is now allowed on PPC64LE (random region per
-    allocation — the way to force far targets).
-- **Repatch entry points.** Atomic (single patch-class store): repatchNearCall on a near call to JIT
-  code (store of `bl`); repatchNearCall tail / repatchJump on an unconditional slot to any in-pool or
-  in-reach target, and near → far; replaceWithJump when the target is in reach; island writes
-  (fresh memory, published after the flush). Not atomic, and only used on the owning or a stopped
-  thread: repatchCall (call() slots, `li64` + `bl`/`bctrl`); repatchJump on conditional slots across
-  forms (within the `bc`+`b` form it is the single `b`); far → far on jump slots; replaceWithJump to
-  an out-of-reach target; replaceWithNops (word-by-word nops); repatchPointer / revert (5-word li64);
-  replaceWithVMHalt (one word, `ld` is not patch class, mutator suspended).
-- **After.** Committed binary: 0/3,000, and 0/3,000 with random region placement; the same design
-  with packing off: 0/3,000, and 0/3,000 with random placement. With random placement each
-  tail_call run makes 15–17 islands concurrently; perf samples of a hot wasm call loop land in island
-  areas in 5/5 runs (0 in control runs); that loop costs 1.04–1.07 s vs 1.00–1.04 s.
-- **Packing (ea64462f3a80) kept**, for locality only, no longer load-bearing: on the islands build,
-  JetStream2 packed 97.2/98.7/91.9 vs unpacked 91.7/93.7/97.3, microbenchmarks 0.998× — no clear
-  difference either way.
-- **Performance, HEAD vs islands:** microbenchmarks 0.9976× (per-invocation 0.9948–0.9970; of the 11
-  biggest losses rechecked at 10 invocations only map-iterator-fast-keys 0.95× reproduces, not
-  diagnosed); JetStream2 FTL 92.1/93.3/89.2/94.4 vs 92.3/93.0/90.7/91.0. Raw data
-  `bench/raw/{isl,isl3,final}-*`; harness and binaries `power9:/home/tle/islands/`.
-- **Gates:** stress 80,818 / 0, wasm.yaml 17,218 / 0, RegExp yaml 85 / 0, RegExpTest.data 2,085 clean.
-  Extra: wasm.yaml with `JSC_useRandomizingExecutableIslandAllocation=1` (islands at most wasm
-  call sites that tier up): 17,218 / 0.
-- **Not verified:** POWER8; island exhaustion (65,536 per region, crash on overflow — only wasm far
-  sites use them; the most counted in one run is 17, never measured on a large wasm app); JS sites are argued, not tested, to be
-  single-threaded (JS code belongs to one VM; repatching runs on its mutator or with it stopped).
-
-### Status — signal-based VM traps (Phase 7 item 3), 2026-10-09
-
-- **On for PPC64LE** (240a9558eb0c). DFG/FTL emit InvalidationPoints instead of polling CheckTraps; the
-  VMTraps signal sender suspends the mutator (SIGUSR1), reads pc/sp/r31 from its mcontext, and writes a
-  halt at each invalidation point of the optimized code block on top of the stack; the AccessFault
-  handler matches the faulting PC and jettisons, which turns the halt into the branch to the OSR exit.
-- **The one real bug:** the PPC64 halt was `trap`, i.e. SIGTRAP, which VMTraps does not handle — enabling
-  the flag as-is would have killed the process on the first watchdog fire in optimized code. Now
-  `ld r0,0(0)` (SIGSEGV at NULL). The halt is written with the mutator suspended (no concurrent
-  execution of that word) and is followed by the hand-written icache flush; the kernel's return to the
-  thread is context synchronizing. MacroAssemblerPPC64 needed the `replaceWithVMHalt` wrapper.
-- **Tests:** 64 watchdog/termination tests × 50 copies (all variants): 9,550 / 0 FAIL. Custom
-  infinite-loop shapes × 6 configs × 100 runs, random 1–400 ms watchdog: 3,000 / 0; strace shows the
-  SIGSEGV halt taken in 185 / 200 sampled runs. Gates: stress 80,818 / 0, wasm.yaml 17,218 / 0.
-  Harness: `power9:/home/tle/traps/` (`rep.sh`, `suite.sh`, `traps.yaml`).
-- **Performance** (same binary, `JSC_usePollingTraps=true` vs default): microbenchmarks 1.025×
-  (1.022–1.028), 204 clear wins; LongSpider 1.041×, Octane 1.046×, V8Spider 1.078×, SunSpider 1.019×,
-  TailBench 1.015× (spreads in `bench/SUMMARY.txt`, stage 3); JetStream2 unchanged within noise.
-  Reproducible losses: mul-immediate-sub 0.81× (B3 now unrolls the loop and the unrolled body keeps three
-  `mullw` where the rolled loop folds them into one — a B3 phase-ordering effect, not a trap cost) and
-  seven at 0.87–0.98× not diagnosed (C++-bound or ~20 ms runs).
-- **Not verified:** POWER8; a trap landing while a far (8-instruction) jump slot is being rewritten is
-  the same pre-existing hazard as Phase 7 item 10 (jettison targets are in-block OSR exits, so `b` range).
-
-### Status — benchmarks (Phase 7 item 2), 2026-10-08
-
-- **Method.** One Release binary (60d6aa39968a) in four configurations: LLInt (`--useJIT=0`), Baseline
-  (`--useDFGJIT=0`), DFG (`--useFTLJIT=0`), FTL. `Tools/Scripts/run-jsc-benchmarks --vms` (tier set by
-  `JSC_*` env, invocations interleaved at random), each job pinned to its own 2-core group, performance
-  governor. Microbenchmarks 3 invocations, the classic suites 4, ARES-6 5 (LLInt 3), JetStream2 1.
-  Median per benchmark, geomean per suite; spread = geomean of each invocation index alone. 55
-  microbenchmarks read `testLoopCount`, which jsc.cpp scales by tier (100/1000/10000), so they are excluded.
-  ARM64 reference: an M1 Pro running the macOS system jsc (older source, laptop not idle) through the same
-  harness — approximate. Raw data, scripts and `SUMMARY.txt` in power9:/home/tle/bench/.
-- **Tier ratios** (DFG/LLInt, FTL/DFG; M1 in brackets): microbenchmarks 5.34× (5.33–5.36), 1.17×
-  (1.170–1.174) [4.03×, 1.20×]; SunSpider 7.15× (6.64–7.48), 0.92× [5.62×, 0.97×]; LongSpider 13.5×,
-  1.55× [10.8×, 1.41×]; V8Spider 14.8×, 1.13× [13.5×, 1.29×]; Octane 12.4× (12.4–14.8), 1.43× (1.21–1.43)
-  [12.3×, 1.68×]; TailBench 14.6×, 1.90× [8.7×, 1.52×]; ARES-6 8.5×, 1.40×. JetStream2 scores: Baseline
-  23.8, DFG 30.8, FTL 33.0 (LLInt not run: its first test alone exceeded 23 minutes).
-- **Targets.** DFG ≥ 5× LLInt is met everywhere (microbenchmarks only just). FTL ≥ 2× DFG is met nowhere,
-  but the ARM64 reference does not meet it on these suites either (0.97–1.68×); PPC64's FTL/DFG is inside
-  that range. The PPC64 LLInt is relatively slow (P9/M1 time ratio 3.45 for the LLInt vs 2.4–2.7 for the
-  JIT tiers), which inflates every ratio over LLInt.
-- **Outliers, diagnosed:**
-  1. *Executable pool is 32 MB* — PPC64 falls through to the generic default in ExecutableAllocator.cpp
-     (ARM64 128/512 MB, x86_64 1 GB). A long run fills it and `memoryPressureMultiplier()` raises every
-     tier-up threshold: in JetStream2's FTL run float-mm.c took 27 min (27 s on its own) and Baseline beat
-     DFG and FTL on several tests. With `--jitMemoryReservationSize=1GB`: 33.0 → 70.5, wall 2,640 s → 208 s.
-  2. *Int32 `/` and `%` never reach the integer paths* — `DFGFixupPhase::fixupArithDivInt32` gates on
-     x86/ARM64/ARMv7, so `%` calls `fmod` (36% of megamorphic-own-load) and `(a/b)|0` divides in double
-     and exits on every non-integral quotient (integer-divide: 12 recompiles, ~246k OSR exits). Hits every
-     `i % n` loop: megamorphic-*, polymorphic-*, switch-*, call-or-not-call, …
-  3. *Checked int32 add is 11 instructions*, 5 of them seeding XER.CA for a B3 recovery that runs only for
-     `x + x`; ~60% of the samples of an empty FTL counted loop (new-array-constant-size-zero-fill-*).
-  4. C++ runtime paths that are slow in every tier (u16/typed-array `indexOf`, `Array.prototype.sort`):
-     likely scalar fallbacks where ARM64/x86 use SIMD. Not investigated.
-- **Profiling.** `perf` + `--useJITDump`; JSC names the dump `jit-<tid>-<pid>.dump`, which `perf inject`
-  silently ignores, so `/home/tle/bench/jitdump2map.py` turns it into `/tmp/perf-<pid>.map` and extracts
-  code for objdump. Of the suspected overheads: 64-bit constants (2–4 instructions) and uncompacted
-  patchable slots appear only off the hot paths; the polling VM-trap checks (item 3) show up twice per
-  loop iteration; `andi.` is followed by a redundant `cmpdi`; the ELFv2 TOC save/restore is 2 instructions
-  per C call. VMX v0–v5 staging and the 512-byte IPInt slots are wasm-only and were not measured.
-- **Not measured:** wasm throughput; JetStream2 in the LLInt; a same-source ARM64 build; POWER8.
-- **Fixes landed (2026-10-09), each A/B-measured against the build before it:**
-  - Int32 `/` and `%` reach the integer DFG/FTL paths (ebe13e6fc6b8): integer-divide 7.2×,
-    megamorphic-* 1.8×, switch-string-* 1.7–2.0×; microbenchmark geomean 1.023×; LongSpider 1.035×.
-  - Codegen series 08c2adf7c351..235ab23067f5: carry seed only for `x + x` (counted loops 1.2–1.35×),
-    `isel` for CR→GPR (dependent compare→0/1 13 → 4 cycles; one benchmark clearly faster),
-    branch-free `compareDouble` (to-number-boolean 2.41×), shorter checked int64 add
-    (check-mul-constant 1.14×), no `cmpdi` after `andi.` (1–9% on loop-heavy code). Together:
-    microbenchmark geomean 1.026× (per-invocation 1.028–1.031), 184 clear wins; the only loss that
-    reproduces (for-in-string-array −9%) is a code-layout effect, shown by padding with nops.
-  - 1 GB executable pool (e8b53e438fec) after packing JIT allocations at the bottom of it
-    (ea64462f3a80): JetStream2 FTL 32 → 88 (2.7×). Now (HEAD): JetStream2 Baseline 33.0, DFG 84.3,
-    FTL 89.8; microbenchmarks DFG/Baseline 1.89×, FTL/DFG 1.17× (unchanged ratio — the fixes sped up
-    both tiers).
-  - Tried and dropped: `isel` in offlineasm's conditional sets (LLInt geomean +1.5% but 30 clear
-    losses in 257: layout noise, not a clear win); `mfocrf` instead of `mfcr` (no measurable effect).
-- **Genuine bug found — far-slot repatching** *(fixed 2026-10-09 by jump islands, 9a04be8f73ea;
-  see "Status — jump islands")*. MetaAllocator put half of all
-  JIT allocations at the top of the pool (64 KB pages), so with any pool > 32 MB calls between the
-  halves used the far `li64`/`mtctr` slot form. Rewriting a far slot is not atomic, and the Power
-  ISA only allows concurrent modification of `b`/`nop`-class instructions, so wasm's concurrent
-  tier-up repatching raced with execution: tail_call.wast.js failed 4–6% of runs with a 1 GB pool.
-  Packing allocations keeps everything within `b` range until 32 MB of code is live (300/300
-  runs pass), but a larger live code size can still produce far slots that wasm repatches
-  concurrently. The real fix is jump islands for PPC64 (Phase 7 item 10).
-
-### Status — 2026-10-08, sampling profiler and branch compaction (supersedes the stress figures below)
-
-- **`JSTests/stress`: 80,818 pairs, 0 FAIL.** The 4 remaining baseline failures are gone.
-  `/home/tle/stress-baseline-fails.txt` is now empty (old list kept as `…-2026-10-08-4.txt`).
-- **Sampling profiler on** (6435b4fad515). It never needed a native unwinder: it reads pc, r31
-  and r7 (LLInt PC) from the suspended thread's mcontext and walks JS CallFrames. Clears
-  `js-to-wasm-callee-has-correct-prototype`; the 16 `sampling-profiler-*.js` tests and the
-  `ftl-no-cjit-validate-sampling-profiler` variant now really sample. `--sampleCCode` (walks C
-  frames through r31, which GCC does not maintain) is unchecked.
-- **Branch compaction on** (58ab9fa97117). Root cause of the 3 `ftl-no-cjit-small-pool` waitasync
-  failures: not a leak — 20 agents = 21 VMs × ~51 KB of per-VM thunks needed a 1,052,672-byte pool
-  against the variant's 1,048,576. 39% of thunk bytes were nop padding in linked 32-byte jump
-  slots. In-buffer and thunk jumps are now recorded and shrunk by
-  `LinkBuffer::copyCompactAndLinkCode` (b / bc / bc+b / full slot). Fixed-size slots: patchable
-  jumps, JIT math IC fast paths, the by-id inline IC jump, and anything inside a watchpoint shadow.
-  `labelForWatchpoint()` was a stub (replaceWithJump wrote 32 bytes over live labels) — now pads
-  like ARM64. `replaceWithNops` now flushes the icache. Empty-VM thunks 51,200 → 32,992 bytes;
-  v8-* peak executable memory −36…−40%; the small-pool tests now need 659,456 bytes.
-- **Shorter 64-bit immediates** (40c1b37d88da): `move(TrustedImmPtr)` and
-  `move(TrustedImm64)` use 1–5 instructions instead of always 5 (a user-space pointer is 4,
-  numberTag is 2). Another −3…−6% executable memory (empty VM now 32,128 bytes). `moveWithPatch` keeps the fixed li64.
-- **Remaining PPC64-vs-ARM64 code size:** thunks common to both are ~1.25× ARM64 (compared with
-  an older macOS system jsc, so approximate). Call slots stay 8 instructions (li64 r12 + bl, for
-  the ELFv2 TOC), and C calls go through CTR.
-- **Not verified:** testmasm/testb3 (not built in this configuration); POWER8 silicon; throughput.
-
-### Status — 2026-10-08, RegExp (Yarr) JIT on by default
-
-- **The Yarr JIT is on by default and fully featured on PPC64LE** (73fce5653a45): ALL_PARENS
-  (bda2755ff38d), BACKREFERENCES incl. 16-bit (59fcf5bc073f), UNICODE_EXPRESSIONS (90d89f426d80) and
-  REGEXP_TEST_INLINE (0de9effb77a9) are enabled as on ARM64/x86_64. Still ARM64/x86_64-only and off
-  here (optimizations, not correctness): the SIMD Boyer-Moore/multi-pattern search, the 8-byte
-  (Char8) / 4-unit (Char16) multi-character compares (`#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)`
-  gates, PPC64 uses the 4/2 path), and YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP.
-- **Root causes** (measured first: 80 of 288 regexp-named stress files segfaulted with
-  `--useRegExpJIT=1`): (1) generateEnter/generateReturn/calleeSaveRegisters had no PPC64 arm, so no
-  frame was built and r17/r27-r30 were clobbered under the C++ caller (1a32327ab26c; scratch registers
-  now r24-r28, saved like x86_64's rbx/r12-r15); (2) `lshift64(TrustedImm32, reg, reg)` shifted the
-  register by the immediate instead of the immediate by the register — every bitmask character class
-  was wrong (ef721f83e4d0); (3) `linkPointer` patched five instructions before a DataLabelPtr, so
-  storePtrWithPatch backtrack addresses stayed 0 (f4167771f084). Yarr is the only user of (2) and (3).
-  The areCanonicallyEquivalent thunk reserves maxFrameExtentForSlowPathCall below its saves for the
-  ELFv2 linkage area.
-- **Gates for each step:** JSTests/stress 80,814 PASS / 4 FAIL / 0 new; wasm.yaml 17,218 / 0 FAIL;
-  `--filter RegEx` over es6.yaml + ChakraCore.yaml 85 / 0 FAIL; RegExpTest.data via a JS driver
-  (`power9:/home/tle/yarr/rxdata.js`, testRegExp is not built for JSCOnly) 2,085 checks clean.
-  Helpers on the box: `/home/tle/yarr/quick.sh` (288 regexp-named stress files, direct jsc),
-  `allgates.sh` (all four gates), `dis.sh` (gdb disassembly of Yarr code; there is no PPC64
-  disassembler), `unicode.js`/`backref.js`/`inline.js` (JIT-vs-interpreter differentials).
-- **Known JIT/interpreter disagreements, not PPC64-specific:** /u and /v matching started in the
-  middle of a surrogate pair (lastIndex inside a pair; `/\B./us` on "a😀b"). ARM64's JIT gives the same
-  answers (the `\B` case once its non-BMP optimization is off, e.g. with /m); `/(?:^a)?b/.exec("xb")`
-  is null on ARM64's JIT too. Checked against the (older) system JSC on an ARM64 Mac.
-- **Not verified:** POWER8 silicon; RegExpTestInline inlines only ~4 of 23 sample patterns at the
-  default maximumRegExpTestInlineCodesize (500 bytes) because PPC64 code is larger (fixed branch
-  slots) — the limit was not tuned.
-
-### Status — 2026-10-08, wasm SIMD (supersedes the SIMD lines below)
-
-- **Wasm SIMD runs in BBQ and OMG** (459fb0348c25 .. 84c166362460, plus the Air spill fix and the
-  run-jsc-stress-tests change recorded below). `useWasmSIMD` is on; `useWasmIPIntSIMD` is forced off,
-  so IPIntPlan sends every SIMD function to BBQ with a tier-up threshold of 0. `--useJIT=false` drops
-  `useWasmSIMD`; `--useBBQJIT=false --useOMGJIT=false` keeps it and a SIMD module fails to compile
-  ("JIT is disabled, but the entrypoint ... requires JIT"), as on any target without IPInt SIMD.
-- **Register model:** a v128 is the full VSR aliasing FPRegisterID fN (VSR 0-31); doubleword 0 is the
-  scalar FPR. VMX-only operations copy into v0..v5 (VSR 32-37) inside one MacroAssembler call; nothing
-  is ever live there between calls, so nothing allocates or saves VSR 32-63. Callee-saves stay Width64
-  (f14-f31 doubleword 0), the ARM64 d8-d15 model. (This deliberately differs from SpiderMonkey's choice
-  of the VR namespace: JSC's allocators, spills and calling convention treat vectors as FPRs.)
-- **Lane order:** the lxvd2x/stxvd2x layout — doubleword 0 = bytes 0-7 as a little-endian u64. Loads
-  and stores need no permute and f64x2/i64x2 lane 0 is the scalar (B3 relies on that for f64 lane 0).
-  Wasm lane i of an S-byte element is ISA element `i ^ (8/S - 1)` (bytes `i^7`, halfwords `i^3`, words
-  `i^1`). VMX unpack/pack see the doublewords swapped, so extend/narrow add an xxswapd. f32x4 lane 0 is
-  *not* the scalar (single vs double format): B3LowerToAir no longer copy-propagates that extract on
-  PPC64. IPInt's `storev`/`loadv` already use the same layout.
-- **Verification:** 203 encodings compared word-for-word with `as -mpower8`; a standalone harness JITs
-  each MacroAssembler vector op and compares against a scalar wasm reference (119,230 checks, distinct
-  values in every lane, every lane index, NaN/sNaN/-0/inf/denormal/saturation edges, dest-aliasing).
-  Harness sources: `power9:/home/tle/simd/` (`build.sh`, `t1.cpp`, `enc.cpp`+`enccheck.sh`,
-  `runsimd.sh` for the spec tests, `extract.js` to pull modules out of a .wast.js). All 57
-  simd-spec-tests pass with default tiering, BBQ-only, eager OMG, `--forceAllFunctionsToUseSIMD`.
-- **Bugs found on the way:** IPInt preserved wasm FPR arguments with stfd/lfd (a v128 argument lost its
-  upper half on the first call into a function that tiers up from ipint_entry); the probe saved only
-  doubleword 0 of each VSR (OSR entry with live v128s); with many results, OMG's dead call results could
-  not be spilled in place because 546ea37c38d2's width rule also blocked slots nothing reads — fixed by
-  applying that rule only to slots some instruction reads (big-tuple*.js, simd-big-tuple.js).
-- **`$isSIMDPlatform` includes ppc64le** (ELF machine "powerpc64"). JSTests/wasm.yaml then has
-  17,218 pairs; before IPInt SIMD the 240 failures were all `wasm-no-jit`/`wasm-no-wasm-jit` variants
-  of SIMD tests. With IPInt SIMD (6F): 17,218 PASS, 0 FAIL.
-- **IPInt SIMD: done (6F below).** Nothing has run on POWER8 silicon; the sequences avoid the words
-  POWER8 leaves undefined (xvcvdpsp, xvcvdpsxws/uxws, xscvdpspn) but that is checked by reading only.
-
-### 6F. IPInt SIMD — done 2026-10-08
-
-All 256 SIMD handlers run on PPC64LE: 212 got an `elsif PPC64LE` body of POWER8 VMX/VSX `emit`s
-(plus the 10 `simdLoad*` macros), the 43 generic offlineasm handlers are used as is, and
-`_ipint_simd_prefix` dispatches through `ipint_simd_dispatch_base` like x86_64. Register model in the
-comment above `ipintSIMDOp`: offlineasm v0/v1/v2 = VMX 0/1/14 (VSR 32/33/46), VMX 2-7 scratch, same
-lane layout as the JIT. Every handler fits its 512-byte slot (IPInt::initialize() validates the
-stride at startup). `useWasmIPIntSIMD` is no longer forced off, so `--useJIT=false` keeps
-`useWasmSIMD`. Verified: all 57 simd-spec-tests with `--useJIT=0` and with the wasm JITs off; a
-differential test (`power9:/home/tle/simd/diff/`: 508 functions covering every SIMD opcode, every
-lane index, special float/integer values, 30 inputs each) gives identical memory images under
-IPInt-only, BBQ and eager OMG. JSTests/wasm.yaml: 17,218 pairs, 0 FAIL.
-
-### Status — 2026-10-07, Phase 6 gate (supersedes the block below)
-
-- **IPInt is on by default** (29c08fe111af). `--useJIT=false`, `--useBBQJIT=false`, `--useWasmIPInt=false`
-  all keep wasm on; `--useJIT=false --useWasmIPInt=false` now aborts on the coherence check, as on
-  ARM64/x86_64. The 4 `lockdown` stress failures are gone.
-- **`JSTests/stress`: 80,818 pairs, 4 FAIL, 0 new** against `/home/tle/stress-baseline-fails.txt` (still the
-  8-entry list): the 3 `waitasync-*-multi-workers` in `ftl-no-cjit-small-pool` and
-  `js-to-wasm-callee-has-correct-prototype`.
-- **Wasm tail calls on (290df0de3344, bd54ebe8e31e): `JSTests/wasm.yaml` 13,460 pairs, 41 FAIL, all SIMD**
-  (simd-multimemory, gc/struct-new-default-v128, ipint-multimem-oob, and two tail-call tests that use v128:
-  tail-call-should-not-clobber-caller-origin, omg-tail-call-clobber-scratch-register). BBQ loads LR with
-  mtlr before the shuffle; OMG shuffles the return PC to the new frame's slot and loads LR from it; IPInt
-  already had a PPC64 arm. Stress gate 4 FAIL, 0 new. B3 CCall uint32_t arguments are now zero-extended
-  by the typed creators (feef685f97f6). The block below is the state before this.
-- **`JSTests/wasm.yaml` runs end to end: 13,460 pairs, 374 FAIL**, all of them in two deliberate
-  configuration gaps: 347 need wasm tail calls (forced off on PPC64: the tail-call*/return_call* tests,
-  the tail-call spec suites, `try_table.wast`, `compile-unreachable-catch.js`) and 27 need SIMD (off on
-  PPC64: `simd-multimemory.js`, `gc/struct-new-default-v128.js`, `ipint-multimem-oob.js`). Those tests do not
-  skip themselves on non-SIMD/non-tail-call platforms; whether to skip them is a harness decision.
-  First run (IPInt default already on): 1,086 FAIL, of which 39 were an artefact (the harness's
-  `wasmFrameCountFromError` counts stack lines containing "wasm-", which matched an output directory named
-  `wasm-v1`; the runner now writes to `/home/tle/wsuite`).
-- **Root causes fixed in the wasm triage** (one commit each): Air had no PPC64 RotateRight/two-operand
-  Not64, so B3 lowering fell through to x86's `%ecx` shape and fed `<none>` to the greedy allocator; five
-  more ELFv2 linkage-area clobbers (Air frames with no call-arg area, wasm throw's payload at sp, the
-  register-preserving wasm thunks, the IC write barrier, the builtin trampoline, the wasm-to-JS throw
-  stub; handleException padded defensively); IPInt i32.wrap_i64 left the high word (ELFv2 callers must
-  extend) and loaded the int32 heap type zero-extended; IPInt never published its call frame for
-  operationWasmUnwind (PPC64 has no builtin frame address); f32 FPR-vs-buffer format mixups in OSR and
-  multi-value results; FP spill width vs patchpoint/argument encodings in both Air allocators; f1 reserved
-  as a phantom FP scratch (BBQ lost values held in it across calls); BBQ C-call arguments not extended per
-  C type; strong CAS wrote on a retried mismatch; branchAdd Carry missing (memory64 BBQ aborted); local-label
-  `call` in offlineasm shifted sp (all of JSPI); wide arithmetic silently compiled to nothing; f32→f64
-  promote did not quiet sNaN; BBQ allocated the C-callee-saved f22–f31.
-- **Known, not fixed:** B3's CCallSpecial sign-extends every Int32 argument, which is wrong for a `uint32_t`
-  C parameter ≥ 2^31 under ELFv2; ARM64's atomicStrongCAS has the same retry-after-mismatch shape that was
-  fixed for PPC64; the O0 Air allocator spills every FP tmp as 64-bit (not audited against patchpoints).
-
-### Status — 2026-10-07 (supersedes the stress figures below)
-
-- **`JSTests/stress`: 80,818 pairs, 8 FAIL, 0 new.** 874 of the 882 failures found after the box rebuild are
-  fixed. The 793 `No color for %tmpN` were a genuine Air register-pool deadlock, not flakiness: FTL's two
-  unspillable fast constants (numberTag, notCellMask) are live across every JS call, and with r24–r30
-  outside the pool but clobbered by calls each had exactly K=19 precoloured neighbours, so neither could
-  ever be coloured. Whether a compile kept both live across a call varied run to run, which is why it
-  looked random (129–132/150 sampled tests per run before, 0/750 after). Fixed by giving Air r24–r30.
-- **The 8 remaining:** 4 `lockdown` (no wasm engine with the JIT off while IPInt is opt-in), 3
-  `waitasync-*-multi-workers` in `ftl-no-cjit-small-pool` ("Ran out of executable memory"), and
-  `js-to-wasm-callee-has-correct-prototype` (needs the sampling profiler, which is not built on PPC64).
-  Baseline list: `/home/tle/stress-baseline-fails.txt`; the old 882-list is kept as `…-882.txt`.
-- **Wasm runs in every tier.** IPInt (opt-in, `--useWasmIPInt=1`), BBQ and OMG all execute; default
-  tiering works. Spec runner: 92/93 IPInt-only, 91/93 with the JITs on (14/93 before the fixes).
-- **Root causes fixed on the way:** the JIT's non-preserved scratch GPRs (`regWS0/1`, `wasmScratchGPR`,
-  `nonArgGPR`…) aliased the MacroAssembler's own r11/r12 scratches — moved to r29/r30; FTL's direct
-  JS→wasm calls assumed the wasm callee preserves r24–r30; JSToWasm's C calls let ELFv2's LR/TOC saves at
-  sp+16/sp+24 overwrite the argument buffer (a fourth ELFv2 linkage-area clobber); B3 chill div/mod and
-  BBQ `rem_s` relied on ARM64 `sdiv` results that the Power ISA leaves undefined; LL/SC is now RCsc; the
-  GC scans the 288-byte ELFv2 red zone; a backend compare with an immediate first operand compared
-  against r0.
-- **Open:** enable IPInt by default (clears the 4 lockdown failures); run the real Phase 6 gate,
-  `JSTests/wasm.yaml`, which has never been run end to end; BBQ's FPR pool includes the C-callee-saved
-  f22–f31, which nothing saves at vmEntry (found by reading, not yet reproduced); `conversions.wast:559`
-  (f32→f64 promote) fails with the JITs on; JSTests/wasm's bundled wabt library had not worked on PPC64
-  (re-check now that the tiers run).
-
-Phases 0–5 are done, but **the stress baseline is not zero** (corrected 2026-10-07).
-
-**Correction.** The long-quoted "47,610 PASS / 0 FAIL" was almost certainly measured with a test harness
-that was months stale on the box: before the box was wiped, only individual changed source files were ever
-rsync'd, and the July rebase changed `Tools/Scripts/run-jsc-stress-tests` by 115 lines. After a full resync
-the same code — built before any later commit — runs **80,801** test/variant pairs with **882 FAIL**.
-793 of those are one pre-existing FTL bug, `FATAL: No color for %tmpN` (Air register allocation running out
-of registers), mostly in the `ftl-eager-no-cjit` variant; the rest are 46 bus errors, 36 segfaults and a
-handful of others. None of the commits since the last 0-FAIL run touch Air, so this is a measurement
-correction, not a regression. The reference failure list lives on the box at
-`/home/tle/stress-baseline-fails.txt`; the regression gate is now "nothing that passes in the baseline may
-fail", via `comm -13` against that file, not "expect 0".
-**(Historical, 2026-08-27.) Phase 6 (WASM) was the active front, and the decision was a full IPInt port**
-— see the staged 6A–6E plan in Phase 6 above; all of it has since landed. Everything BBQ/OMG needs at the MacroAssembler level is already landed;
-what remains is offlineasm assembly.
-
-1. ~~6A~~ — done. *get `InPlaceInterpreter64.asm` assembling for ppc64le.* The include gate is
-   flipped; `LLIntOffsetsExtractor` has to be rebuilt first because the file adds new constant
-   references (`buildOffsetsMap` throws otherwise, which is not an obvious error message). First real
-   blocker is `InPlaceInterpreter64.asm:80`, the `else error end` in `nextIPIntInstruction()`.
-2. ~~6B~~ — done. *port the entry path* (`ipint_entry`, argumINT, prologue OSR). First milestone with
-   executable wasm, because immediate tier-up means only this subset runs.
-3. ~~6C~~ — done. *audit the ~730 silent arch gates.*
-4. ~~6D/6E~~ — done (handler slots are 512 bytes on PPC64LE).
-5. ~~WASM trap handler~~ — works; see Phase 6 item 3.
-6. ~~Port the Yarr JIT~~ — done 2026-10-08, on by default with every Yarr JIT feature ARM64/x86_64
-   have except the SIMD/wide-compare optimizations (see the RegExp status block above).
-7. **Re-run the earlier tier gates against the current tree.** Baseline and DFG were declared green
-   before the icache fix landed, and `WebKitBuild/JSCOnly/Release` is months stale — stale enough that
-   comparing against it once produced a wrong conclusion. Rebuild it before using it as a reference.
-8. **Consider jump islands.** `nearJumpRange` is now unbounded because every patchable slot falls back
-   to materialise-target + `bctr`/`bctrl`, so the executable pool is no longer capped. If
-   `ENABLE_JUMP_ISLANDS` is ever turned on for PPC64, that constant has to become the real branch reach
-   again and the islands machinery needs auditing.
-9. **Evaluate mimalloc on 64K pages** (carried over) — try `-DUSE_MIMALLOC=ON`; drop
-   `USE_SYSTEM_MALLOC=ON` if clean.
-10. **Upstream bytecode-cache race** (carried over, out-of-band) — report to WebKit upstream with the
-    reproducer in the Phase 0 section.
-
-Fixes in this tree that are **not PPC-specific** and are candidates for upstreaming:
-`disableAllWasmJITOptions()` forcing `useLLInt` back on when wasm is disabled entirely (its own comment
-had specified the condition, which was never written); the FP-return `OperationResult` change, which
-matters on any ABI where `{double; Exception*}` is not a homogeneous float aggregate; the
-`emitAtomicOpGeneric()` missing-store-phase `#else #error`, which protects any future 64-bit backend
-from silently compiling wasm atomics into no-ops. (An earlier version of this list also proposed gating
-`IPInt::initialize()` on `Options::useWasmIPInt()`. That was wrong and has been reverted: IPInt is the
-mandatory wasm entry tier, so its dispatch bases must be initialised whenever wasm is on, and the gate would
-make ARM64/x86 abort under `--useWasmIPInt=false`.) Added 2026-10-08: ARM64's `atomicStrongCAS` retrying
-after a mismatch (fixed for PPC64 in dbfbd4ce1268); IPInt loading the `ref.test`/`ref.cast` heap type
-zero-extended instead of sign-extended (f07ad8f22f05, no PPC prefix); and possibly the Yarr Unicode
-JIT/interpreter disagreements, once confirmed on current upstream ARM64.
-
-### Build-workflow traps on the power9 box (cost two debugging rounds on 2026-08-26 — read this first)
-
-Both disguise themselves as compile errors. The tell is the same: *the compiler describes a world
-inconsistent with the file you just wrote.*
-
-- **Stale PCH.** GCC does not invalidate `cmake_pch.hxx.gch` (~630 MB) when the headers it was built
-  from change. Symptoms: methods you just added are reported missing, and the "did you mean"
-  suggestions list your *older* additions. Worse, `rsync` writes a temp file and renames, so an edited
-  header gets a **new inode**; the stale PCH recorded `#pragma once` against the old one, the header is
-  included twice, and you get `error: redefinition of class …`. Fix: `rm` the `.gch`.
-- **Silent rsync failure.** ssh to the box times out intermittently, and a `for f in …; do rsync …; done`
-  loop does not propagate failure — it prints "synced" while files never transferred. Surfaces as a
-  bogus signature error. Fix: retry each rsync, then **verify by md5** against the remote.
-- `PrivateHeaders/` entries are symlinks, not copies — verified, *not* a staleness source. Don't chase them.
-
-## Appendix — rebuilding the POWER9 test box from scratch
-
-Written after losing `/home/tle/Work/WebKit` on 2026-10-07. The build *invocation* was recorded
-below but the *configure* recipe never was, so it had to be reconstructed from session history.
-Everything needed to go from an empty box to a working build:
-
-```bash
-# 1. Source tree. Exclude .git (12 GB of the 20 GB checkout, not needed on the box) and any build
-#    dir. --exclude also protects remote build trees from --delete. ~8 GB, ~15 min over the LAN.
-rsync -az --delete --exclude .git --exclude WebKitBuild --exclude 'WebKitBuild.*' \
-    /Users/tle/Work/WebKit/ power9:/home/tle/Work/WebKit/
-
-# 2. Packages that are NOT obvious. Fedora splits core Perl into ~150 sub-packages, and a minimal
-#    install has only a fraction of them. The failures are staggered and opaque: configure dies in
-#    CMake's FindPerlModules with a bare find_package error (English, FindBin, JSON::PP), and once
-#    that is fixed the build dies much later in create_hash_table ("Can't locate bigint.pm"),
-#    hundreds of steps in. Install the full meta-package rather than chasing modules one at a time.
-sudo dnf install -y perl    # all of core Perl; pulls in ~157 packages on a minimal box
-sudo dnf install -y wabt    # wat2wasm, for hand-built wasm smoke tests
-
-# 3. TMPDIR must be off /tmp. /tmp is a 32 GB tmpfs with a ~25.9 GB user quota; exceeding it shows
-#    up as an EMPTY ninja log plus exit 1, which looks like nothing at all went wrong.
-mkdir -p /home/tle/tmp
-
-# 4. Configure. ENABLE_FTL_DEFAULT is now ON for WTF_CPU_PPC64LE, so FTL and the wasm BBQ/OMG JITs
-#    would come on by default, but they are passed explicitly here so the recipe is self-documenting.
-#    CXXFLAGS works around a GCC 16 sfinae diagnostic.
-cd /home/tle/Work/WebKit
+rsync -az --delete --exclude .git --exclude WebKitBuild /Users/tle/Work/WebKit/ power9:/home/tle/Work/WebKit/
+sudo dnf install -y perl wabt          # full core Perl: piecemeal modules fail late and opaquely
 TMPDIR=/home/tle/tmp CXXFLAGS="-Wno-error=sfinae-incomplete" \
-  cmake -S . -B WebKitBuild/FTL -GNinja -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
-    -DENABLE_JIT=ON -DENABLE_FTL_JIT=ON -DENABLE_WEBASSEMBLY=ON \
-    -DENABLE_WEBASSEMBLY_BBQJIT=ON -DENABLE_WEBASSEMBLY_OMGJIT=ON \
-    -DENABLE_STATIC_JSC=OFF -DUSE_SYSTEM_MALLOC=ON
-
-# 5. Build. Confirm the flags actually took before trusting the result:
-#    grep -E 'ENABLE_JIT |ENABLE_FTL_JIT|ENABLE_WEBASSEMBLY' WebKitBuild/FTL/cmakeconfig.h
-TMPDIR=/home/tle/tmp ninja -C WebKitBuild/FTL jsc
+  cmake -S . -B WebKitBuild/IPINT -GNinja -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_JIT=ON -DENABLE_FTL_JIT=ON -DENABLE_WEBASSEMBLY=ON -DUSE_SYSTEM_MALLOC=ON
+TMPDIR=/home/tle/tmp ninja -C WebKitBuild/IPINT jsc
 ```
 
-Helper scripts and fixtures that live outside the repo and are therefore NOT restored by the rsync
-— recreate them or keep them in version control somewhere:
+Add `-DDEVELOPER_MODE=ON -DDEVELOPER_MODE_FATAL_WARNINGS=OFF` for the test binaries,
+`-DENABLE_ASSERTS=ON` for ASSERT, `-DENABLE_SANITIZERS="address;undefined"` for SAN.
+`USE_SYSTEM_MALLOC=ON` is required (libpas has no PPC64 port; mimalloc on 64 KB pages untried).
 
-- `/home/tle/fencecheck.sh` — full `JSTests/stress` gate, `-c 20`, results in `/home/tle/stress-fence`.
-  Compare against /home/tle/stress-baseline-fails.txt (882 known failures as of 2026-10-07), not against
-  zero. Run this after anything touching Options defaults, shared C++ or the
-  LLInt; it has already caught a 4,679-test regression that a green build and a working
-  `typeof WebAssembly` both missed.
-- `/home/tle/wasmrun.sh` — same shape against `JSTests/wasm.yaml`.
-- `/tmp/k/w1.js` — minimal wasm module, hand-assembled bytes, no tooling needed.
-- `/tmp/k/prim.wat` + `prim.js` — targeted smoke test for the primitives ported for BBQ: rotates
-  swept past their wrap boundaries, `ctz(0)` at both widths, popcount, float truncation, and 8xf64
-  and 8xi32 functions that exercise wasm argument save/restore. Build with
-  `wat2wasm /tmp/k/prim.wat -o /tmp/k/prim.wasm`.
-- The fast iteration loops in `/tmp/k/` (`oasm.sh`, `syn3.sh`, `checkasm.sh`) depend on build
-  artifacts and have to be regenerated after a build. See the Phase 6 tooling notes.
+Build traps — both look like compile errors that contradict the file you just wrote:
 
-## Appendix — commands cheat sheet
+- **Stale PCH**: GCC does not invalidate `cmake_pch.hxx.gch` when headers change, and rsync's
+  rename gives an edited header a new inode, so `#pragma once` fails (redefinition errors). `rm` the `.gch`.
+- **Silent rsync failure**: a `for … rsync` loop hides ssh timeouts. Retry and verify with md5.
+- `/tmp` on power9 is a quota'd tmpfs: exceeding it gives an empty ninja log and exit 1.
+- Fast loops: offlineasm alone in ~15 s, and a single-file syntax check in ~14 s against a copy of
+  `cmake_pch.hxx` with no `.gch` beside it (scripts were in `/tmp/k/` and must be regenerated after
+  a build).
 
-```sh
-# Rsync local checkout → PPC64 box (~10–15 min over LAN, no .git)
-rsync -a --progress \
-    --exclude='.git/' --exclude='WebKitBuild/' \
-    --exclude='.DS_Store' --exclude='**/.DS_Store' \
-    /Users/tle/Work/WebKit/ \
-    tle@192.168.1.247:/home/tle/Work/WebKit/
+## Releases and packaging
 
-# Verified Phase 0 build (C_LOOP only, Fedora 44 / GCC 16 / ppc64le)
-CXXFLAGS="-Wno-error=sfinae-incomplete" \
-  Tools/Scripts/build-jsc --jsc-only --release \
-    --cmakeargs="-DENABLE_C_LOOP=ON -DENABLE_JIT=OFF -DENABLE_WEBASSEMBLY=OFF \
-                 -DENABLE_STATIC_JSC=OFF -DUSE_SYSTEM_MALLOC=ON"
+- Tag `webkitgtk-<version>-ppc64` on the fork, with two release assets generated from the tag:
 
-# Future: PPC64LE with new JIT once Phase 2 lands
-Tools/Scripts/build-jsc --jsc-only --release \
-    --cmakeargs="-DENABLE_JIT=ON -DENABLE_FTL_JIT=OFF"
+  ```sh
+  git diff webkitgtk-2.54.1 <commit> -- Source/ThirdParty/skia > webkitgtk-2.54.1-ppc64-skia-vsx.patch
+  git diff webkitgtk-2.54.1 <commit> -- Source/ ':!Source/ThirdParty/skia' > webkitgtk-2.54.1-ppc64-jit.patch
+  ```
 
-# Smoke stress tests (C_LOOP build — --no-jit is required)
-Tools/Scripts/run-jsc-stress-tests \
-    --jsc WebKitBuild/JSCOnly/Release/bin/jsc \
-    --no-jit -c 8 \
-    <test-dir>
-# Results: ./results/resultsByFamily, ./results/results, ./results/passed
+  Check both apply with `patch -p1` to the release tarball (`power9:~/Projects/webkitgtk-rpm/`) before
+  uploading. Recutting moves the tag (`git push -f origin refs/tags/...`), `gh release upload --clobber`,
+  and `gh release edit --target`.
+- Skia VSX patch: CPU raster backend paths gated on `SK_CPU_PPC && __VSX__ && SK_CPU_LENDIAN`;
+  blitters, sampling and swizzling are bit-exact, the raster pipeline differs only by SIMD rounding;
+  ~3× faster.
+- Spec repo `github.com/runlevel5/fedora-ppc64` (`~/Work/fedora-ppc64`): branches `rawhide` and `f45`,
+  one directory per package, `Release: <fedora>.ppc64.<n>`, COPR builds with `make_srpm`
+  (`.copr/Makefile` runs `spectool` + `rpmbuild -bs`).
+- Local RPM build on power9: `~/Projects/build-fedora-ppc64.sh` (from the spec repo clone in
+  `~/Projects/fedora-ppc64`, 16 jobs — more has hung the box; output `~/rpmbuild-fp64`). The Fedora
+  dist-git clone `~/Projects/webkitgtk-rpm` is local only; never push it.
+- Rebasing onto the next 2.54.x: push a backup branch first, fetch the tag with
+  `git fetch --no-tags https://github.com/WebKit/WebKit.git refs/tags/<tag>:refs/tags/<tag>`
+  (the fork has no release tags), rebase, re-run the gates, `push --force-with-lease`.
 
-# jsc one-liner
-WebKitBuild/JSCOnly/Release/bin/jsc -e 'print(40+2)'   # → 42
+## Upstream bugs found
 
-# Dump IR at every tier (for Phase 2+ debugging)
-jsc --dumpBytecode=1 --dumpDFGGraph=1 \
-    --useFTLJIT=0 --useConcurrentJIT=0 \
-    test.js 2>&1 | less
+- **Bytecode-cache race**: concurrent writers serialize a Proxy `set` handler as an empty stub
+  (any arch). Repro: 20 parallel `JSC_diskCachePath=wN jsc proxy-set-failure-inline-cache.js`
+  writers, then `JSC_forceDiskCache=true` readers → `Bad value: 0!`. Not yet reported.
+- **Yarr interpreter case folding**: without /u, ſ (U+017F) and K (U+212A) must not match s/k; with
+  /u, İ (U+0130) has no simple folding. The interpreter gets these right and the JIT does not, on
+  ARM64 too.
+- **Yarr JIT/interpreter**: /u and /v matches starting inside a surrogate pair disagree; same on ARM64.
+- **ARM64 non-LSE `atomicStrongCAS`** overwrites `expectedAndResult` before its store-back retry, so a
+  spuriously failing `stlxr` can make a mismatching CAS store (PPC64's version avoids this).
+- **GCC `enumName`** parses a fixed-length `__PRETTY_FUNCTION__` prefix GCC does not keep stable.
+- **ASan use-after-return** breaks the conservative stack scan; now off in `ENABLE_SANITIZERS`.
+- JSCOnly does not export `wtf/linux/HighPriorityThreads.h`, which a 2.54.1 TestWTF test includes.
+- Candidates from the port: `disableAllWasmJITOptions()` re-enabling the LLInt; the FP-return
+  `OperationResult` change; `emitAtomicOpGeneric()`'s `#else #error`; IPInt loading `ref.test`
+  heap types zero-extended; `testElideSimpleMove` unguarded without a disassembler.
 
-# Assembler encoding verification (Phase 1+)
-echo 'addi 3,4,5' | powerpc64le-linux-gnu-as - -o /tmp/x.o
-objdump -d /tmp/x.o
-```
+## Open work and known limits
+
+- **POWER8 silicon** — the largest risk. Everything ran on POWER9/POWER10, with POWER8 paths tested
+  only by capping the ISA level, which cannot catch an unguarded newer instruction.
+- POWER10/POWER9 performance candidates: prefixed `pli`/`paddi` for 34-bit immediates, pc-relative
+  addressing for far calls, POWER9 vector lane insert/extract (`vinsertw`, `vextublx`), `cmpeqb`
+  for Yarr character classes.
+- Yarr: SIMD Boyer-Moore and multi-pattern searches are ARM64/x86_64-only;
+  `maximumRegExpTestInlineCodesize` (500 bytes) is untuned for PPC64's larger code (~4 of 23 sample
+  patterns inline).
+- `--sampleCCode`: GCC does not keep a frame pointer; needs `-fno-omit-frame-pointer` or an unwinder.
+- Narrow integer *register* arguments on FTL slow-path calls are not widened (see ELFv2 calls).
+- ASSERT build: `stack-overflow-llint-large-params-and-large-locals.js` (`no-llint`) needs a 35.6 MB
+  single allocation, more than one island region holds.
+- Not measured: wasm throughput, island exhaustion on a large wasm app, POWER8 anything.
+- mimalloc on 64 KB pages untried; `USE_SYSTEM_MALLOC=ON` throughout.
+- Upstreaming to WebKit `main` from `ppc64-main-base`.
