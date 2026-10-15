@@ -3663,9 +3663,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     clobber(ARM64Registers::q29);
     ScratchScope<0, 0> scratches(*this, Location::fromFPR(ARM64Registers::q28), Location::fromFPR(ARM64Registers::q29));
 #else
-    // PPC64LE shuffles with a single vperm and needs no scratch. The x86 branch
-    // below is still name-looked-up (an `if constexpr` in a non-template
-    // function analyses the discarded branch), so `scratches` has to exist.
+    // PPC64LE needs no scratch, but the discarded x86 branch below still names `scratches`.
     ScratchScope<0, 0> scratches(*this);
 #endif
     Location aLocation = loadIfNecessary(a);

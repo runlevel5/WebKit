@@ -344,16 +344,9 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             jit.prepareCallOperation(vm);
             jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeObjectInOSR)), GPRInfo::nonArgGPR0);
 #if CPU(PPC64LE)
-            // ELFv2: the callee writes its linkage area (CR at [sp+8], LR at
-            // [sp+16], TOC at [sp+24]) and may spill register arguments into
-            // the parameter save area at [sp+32], all inside the caller's
-            // frame. We are still running on the stack pointer B3 left us, and
-            // B3 only reserves a call arg area as large as the compiled
-            // function's own calls needed -- often nothing at all. Without a
-            // reservation these stores land on live B3 stack slots, which the
-            // recoveries below and the frame->scratch spool that follows still
-            // have to read. See the matching reservation further down, which
-            // upstream already folds maxFrameExtentForSlowPathCall into.
+            // An ELFv2 callee writes its linkage area and parameter save area in
+            // the caller's frame, and B3's sp here may have no call arg area
+            // below live stack slots that the recoveries still read.
             jit.makeSpaceOnStackForCCall();
 #endif
             jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);

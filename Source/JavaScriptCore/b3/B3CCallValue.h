@@ -74,12 +74,10 @@ private:
 };
 
 #if CPU(PPC64LE)
-// ELFv2 makes the caller extend an integer argument narrower than 64 bits to a full
-// register by its C type, and lets the callee rely on it. A B3 CCall only knows B3
-// types, so Air's CCallSpecial sign-extends every Int32 argument, which is right for
-// the signed int32_t parameters JSC operations mostly take but wrong for a uint32_t
-// (or an enum over one) holding a value >= 2^31. Creators that know the operation's
-// C type use this to pass such an argument zero-extended as an Int64 instead.
+// ELFv2 has the caller extend a narrow integer argument by its C type. A B3 CCall
+// only knows B3 types, so Air's CCallSpecial sign-extends every Int32 argument,
+// which is wrong for a uint32_t. Creators that know the C type use this to pass such
+// an argument zero-extended as an Int64.
 template<typename OperationType, size_t index>
 constexpr bool cCallArgumentIsUnsigned32()
 {

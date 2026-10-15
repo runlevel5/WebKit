@@ -696,11 +696,8 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
         fprSetBuilder.remove(reg);
 #endif
 #if CPU(PPC64LE)
-    // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21 (fpRegCS0-7)
-    // as VM callee-saves (removed just below). Nothing saves f22-f31 at a C-to-VM
-    // entry and BBQ's prologue does not save them either, so BBQ code using one
-    // would hand the C caller of vmEntry a corrupted register. Air excludes them
-    // for the same reason (see AirCode.cpp); keep BBQ consistent with it.
+    // Nothing saves the ELFv2 callee-saves f22-f31, which JSC does not model as
+    // VM callee-saves. Air excludes them too (see AirCode.cpp).
     for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
         fprSetBuilder.remove(reg);
 #endif
@@ -2993,10 +2990,8 @@ PartialResult BBQJIT::addI32Extend8S(Value operand, Value& result)
 {
     EMIT_UNARY(
         "F64PromoteF32", TypeKind::F64,
-        // Promotion must quiet a signalling NaN. The C++ float-to-double conversion
-        // does not on PPC64 (FPRs already hold floats in double format, so it is a
-        // no-op), so set the quiet bit explicitly; that keeps the payload, as
-        // cvtss2sd, fcvt and frsp do.
+        // Promotion must quiet a signalling NaN, which the C++ conversion does not do on
+        // PPC64 (it is a no-op there). Set the quiet bit, keeping the payload.
         BLOCK(Value::fromF64(std::isnan(operand.asF32())
             ? std::bit_cast<double>(std::bit_cast<uint64_t>(static_cast<double>(operand.asF32())) | 0x0008000000000000ULL)
             : static_cast<double>(operand.asF32()))),
@@ -4490,9 +4485,8 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
 #elif CPU(ARM64) || CPU(ARM_THUMB2)
     m_jit.loadPairPtr(MacroAssembler::framePointerRegister, callerFramePointer, MacroAssembler::linkRegister);
 #elif CPU(PPC64LE)
-    // The ARM64 shape with LR as a special-purpose register: linkRegister is only an r0
-    // placeholder here, so the return PC goes to LR through mtlr. Nothing between here
-    // and the jump below makes a call, and only calls write LR.
+    // As on ARM64, but linkRegister is only a placeholder: the return PC goes to LR.
+    // Nothing between here and the jump makes a call.
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister, CallFrame::callerFrameOffset()), callerFramePointer);
     m_jit.restoreReturnAddressBeforeReturn(Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()));
 #else

@@ -3008,14 +3008,10 @@ private:
     }
 
 #if CPU(PPC64LE)
-    // A PPC64 FPR holds a float in double format, so for the FP bank the spill
-    // width is not a question of how many low bits matter: stfd/lfd and stfs/lfs
-    // use different memory encodings. defWidth() is conservatively 64 for any
-    // non-ZDef def (e.g. a Patchpoint result), which made a Float tmp spill with
-    // MoveDouble while patchpoint generators, and every other reader of a Float
-    // in memory, use the 4-byte single encoding. Spill FP tmps by their use
-    // width so a Float always lives in memory as a float; the in-place spill
-    // path refuses any access at a different width.
+    // A PPC64 FPR holds a float in double format, so stfd/lfd and stfs/lfs use
+    // different memory encodings. defWidth() is 64 for any non-ZDef def, but
+    // every reader of a Float in memory uses the 4-byte encoding, so spill FP
+    // tmps by their use width.
     Width spillWidthForFP(Tmp tmp)
     {
         return std::max(m_tmpWidth.useWidth(tmp), Width32);
@@ -3173,14 +3169,9 @@ private:
 
                         Arg spilledArg = Arg::stack(spilled);
 #if CPU(PPC64LE)
-                        // An FP spill slot must only ever be accessed with the
-                        // move moveOpcode() picks for its tmp: on PPC64 a
-                        // 32-bit and a 64-bit FP access use different memory
-                        // encodings (stfs/lfs vs stfd/lfd), so an instruction
-                        // that would read or write the slot in place at the
-                        // other width (e.g. an argument's MoveDouble def of a
-                        // tmp only ever used as a float) goes through a
-                        // register and an explicit spill move instead.
+                        // On PPC64 an FP spill slot may only be accessed at
+                        // its tmp's spill width (see above); an access at the
+                        // other width goes through a register.
                         if (bank == FP && fpSlotsRead.contains(spilled) && bytesForWidth(width) != stackSlotMinimumWidth(spillWidthForFP(arg.tmp()))) {
                             m_stats[bank].numInPlaceSpillGiveUpSpillWidth++;
                             return;

@@ -342,7 +342,6 @@ void testSimple()
 //             8 g4*  9 d4  10 g5* 11 d5  12 g6* 13 d6  14 g7* 15 d7  (f5-f8)
 //            16 g8* 17 d8  18 g9* 19 d9  20 d10 21 d11 22 d12 23 d13* (f9-f13)
 //            24 g10* 25 g11*                       (* = in memory, at 32 + 8 * position)
-// GCC 16 on POWER9 stores the same signature's memory arguments exactly there.
 struct ManyCArguments {
     int64_t g[12];
     double d[14];

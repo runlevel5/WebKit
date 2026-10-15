@@ -856,12 +856,9 @@ namespace JSC { namespace IPInt {
 // When LLINT_TRACING is enabled, each ipintOp handler has a trace prologue injected,
 // which can push the largest handlers past 256 bytes. Double the slot size in tracing
 // builds so the dispatch table stays valid.
-// PPC64LE (POWER8) has fixed 4-byte instructions and no PC-relative addressing, so
-// computing a dispatch-table address alone takes six instructions (bl/mflr plus
-// addis/addi, saving and restoring LR around it), every 64-bit constant up to five,
-// and a conditional branch that might be far another one. The f32/f64 min/max and
-// signed trunc_sat handlers come to 280-290 bytes, and every mINT/uINT/argumINT
-// handler to 68 or more, so all slots are doubled there.
+// PPC64LE has no PC-relative addressing before POWER10, so a dispatch-table address
+// takes six instructions and a 64-bit constant up to five. Some handlers need up to
+// 290 bytes, so all slots are doubled there.
 constexpr uint64_t alignIPInt = 512;
 #else
 constexpr uint64_t alignIPInt = 256;

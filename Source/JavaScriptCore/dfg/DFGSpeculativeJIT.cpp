@@ -249,12 +249,8 @@ void SpeculativeJIT::compileFunction()
 #if CPU(X86_64)
         pop(GPRInfo::argumentGPR1);
 #elif CPU(PPC64LE)
-        // linkRegister is an r0 placeholder on PPC; the real return address is
-        // in the LR SPR, so a plain move(linkRegister, ...) would spill r0, not
-        // LR. nearCallThunk (bl) clobbers the real LR, so the callee's prologue
-        // would then mflr garbage into its ReturnPC slot and return wild. Spill
-        // and restore the real LR with mflr/mtlr, matching the baseline arity
-        // check (JIT.cpp).
+        // linkRegister is only a placeholder on PPC64; the return address is in LR,
+        // which nearCallThunk clobbers.
         moveFromLR(GPRInfo::argumentGPR1);
 #else
         tagPtr(NoPtrTag, linkRegister);
@@ -6225,10 +6221,8 @@ void SpeculativeJIT::compileArithDiv(Node* node)
 
         // Note that it is fine that sdiv with 0-divisor. The resulted value is zero (no trap).
 #if CPU(PPC64LE)
-        // divw leaves the target undefined for a zero divisor and for
-        // INT32_MIN / -1, where sdiv is defined (0 and INT32_MIN respectively)
-        // and the code around here relies on that. Materialise both explicitly.
-        // x / -1 is -x, which wraps to INT32_MIN for INT32_MIN exactly as sdiv does.
+        // divw's result is undefined for x / 0 and INT32_MIN / -1, where the code
+        // below relies on sdiv's 0 and INT32_MIN. x / -1 is -x, which wraps as sdiv does.
         {
             JumpList divisionDone;
             Jump divisorNonZero = branchTest32(NonZero, op2GPR);
@@ -6580,11 +6574,8 @@ void SpeculativeJIT::compileArithMod(Node* node)
 
         // This is doing: x - ((x / y) * y)
 #if CPU(PPC64LE)
-        // divw leaves the target undefined for INT32_MIN / -1, so the identity
-        // below would compute a garbage remainder. x % -1 is always zero, so
-        // handle that divisor separately; the negative-zero check further down
-        // still sees the zero result and exits when the numerator was negative,
-        // which is what makes INT32_MIN % -1 produce -0.
+        // divw's result is undefined for INT32_MIN / -1, so answer x % -1 = 0
+        // directly. The negative-zero check below still sees it.
         JumpList afterDivision;
         Jump divisorNotMinusOne = branch32(NotEqual, divisorGPR, TrustedImm32(-1));
         move(TrustedImm32(0), quotientThenRemainderGPR);
@@ -16769,11 +16760,8 @@ void SpeculativeJIT::compileLogShadowChickenPrologue(Node* node)
     emitStoreCodeOrigin(node->origin.semantic);
 
 #if CPU(PPC64LE)
-    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
-    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister, which
-    // the register allocator does not own -- asking GPRTemporary for it looks up
-    // an invalid index. ensureShadowChickenPacket only needs a register that is
-    // not an argument register, so use an allocatable callee-saved one.
+    // nonArgGPR0 is dataTempRegister on PPC64, which the register allocator does
+    // not own. Any non-argument register will do.
     GPRTemporary scratch1(this, GPRInfo::regCS0);
 #else
     GPRTemporary scratch1(this, GPRInfo::nonArgGPR0); // This must be a non-argument GPR.
@@ -16800,11 +16788,8 @@ void SpeculativeJIT::compileLogShadowChickenTail(Node* node)
     CallSiteIndex callSiteIndex = emitStoreCodeOrigin(node->origin.semantic);
 
 #if CPU(PPC64LE)
-    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
-    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister, which
-    // the register allocator does not own -- asking GPRTemporary for it looks up
-    // an invalid index. ensureShadowChickenPacket only needs a register that is
-    // not an argument register, so use an allocatable callee-saved one.
+    // nonArgGPR0 is dataTempRegister on PPC64, which the register allocator does
+    // not own. Any non-argument register will do.
     GPRTemporary scratch1(this, GPRInfo::regCS0);
 #else
     GPRTemporary scratch1(this, GPRInfo::nonArgGPR0); // This must be a non-argument GPR.

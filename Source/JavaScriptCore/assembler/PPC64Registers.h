@@ -29,20 +29,15 @@
 
 #if CPU(PPC64LE)
 
-// Power64 ELFv2 ABI calling convention and register assignments:
-//   https://openpowerfoundation.org/specifications/64bitelfabi/  (Rev 1.5, "64-Bit ELF V2 ABI Specification: Power Architecture")
-// Power ISA v2.07B (POWER8) is the baseline ISA:
-//   https://openpowerfoundation.org/specifications/isa/  (Book I, Chapter 3 "Branch Processor" / Chapter 4 "Fixed-Point Processor")
+// Register roles follow the 64-bit ELFv2 ABI; POWER8 (Power ISA 2.07) is the baseline.
 //
-// Per-register flags below follow the RISCV64Registers.h convention consumed by
-// jit/RegisterSet.cpp:
+// Per-register flags, as consumed by jit/RegisterSet.cpp:
 //     macro(id, name, isReserved, isCalleeSaved)
-//   - isReserved:   this register is reserved by the ABI / platform and the
-//                   register allocator must never pick it (e.g. SP, TOC, TLS).
-//   - isCalleeSaved: non-volatile per the ABI; callee must preserve across calls.
+//   - isReserved:    the register allocator must never pick it (SP, TOC, TLS, ...).
+//   - isCalleeSaved: non-volatile per the ABI.
 //
-// ELFv2 register roles (§2.2.1 Table 2.1):
-//   r0       volatile, scratch only (encoded as literal 0 in many D-/DS-form base slots, so non-allocatable as base)
+// GPRs:
+//   r0       volatile, scratch only (reads as literal 0 in the base slot of D-/DS-/X-form addressing)
 //   r1       stack pointer (SP)
 //   r2       Table Of Contents (TOC) pointer — restored by caller after a cross-module call
 //   r3..r10  argument / return registers (volatile)
@@ -50,7 +45,7 @@
 //   r12      function entry address (volatile) — used as MacroAssembler scratch here
 //   r13      thread pointer (TLS) — reserved by ABI
 //   r14..r31 non-volatile, callee-saved
-// FPRs (§2.2.2):
+// FPRs:
 //   f0       volatile; used as MacroAssembler double scratch
 //   f1..f13  argument / return (volatile)
 //   f14..f31 non-volatile, callee-saved
@@ -140,17 +135,12 @@
     macro(f30, "f30"_s, 0, 1)        \
     macro(f31, "f31"_s, 0, 1)
 
-// VMX (Altivec) vector registers v0-v31. In VSX terms these alias the
-// upper 32 of the 64 VSRs (VSR32-VSR63), so save/restore between VMX
-// and VSX views needs care. ELFv2 §3.2.4 calling convention:
-//   v0-v1   volatile (often used for syscall scratch)
+// VMX (Altivec) vector registers v0-v31. They alias the upper 32 of the 64
+// VSRs (VSR32-VSR63). ELFv2:
+//   v0-v1   volatile
 //   v2-v13  argument / return (volatile)
 //   v14-v19 volatile
 //   v20-v31 non-volatile (callee-saved)
-//
-// PLAN.md "Quick reference" reserves v0 as ScratchSimd128Reg, treating
-// v0-v19 as volatile and v20-v31 as non-volatile callee-saved — matches
-// the SM port's post-Phase-2 convention.
 #define FOR_EACH_VR_REGISTER(macro) \
     macro(v0, "v0"_s, 0, 0)          \
     macro(v1, "v1"_s, 0, 0)          \

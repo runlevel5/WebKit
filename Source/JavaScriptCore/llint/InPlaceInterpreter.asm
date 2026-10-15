@@ -1235,9 +1235,8 @@ if PPC64LE
     # The ppc64le backend lowers a call to a label as an ELFv2 C call, which
     # first allocates a 32-byte linkage area (stdu 1,-32(1)). That would move
     # sp off the callee frame just built at sp, and the JS callee would read
-    # its Callee/argument slots 32 bytes away (observed: a null callee in
-    # llint_default_call). Call through t5, which already holds the trampoline
-    # address, with the JS tag, as the .found path does.
+    # its Callee/argument slots 32 bytes away. Call through t5, which already
+    # holds the trampoline address, with the JS tag, as the .found path does.
     call t5, JSEntryPtrTag
 else
     call _llint_default_call_trampoline
@@ -2136,10 +2135,9 @@ _pinballHandlerRejectFunction:
 #
 # Lives here rather than in InPlaceInterpreter64.asm because it is not actually
 # IPInt-specific: emitRestoreInstanceFrameIfNeeded() in WasmIRGeneratorHelpers.h
-# calls it from BBQ and OMG. That file is included only on architectures that
-# have IPInt, so defining it there left PPC64 -- which runs wasm on BBQ/OMG with
-# no IPInt -- with an undefined wasm_restore_frame_return at link time. It stays
-# within the _wasmIPIntPCRangeStart/End markers either way.
+# calls it from BBQ and OMG, which also run on architectures that do not include
+# InPlaceInterpreter64.asm. It stays within the _wasmIPIntPCRangeStart/End
+# markers either way.
 global _wasm_restore_frame_return
 _wasm_restore_frame_return:
     loadp CodeBlock[cfr], wasmInstance
@@ -2834,7 +2832,7 @@ unimplementedInstruction(_i64_atomic_rmw32_cmpxchg_u)
 
 # Stubs for the IPInt call/return-location trampolines that LowLevelInterpreter
 # references via pcrtoaddr to populate the wasm dispatch tables.  On platforms
-# that don't ship a real IPInt (i.e. anything not ARM64/ARM64E/X86_64), point
+# that don't ship a real IPInt (anything not ARM64/ARM64E/X86_64/PPC64LE), point
 # every entry at a `crash()` body so the symbols resolve at link time.
 _wasm_trampoline_wasm_ipint_call:
 _wasm_trampoline_wasm_ipint_call_wide16:

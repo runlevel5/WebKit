@@ -107,9 +107,8 @@ static constexpr size_t fixedExecutableMemoryPoolSize = 16 * MB;
 static constexpr size_t fixedExecutableMemoryPoolSize = 1 * GB;
 #elif CPU(PPC64LE)
 // A PPC64 direct branch reaches only +/-32 MB; the pool is split into regions with jump islands, as
-// on ARM64, for the sites that must stay a single branch (see PPC64Assembler). The 32 MB fallback below fills up in a JetStream2-sized run, and as it
-// fills, memoryPressureMultiplier() raises every tier-up threshold until hot code stays in the
-// lower tiers.
+// on ARM64, for the sites that must stay a single branch (see PPC64Assembler). A single 32 MB pool
+// fills up in large runs, and memoryPressureMultiplier() then holds hot code in the lower tiers.
 static constexpr size_t fixedExecutableMemoryPoolSize = 1 * GB;
 #else
 static constexpr size_t fixedExecutableMemoryPoolSize = 32 * MB;
@@ -124,9 +123,8 @@ static constexpr double islandRegionSizeFraction = 0.05;
 static constexpr size_t islandSizeInBytes = 4;
 #elif CPU(PPC64LE)
 // An island is a jump slot that reaches any address (PPC64Assembler::fillNearTailCall), so islands
-// are never chained, and only wasm call sites use them. 2 MB of each 32 MB region holds 65,536
-// islands and leaves 28 MB for code, which also bounds the largest single JIT allocation
-// (stress/regress-169445.js needs 26 MB without the LLInt).
+// are never chained. 2 MB of each 32 MB region holds 65,536 islands and leaves 28 MB for code, which
+// also bounds the largest single JIT allocation.
 static constexpr double islandRegionSizeFraction = 0.0625;
 static constexpr size_t islandSizeInBytes = PPC64Assembler::jumpIslandSize;
 #endif
@@ -919,14 +917,9 @@ private:
             m_fixedAllocator(allocator)
         {
 #if !ENABLE(LIBPAS_JIT_HEAP) && CPU(PPC64LE)
-            // On PPC64 a direct branch reaches only +/-32 MB. Taking the right end
-            // of the big free chunk whenever that touches fewer pages (with 64 KB
-            // pages, most of the time) splits JIT code between both ends of the
-            // free space, so calls between the two clusters are more likely to
-            // need the slower far li64/mtctr form. Keep the code packed from the
-            // bottom instead. This is only about locality: sites that are
-            // repatched while other threads run them reach far targets through
-            // jump islands (see PPC64Assembler).
+            // A PPC64 direct branch reaches only +/-32 MB, so keep JIT code packed
+            // from the bottom rather than split between both ends of the free
+            // space, which makes far calls more likely. This is only about locality.
             setAllocatesFromBottom(true);
 #endif
         }

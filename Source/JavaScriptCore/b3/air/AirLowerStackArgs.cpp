@@ -55,15 +55,10 @@ void lowerStackArgs(Code& code)
     }
 
 #if CPU(PPC64LE)
-    // ELFv2: a C callee saves CR, LR and the TOC at sp+8, sp+16 and sp+24 of its
-    // caller's frame. B3 CCalls reserve that linkage area already (see
-    // computeCCallingConvention), but patchpoints also reach C through thunks that
-    // build no frame of their own (e.g. throwExceptionFromOMGThunkGenerator), and
-    // in a procedure with no CCall and no spill slots sp == fp, so those saves
-    // overwrote the CodeBlock and Callee slots of this very frame. Always keep
-    // the linkage area (and the parameter save area some callees may use)
-    // below the frame, as the baseline JIT and DFG already do for their
-    // slow-path calls.
+    // An ELFv2 C callee saves CR, LR and the TOC at sp + 8..31 of its caller's frame.
+    // Patchpoints also reach C through thunks that build no frame of their own, and
+    // with no CCall and no spill slots sp == fp, so always keep that area below the
+    // frame, as the baseline JIT and DFG do.
     code.requestCallArgAreaSizeInBytes(maxFrameExtentForSlowPathCall);
 #endif
 

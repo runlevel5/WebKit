@@ -49,22 +49,14 @@ SUPPRESS_ASAN
 void WTFGetBacktrace(void** stack, int* size)
 {
 #if CPU(PPC64LE) && OS(LINUX)
-    // glibc's backtrace() on PPC64 walks the ELFv2 back-chain (each frame's
-    // first doubleword points to the caller's frame) and reads the saved LR
-    // from the caller's frame. JSC's JIT/LLInt frames don't maintain the back-
-    // chain the way the C ABI expects, so the walk can dereference a garbage
-    // pointer and SIGSEGV — fatal because captureStackTrace() runs during
-    // exception-scope verification and crash logging, turning any such event
-    // into a secondary crash. Walk the back-chain ourselves and stop at the
-    // first frame that isn't a strictly-higher, 16-byte-aligned slot inside
-    // this thread's stack, so we never fault (we simply truncate the trace at
-    // JIT frames). "Nearby" alone is not enough: a JIT frame's first doubleword
-    // can hold a value a little above the top of the stack.
+    // glibc's backtrace() on PPC64 walks the ELFv2 back chain, which JIT and
+    // LLInt frames do not maintain, and can fault. Walk it ourselves and stop
+    // at the first frame that is not a strictly higher, 16-byte-aligned slot
+    // inside this thread's stack, truncating the trace at JIT frames.
     int maxFrames = *size;
     int captured = 0;
-    // Use the bounds WTF caches per thread: computing them afresh means pthread_getattr_np, which for
-    // the main thread parses /proc/self/maps, and exception scope verification captures a trace on
-    // every throw. currentSingleton() registers a thread WTF has not seen yet.
+    // Use the bounds WTF caches per thread: pthread_getattr_np parses /proc/self/maps for the main
+    // thread, and exception scope verification captures a trace on every throw.
     const auto& stackBounds = WTF::Thread::currentSingleton().stack();
     void** frame = reinterpret_cast<void**>(__builtin_frame_address(0));
     while (captured < maxFrames && frame) {

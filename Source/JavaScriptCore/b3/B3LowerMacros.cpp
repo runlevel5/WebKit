@@ -1117,8 +1117,7 @@ private:
         ASSERT(nonChillOpcode == Div || nonChillOpcode == Mod);
 
         // ARM supports this instruction natively: sdiv gives 0 for x/0 and INT_MIN for INT_MIN/-1.
-        // PPC64 does not. divw/divd do not trap either, but the Power ISA leaves their result
-        // undefined for both cases (POWER9 returns 0 for INT_MIN/-1, not INT_MIN), so PPC64 needs
+        // PPC64's divw/divd do not trap, but their result is undefined for both, so PPC64 needs
         // the explicit checks below just like x86.
         if (isARM64())
             return;
@@ -1749,8 +1748,7 @@ private:
     {
 #if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
         // Wasm operations find their caller's frame through the instance (DECLARE_WASM_CALL_FRAME), so
-        // store it as OMG's callWasmOperation does. Without this the operation sees whichever frame made
-        // the last wasm operation call, and makes that vm.topCallFrame.
+        // store it as OMG's callWasmOperation does.
         slowPathBlock->appendNew<MemoryValue>(m_proc, Store, m_origin,
             slowPathBlock->appendNew<Value>(m_proc, FramePointer, m_origin), instance,
             safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTemporaryCallFrame()));

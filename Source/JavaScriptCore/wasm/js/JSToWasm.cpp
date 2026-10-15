@@ -291,10 +291,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
 
         // Prepare frame
         jit.setupArguments<decltype(operationJSToWasmEntryWrapperBuildFrame)>(GPRInfo::argumentGPR0, GPRInfo::callFrameRegister, GPRInfo::regWS0);
-        // The operation fills the argument buffer at sp. On PPC64 the C call's
-        // linkage area is at sp (the callee saves LR at sp+16, and the call
-        // sequence saves the TOC at sp+24), so give the call its own slow-path
-        // extent below the buffer instead of letting the two overlap.
+        // The operation fills the argument buffer at sp, where an ELFv2 C call's
+        // linkage area would be, so give the call its own area below the buffer.
         if constexpr (!!maxFrameExtentForSlowPathCall)
             jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
         jit.callOperation<OperationPtrTag>(operationJSToWasmEntryWrapperBuildFrame);
@@ -333,9 +331,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         jit.loadPair64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 2 * 8), GPRInfo::regWA2, GPRInfo::regWA3);
         jit.loadPair64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 4 * 8), GPRInfo::regWA4, GPRInfo::regWA5);
 #elif CPU(PPC64LE)
-        // ELFv2 passes 8 arguments in r3-r10, so wasmCallingConvention() uses
-        // 8 argument JSRs here; the generic JSVALUE64 path below only restores
-        // 6 and would leave regWA6/regWA7 holding garbage.
+        // ELFv2 passes 8 arguments in r3-r10; the generic path below restores only 6.
         jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0 * 8), GPRInfo::regWA0);
         jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 1 * 8), GPRInfo::regWA1);
         jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 2 * 8), GPRInfo::regWA2);

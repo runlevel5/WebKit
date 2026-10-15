@@ -317,12 +317,7 @@ elseif (ARM_THUMB2_DETECTED)
 elseif (WTF_CPU_RISCV64)
     set(OFFLINE_ASM_BACKEND "RISCV64")
 elseif (WTF_CPU_PPC64LE)
-    # Phase 1: native ppc64le.rb LLInt backend not yet in WORKING_BACKENDS.
-    # Use C_LOOP when ENABLE_C_LOOP is ON (even alongside ENABLE_JIT=ON) so
-    # that the JIT=ON build compiles the MacroAssembler stub layer without the
-    # offlineasm step emitting "#error This backend is not supported yet."
-    # When ENABLE_C_LOOP=OFF (Phase 2+, with a real ppc64le.rb), the native
-    # backend takes over.
+    # A C_LOOP build of ppc64le still uses the C_LOOP offlineasm backend.
     if (ENABLE_C_LOOP)
         set(OFFLINE_ASM_BACKEND "C_LOOP")
     else ()

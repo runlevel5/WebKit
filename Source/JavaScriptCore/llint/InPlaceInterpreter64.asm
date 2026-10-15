@@ -1868,12 +1868,12 @@ ipintOp(_i32_rem_s, macro()
     elsif RISCV64
         remis t0, t1, t2
     elsif PPC64LE
-        # POWER8 (Power ISA v2.07B) has no integer modulo instruction: modsw/
-        # moduw/modsd/modud are POWER9 (v3.0) only, so synthesize the remainder
-        # as t0 - (t0 / t1) * t1, the same shape ARM64 uses. Only the two-operand
-        # "dst = dst op src" form of divis is used here, since that is the
-        # unambiguous offlineasm convention (the three-operand div forms have
-        # different operand orders on ARM64 and RISCV64).
+        # POWER8 has no integer remainder instruction (modsw and friends are
+        # ISA 3.0), so synthesize the remainder as t0 - (t0 / t1) * t1, the
+        # same shape ARM64 uses. Only the two-operand "dst = dst op src" form
+        # of divis is used here, since that is the unambiguous offlineasm
+        # convention (the three-operand div forms have different operand
+        # orders on ARM64 and RISCV64).
         move t0, t2
         divis t1, t2
         muli t1, t2
@@ -2694,8 +2694,8 @@ ipintOp(_i32_wrap_i64, macro()
         # ...except on PPC64, where every other i32 producer leaves the upper
         # word zero and C callees rely on it: ELFv2 makes the caller extend a
         # 32-bit argument to 64 bits, and the IPInt slow paths take i32 operands
-        # straight from the value stack (array.new's length, for one). Leaving
-        # the i64's high word in place handed them a huge length.
+        # straight from the value stack (array.new's length, for one), so a
+        # leftover high word would hand them a huge length.
         loadq [sp], t0
         zxi2q t0, t0
         storeq t0, [sp]
@@ -4343,7 +4343,7 @@ end
 #   them and nothing is live there between handlers.
 # - t0 = r3, t1 = r4, ft0 = f1 (VSR1; an f32 there is in double format, so
 #   lane moves go through xscvdpspn/xscvspdpn as in the JIT).
-# Every instruction used is POWER8 (ISA v2.07B) or older.
+# Every instruction used is in the POWER8 baseline.
 macro ipintSIMDOp(name, impl)
     ipintOp(name, impl)
 end
@@ -9924,18 +9924,16 @@ end
 #
 # `fence` lowers to hwsync on ppc64le (offlineasm/ppc64le.rb, "memfence",
 # "fence" -> sync). This is the standard "leading sync" Power mapping of a
-# C11 seq_cst load (Power ISA v2.07B B.2.1.1), with the trailing acquire
-# barrier strengthened from lwsync to sync because offlineasm exposes no
-# lwsync-strength opcode. Strictly stronger than required, never weaker.
+# C11 seq_cst load, with the trailing acquire barrier strengthened from
+# lwsync to sync because offlineasm exposes no lwsync-strength opcode. Strictly stronger than required, never weaker.
 #
 # The leading sync is load-bearing, not belt-and-braces: the atomic stores
 # and RMWs on this path go through the LL/SC weakCASLoop*/weakCASExchange*
 # helpers, whose store-conditional carries only an lwsync (release). Without
 # a sync on the load side there would be nothing ordering a prior atomic
 # store against a subsequent atomic load, which seq_cst requires. (The
-# backend's load-reserve now also issues a sync first, which orders a prior
-# atomic store against a following RMW; it does nothing for a plain load,
-# so this fence is still required.)
+# backend's load-reserve also issues a sync first, which orders a prior
+# atomic store against a following RMW; it does nothing for a plain load.)
 #
 # The load itself is single-copy atomic because it is naturally aligned:
 # every caller runs checkAlignment{2,4,8} first (a byte is always aligned),

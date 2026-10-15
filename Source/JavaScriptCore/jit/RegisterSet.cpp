@@ -302,11 +302,8 @@ RegisterSet RegisterSet::dfgCalleeSaveRegisters()
     result.add(GPRInfo::regCS8);
     result.add(GPRInfo::regCS9);
 #elif CPU(PPC64LE)
-    // The allocatable GPR pool includes regCS0-regCS5 (r14-r19), so the DFG
-    // register allocator hands them out like scratch registers. They are
-    // C-callee-saved (ELFv2), so the DFG prologue must save them or the C
-    // caller's values leak through vmEntry (observed as a SIGSEGV in the jsc
-    // driver after JS execution returned, with a corrupted non-volatile GPR).
+    // The allocatable GPR pool includes regCS0-regCS5 (r14-r19), which are
+    // ELFv2 callee-saved, so the DFG prologue must save them.
     result.add(GPRInfo::regCS0);
     result.add(GPRInfo::regCS1);
     result.add(GPRInfo::regCS2);

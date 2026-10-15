@@ -646,10 +646,8 @@ public:
 #endif
 
 #if CPU(PPC64LE)
-    // JSC frame convention, matching ARM64/RISCV64: the header is two
-    // machine words — [fp] = caller fp, [fp+8] = return pc.  The return
-    // address arrives in LR (bctrl/bl), so the prologue spills it via the
-    // assembler scratch.
+    // As on ARM64/RISCV64: [fp] = caller fp, [fp+8] = return pc. The return
+    // address arrives in LR and is spilled through a scratch register.
     void emitFunctionPrologue()
     {
         sub64(TrustedImm32(16), stackPointerRegister);

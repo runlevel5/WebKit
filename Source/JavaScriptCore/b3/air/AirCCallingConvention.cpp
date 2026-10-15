@@ -82,15 +82,11 @@ void marshallCCallArgumentImpl(Vector<Arg>& result, unsigned& argumentCount, Val
 
 
 #if CPU(PPC64LE)
-// ELFv2 assigns every argument, of either bank, one doubleword of the parameter
-// save area by its position in the argument list; the save area starts after the
-// 32-byte linkage area (back chain, CR, LR, TOC save) at the caller's sp + 32.
-// The first eight positions are also r3-r10, so an integer argument goes in the
-// GPR of its position (FP arguments skip theirs) or, from position 8 on, in its
-// own doubleword. FP arguments take f1-f13 in order and, once those run out, also
-// their own doubleword (a float in its low word, as on little endian GCC reads it
-// with lfs). There is no packing: the 9th GP argument after one double is at
-// sp + 32 + 8 * 9, not sp + 32 + 8 * 8.
+// ELFv2 assigns every argument one doubleword of the parameter save area by its
+// position in the argument list, starting after the 32-byte linkage area at
+// sp + 32. Positions 0-7 are also r3-r10: an integer argument takes the GPR of its
+// position (FP arguments skip theirs) or, from position 8 on, its doubleword. FP
+// arguments take f1-f13 in order, then their doubleword (a float in its low word).
 static constexpr unsigned elfV2ArgumentGPRs = 8;
 static constexpr unsigned elfV2ArgumentFPRs = 13;
 static constexpr Value::OffsetType elfV2ParameterSaveAreaOffset = 32;

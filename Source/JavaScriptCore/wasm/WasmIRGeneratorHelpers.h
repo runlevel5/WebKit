@@ -161,10 +161,8 @@ static inline void emitThrowImpl(CCallHelpers& jit, unsigned exceptionIndex)
 
     jit.move(MacroAssembler::TrustedImm32(exceptionIndex), GPRInfo::argumentGPR1);
     jit.move(MacroAssembler::stackPointerRegister, GPRInfo::argumentGPR2);
-    // The payload sits at sp. On PPC64 the C call's linkage area is at sp too
-    // (the callee saves CR at sp+8 and LR at sp+16, the call sequence saves the
-    // TOC at sp+24), so give the call its own slow-path extent below the
-    // payload. operationWasmThrow does not return here, so sp is not restored.
+    // The payload sits at sp, where an ELFv2 C call's linkage area would be, so
+    // give the call its own area below it. operationWasmThrow does not return.
     if constexpr (!!maxFrameExtentForSlowPathCall)
         jit.subPtr(CCallHelpers::TrustedImm32(maxFrameExtentForSlowPathCall), CCallHelpers::stackPointerRegister);
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
@@ -223,7 +221,7 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
     jit.validateUntaggedPtr(MacroAssembler::linkRegister);
 #endif
 #elif CPU(PPC64LE)
-    // linkRegister is an r0 placeholder on PPC64: commit the return PC to LR with mtlr.
+    // linkRegister is only a placeholder on PPC64; the return PC goes to LR.
     jit.restoreReturnAddressBeforeReturn(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newStackOffset - Checked<int32_t>(sizeof(Register))));
 #else
     UNREACHABLE_FOR_PLATFORM();

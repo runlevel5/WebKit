@@ -986,14 +986,9 @@ void SpeculativeJIT::emitCall(Node* node)
         // - Potentially two arguments on the stack.
         CodeBlock* baselineCodeBlock = m_graph.baselineCodeBlockFor(staticOrigin);
 #if CPU(PPC64LE)
-        // ELFv2: a C callee clobbers its caller's linkage + parameter save area,
-        // i.e. [sp, sp + maxFrameExtentForSlowPathCall). We build the prototypical
-        // eval callee frame just below the current sp (its CallerFrameAndPC — with
-        // callerFrame at calleeFrameGPR+0 — sits at sp-16), so the C-call scratch
-        // area must be reserved entirely BELOW that frame. Otherwise the callee's
-        // LR save at [sp+16] lands on the callerFrame slot and corrupts it (the
-        // operation then dereferences a return address as a CallFrame*). Reserve
-        // CallerFrameAndPC plus the full slow-path call extent.
+        // An ELFv2 C callee writes into [sp, sp + maxFrameExtentForSlowPathCall).
+        // The eval callee frame's CallerFrameAndPC is at sp - 16, so reserve the
+        // C-call area below it.
         unsigned requiredBytes = sizeof(CallerFrameAndPC) + maxFrameExtentForSlowPathCall;
 #else
         unsigned requiredBytes = sizeof(CallerFrameAndPC) + sizeof(CallFrame*) * 2;
@@ -1048,14 +1043,9 @@ void SpeculativeJIT::emitCall(Node* node)
                 }
                 move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
 #if CPU(PPC64LE)
-                // ELFv2: the C callee writes its linkage area into the CALLER's
-                // frame — CR save (stw) at [sp+8], LR at [sp+16], TOC at
-                // [sp+24]. After emitFunctionPrologue sp == cfr here, so those
-                // writes land on this JS frame's header: a callee that saves CR
-                // overwrites the LOW 32 BITS of the returnPC slot at [cfr+8]
-                // (observed: 0x...f27ed4c4 -> 0x...00002000), and the epilogue
-                // then returns to garbage. Drop sp below the frame around the
-                // call.
+                // An ELFv2 C callee saves CR/LR/TOC at sp + 8..31, in its caller's
+                // frame, and sp == cfr here, so those saves would overwrite this
+                // frame's header.
                 makeSpaceOnStackForCCall();
 #endif
                 if (Options::useJITCage()) {
@@ -1063,14 +1053,9 @@ void SpeculativeJIT::emitCall(Node* node)
                     CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
                 } else
                     CCallHelpers::callOperation<HostFunctionPtrTag>(nativeFunction);
-                // Note: no reclaimSpaceOnStackForCCall — sp stays lowered
-                // through the exception check on purpose. If the check takes
-                // the HandleException thunk, that thunk makes its own C call
-                // (operationLookupExceptionHandler) whose ELFv2 linkage writes
-                // (TOC save at [sp+24]) would otherwise stomp this frame's
-                // Callee slot, and genericUnwind's topJSCallFrame would then
-                // read a TOC value as the callee cell. The normal path's
-                // emitFunctionEpilogue restores sp from the frame pointer.
+                // sp stays lowered through the exception check: the HandleException
+                // thunk's own C call would otherwise clobber the callee slot that
+                // genericUnwind reads. The epilogue restores sp from cfr.
                 loadPtr(vm().addressOfException(), GPRInfo::regT2);
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
@@ -1142,20 +1127,12 @@ void SpeculativeJIT::emitCall(Node* node)
                 pop(selectScratchGPR(calleeGPR));
 
 #if CPU(PPC64LE)
-            // calleeGPR is dead once the callee has been stored into the staged frame (well
-            // before mainPath), so the register allocator reuses it. On a RELINK (e.g. the
-            // callee tiers up and the near-call is reset to the slow path) we re-enter here
-            // with a STALE calleeGPR — observed holding the staged CodeBlock — and passed it
-            // to operationLinkDirectCall, whose callee->realm() then hit the "realmless
-            // structure" RELEASE_ASSERT (a CodeBlock has a realmless structure). Reload the
-            // callee from the slot it was just stored to (calleeFrameSlot(callee)) so the
-            // operation always sees the real JSFunction. Deterministic under threshold=10.
+            // calleeGPR is dead once the callee is stored into the staged frame, so on a relink
+            // it may hold something else. Reload the callee from its slot.
             load64(calleeFrameSlot(CallFrameSlot::callee), calleeGPR);
-            // The direct-call fast path stages the callee frame at [sp+0..]. On ELFv2 a called C
-            // function saves the caller's LR at 16(sp) and TOC at 24(sp) — which here are the
-            // staged frame's argumentCountIncludingThis and thisArgument slots. mainPath re-enters
-            // *after* those stores, so the clobber would never be repaired. Reserve the linkage
-            // area below the staged frame so the C prologue's saves land in scratch, then restore.
+            // The staged callee frame is at sp, and an ELFv2 C callee saves LR/TOC at
+            // 16(sp)/24(sp), its argumentCountIncludingThis and thisArgument slots. mainPath
+            // re-enters after those stores, so reserve the linkage area below the frame.
             if (maxFrameExtentForSlowPathCall)
                 addPtr(TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), stackPointerRegister);
             callOperation(operationLinkDirectCall, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR);

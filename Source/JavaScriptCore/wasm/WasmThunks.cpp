@@ -144,8 +144,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> materializeBaselineDataGenerator(const Abs
     JIT_COMMENT(jit, "materializeBaselineDataGenerator");
     jit.emitFunctionPrologue();
 
-    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
-    // below the preserved registers; 0 on ARM64 and x86_64.
+    // Keep the ELFv2 C call's linkage area below the preserved registers.
     const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     RegisterSet builder;
     for (auto regs : wasmCallingConvention().jsrArgs)
@@ -207,8 +206,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> callPolymorphicCalleeGenerator(const Abstr
 
     needsPolyMaterialization.link(jit);
     jit.emitFunctionPrologue();
-    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
-    // below the preserved registers; 0 on ARM64 and x86_64.
+    // Keep the ELFv2 C call's linkage area below the preserved registers.
     const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     RegisterSet builder;
     for (auto regs : wasmCallingConvention().jsrArgs)
@@ -361,8 +359,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> triggerOMGEntryTierUpThunkGeneratorImpl(co
 
     jit.emitFunctionPrologue();
 
-    // Keep the C call's linkage area (ELFv2: CR/LR/TOC saves at sp+8..sp+31)
-    // below the preserved registers; 0 on ARM64 and x86_64.
+    // Keep the ELFv2 C call's linkage area below the preserved registers.
     const unsigned extraPaddingBytes = maxFrameExtentForSlowPathCall;
     auto registersToSpill = RegisterSet::registersToSaveForCCall(isSIMDContext ? RegisterSet::allRegisters() : RegisterSet::allScalarRegisters()).normalizeWidths();
     unsigned numberOfStackBytesUsedForRegisterPreservation = ScratchRegisterAllocator::preserveRegistersToStackForCall(jit, registersToSpill, extraPaddingBytes);

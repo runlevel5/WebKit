@@ -122,9 +122,7 @@ public:
 
 protected:
     // Always allocate from the low end of a free chunk, instead of whichever
-    // end touches fewer pages. For pools where address locality matters more
-    // than committed pages (PPC64 JIT code, whose direct branches reach only
-    // +/-32 MB).
+    // end touches fewer pages, for pools where address locality matters more.
     void setAllocatesFromBottom(bool value) { m_allocatesFromBottom = value; }
 
     // Allocate new virtual space, but don't commit. This may return more

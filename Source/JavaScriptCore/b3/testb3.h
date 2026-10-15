@@ -264,13 +264,9 @@ template <typename T>
 using TweakedArgument = typename ArgumentTweaker<T>::Result;
 
 #if CPU(PPC64LE)
-// On PPC64LE, r29/r30 are ELFv2 callee-saves that the JIT uses as scratch
-// (GPRInfo::nonPreservedNonArgumentGPR0/1): Air never allocates them, but a CCall
-// loads its callee into r29 and patchpoints may clobber either one without saving
-// it. Production code only enters JIT code through the VM entry, which saves them
-// for its C caller; this harness calls the code directly, so do the same here.
-// The asm after the call makes this frame save and restore both registers and
-// keeps the call from becoming a tail call.
+// On PPC64LE the JIT uses the ELFv2 callee-saves r29/r30 as scratch, which the VM
+// entry saves for its C caller. This harness calls JIT code directly, so the asm
+// after the call makes this frame save them (and prevents a tail call).
 template<typename T, typename Function, typename... Arguments>
 NEVER_INLINE T callPreservingJITScratchRegisters(Function function, Arguments... arguments)
 {

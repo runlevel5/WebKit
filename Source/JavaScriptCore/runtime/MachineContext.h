@@ -35,11 +35,8 @@
 #include <wtf/StdLibExtras.h>
 
 #if CPU(PPC64LE) && (OS(LINUX) || OS(FUCHSIA) || OS(HURD))
-// The Linux ppc64 mcontext_t exposes the general purpose registers as a flat
-// gregset_t (48 unsigned longs), indexed by the PT_* constants the kernel uses
-// for its own struct pt_regs. Take the indices from the kernel header rather
-// than writing the numbers out: a bare 32 for the faulting PC is unreviewable
-// and would silently read a neighbouring register if the layout ever moved.
+// The Linux ppc64 mcontext_t's gp_regs is a flat gregset_t indexed by the
+// kernel's struct pt_regs PT_* constants.
 #include <asm/ptrace.h>
 #endif
 
@@ -49,16 +46,13 @@ namespace JSC {
 namespace MachineContext {
 
 #if CPU(PPC64LE) && HAVE(MACHINE_CONTEXT) && (OS(LINUX) || OS(FUCHSIA) || OS(HURD))
-// Layout checks for the accessors below. Verified against glibc on a POWER9
-// Fedora box: gp_regs is 48 slots of 8 bytes, PT_NIP == 32 and PT_Rn == n, and
-// a deliberate SIGSEGV reports gp_regs[PT_NIP] equal to the address of the
-// faulting instruction itself (not the one after it).
+// Layout checks for the accessors below. gp_regs[PT_NIP] is the address of
+// the faulting instruction itself, not the one after it.
 using PPC64LEGPRegs = decltype(mcontext_t::gp_regs);
 static_assert(std::is_array_v<PPC64LEGPRegs>, "mcontext_t::gp_regs is expected to be a flat gregset_t array.");
 static_assert(sizeof(std::remove_extent_t<PPC64LEGPRegs>) == sizeof(void*), "gp_regs slots must be pointer sized; the accessors below reinterpret_cast them to void*&.");
 static_assert(std::extent_v<PPC64LEGPRegs> > PT_NIP, "gp_regs must be long enough to hold the NIP slot.");
-// gp_regs[n] is rn for the general purpose registers, which is what lets the
-// accessors below be read against GPRInfo's PPC64LE register assignments.
+// gp_regs[n] is rn.
 static_assert(PT_R1 == 1 && PT_R4 == 4 && PT_R7 == 7 && PT_R14 == 14 && PT_R31 == 31, "gp_regs is expected to be indexed by register number.");
 #endif
 

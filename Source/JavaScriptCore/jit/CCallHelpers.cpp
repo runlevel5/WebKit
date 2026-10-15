@@ -64,12 +64,8 @@ void CCallHelpers::ensureShadowChickenPacket(VM& vm, GPRReg shadowPacket, GPRReg
     loadPtr(Address(scratch1NonArgGPR), shadowPacket);
     ok.link(this);
 #if CPU(PPC64LE)
-    // ELFv2 leaves no volatile GPR outside the argument registers r3-r10 and the
-    // two assembler scratches r11/r12, so nonArgGPR0 is dataTempRegister. The
-    // branchPtr above compares against a full 64-bit pointer, and materialising
-    // that immediate goes through dataTempRegister -- so on the fast path
-    // scratch1NonArgGPR no longer holds addressOfLogCursor by the time we store
-    // the bumped cursor back. Re-establish it here.
+    // nonArgGPR0 is dataTempRegister on PPC64, which the branchPtr above clobbers
+    // when it materializes the 64-bit pointer. Reload it.
     move(TrustedImmPtr(shadowChicken->addressOfLogCursor()), scratch1NonArgGPR);
 #endif
     addPtr(TrustedImm32(sizeof(ShadowChicken::Packet)), shadowPacket, scratch2);
@@ -103,11 +99,8 @@ void CCallHelpers::emitCTIThunkPrologue(bool returnAddressAlreadyTagged)
 #if CPU(X86_64)
     push(X86Registers::ebp); // return address pushed by the call instruction
 #elif CPU(PPC64LE)
-    // linkRegister is only an r0 placeholder on PPC; the real return address
-    // lives in the LR special register. Read it into a scratch before pushing
-    // so the nested operation call (which clobbers LR via bctrl) can't lose it.
-    // emitCTIThunkEpilogue pops it back and restores LR, so the tail jump to
-    // CheckException returns to the caller correctly.
+    // linkRegister is only a placeholder on PPC64; the return address is in LR,
+    // which the nested operation call clobbers.
     moveFromLR(dataTempRegister);
     pushPair(framePointerRegister, dataTempRegister);
 #elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64)
@@ -129,8 +122,7 @@ void CCallHelpers::emitCTIThunkEpilogue()
 #if CPU(X86_64)
     pop(X86Registers::ebp); // Return address left on stack
 #elif CPU(PPC64LE)
-    // Restore fp and the real return address (see emitCTIThunkPrologue), then
-    // write it back to LR so the subsequent tail jump / ret returns correctly.
+    // See emitCTIThunkPrologue.
     popPair(framePointerRegister, dataTempRegister);
     moveToLR(dataTempRegister);
 #elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(RISCV64)

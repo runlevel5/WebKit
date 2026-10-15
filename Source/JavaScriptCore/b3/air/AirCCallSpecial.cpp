@@ -134,16 +134,11 @@ void CCallSpecial::reportUsedRegisters(Inst&, const RegisterSet&)
 CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext&)
 {
 #if CPU(PPC64LE)
-    // ELFv2 requires the caller to extend 32-bit integer arguments to 64
-    // bits; callees may read the full register. JSC's JIT convention keeps
-    // int32 values zero-extended, so a negative argument (e.g. a
-    // VirtualRegister offset constant, as in operationLoadVarargs'
-    // firstElementDest) would otherwise arrive as a huge positive value.
-    // Sign-extend every Int32 GP argument in place before the call (JSC
-    // operation int32 parameters are mostly signed). The C type is not known
-    // here; creators that know it (OMG's callWasmOperation, FTL's vmCall) pass
-    // an argument for a uint32_t parameter as a zero-extended Int64 instead,
-    // see B3::cCallArgumentIsUnsigned32.
+    // ELFv2 has the caller extend 32-bit integer arguments to 64 bits, but JIT
+    // code keeps int32 values zero-extended. The C type is not known here, so
+    // sign-extend every Int32 GP argument (operation int32 parameters are mostly
+    // signed); creators pass a uint32_t argument as a zero-extended Int64 instead
+    // (see B3::cCallArgumentIsUnsigned32).
     if (B3::CCallValue* cCall = inst.origin->as<B3::CCallValue>()) {
         unsigned argIndex = argArgOffset;
         for (unsigned i = 1; i < cCall->numChildren(); ++i) {

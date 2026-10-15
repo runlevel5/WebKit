@@ -915,8 +915,8 @@ elsif PPC64LE
     # gap at cfr-88.  Counting in 8-byte slots: 12.  r24 (csr10) MUST be here:
     # it is C-callee-saved and used by JS-entry dispatch / IPInt (sc3, PL), but
     # is not one of GPRInfo's regCS0-9 (r14-r23) so preserveCalleeSavesUsedByLLInt
-    # never saves it; omitting it corrupts the C caller's r24 across vmEntry
-    # (crashed executeEval on eval("...") under --useJIT=1).
+    # never saves it; omitting it would corrupt the C caller's r24 across
+    # vmEntry.
     const CalleeSaveRegisterCount = 12
 elsif ARMv7
     const CalleeSaveRegisterCount = 5 + 2 * 2 // 5 32-bit GPRs + 2 64-bit FPRs
@@ -935,7 +935,7 @@ macro pushCalleeSaves()
     # callee save in the JIT ABI.
     if C_LOOP or ARM64 or ARM64E or X86_64 or RISCV64
     elsif PPC64LE
-        # ELFv2 sec 3.2: r14-r31 are all callee-saved.  csr0-csr9 (r14-r23)
+        # ELFv2: r14-r31 are all callee-saved.  csr0-csr9 (r14-r23)
         # are handled by preserveCalleeSavesUsedByLLInt / JIT prologues; r31 is
         # cfr.  r24 (csr10), r25/r26 (ws2/ws3) and r27-r30 (offlineasm Tmp pool)
         # are callee-saved by the C ABI yet treated as scratch by the JIT and

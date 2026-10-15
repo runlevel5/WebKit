@@ -110,11 +110,9 @@ PPC64LE_EXTRA_FPRS = [
 # backend lowering runs, so the lowering cannot see tag NAMES.  Capture the
 # name -> value mapping as ConstExpr nodes are resolved (transform.rb
 # Node#resolve -> ConstExpr#resolveOffsets) and classify call sites
-# symbolically.  Never replicate WTF's makePtrTagHash here: a first attempt
-# did exactly that, produced values matching no real tag, silently
-# classified every call as JS, and the missing r2 (TOC) restore after host
-# C calls crashed the first opcode dispatch after every host-call return
-# (dispatch loads the opcode table TOC-relative: `ld rX, off(r2)`).
+# symbolically.  Never recompute WTF's makePtrTagHash here: a value that
+# matches no real tag would classify a C call as JS and skip the r2 (TOC)
+# restore it needs.
 #
 # JS-entry tags: the callee is LLInt/JIT code following the JSC calling
 # convention -- the caller has already arranged sp for the callee's frame,
@@ -127,8 +125,7 @@ PPC64LE_EXTRA_FPRS = [
 # under the full ELFv2 ABI: the callee may run its GEP off r12 and
 # overwrite r2 (host functions live in the jsc BINARY -- a different
 # module with a different TOC), and writes its saved lr at 16(caller_sp).
-# Emit a 32-byte linkage frame, set r12, and restore r2 after return
-# (ELFv2 rev 1.5 secs 2.2.2-2.2.3, 2.4.2).
+# Emit a 32-byte linkage frame, set r12, and restore r2 after return.
 # -------------------------------------------------------------------------
 $ppc64leConstExprValues = {}
 module PPC64LEConstExprCapture
@@ -294,7 +291,7 @@ end
 # while arm64 maps v0 to v16 (disjoint from ft0 = d0), so any code relying
 # on either would already be broken on one of them.
 #
-# ELFv2 (§2.2.1.1): VMX v0-v19 are volatile, v20-v31 non-volatile, and
+# ELFv2: VMX v0-v19 are volatile, v20-v31 non-volatile, and
 # v2-v13 carry vector arguments/results.  Like arm64 (v16-v23, outside its
 # argument registers v0-v7), the mapping stays inside the volatile,
 # non-argument set: VMX v0, v1 (scratch) and v14-v19.
@@ -456,8 +453,8 @@ def ppc64leLowerMalformedAddresses(list)
         end
 
         # Compare-and-branch with an Address as second operand (3-operand form):
-        # e.g. bpbeq reg, addr, label.  Per Power ISA v2.07B §3.3.10, cmp/cmpl/cmpd/cmpld
-        # are X-form and require two GPRs.  Load the memory operand into a Tmp first.
+        # e.g. bpbeq reg, addr, label.  cmp/cmpl/cmpd/cmpld take two GPRs,
+        # so load the memory operand into a Tmp first.
         # The /\Ab[ipqb]/ regex excludes badd*/bsub* (read-modify-write), bt* (test-and-branch),
         # and bd*/bf* (FP), so this only fires on integer compare-and-branch.
         if node.opcode =~ /\Ab[ipqb]/ && ops.length >= 3 && ops[1].is_a?(Address)
@@ -477,8 +474,7 @@ def ppc64leLowerMalformedAddresses(list)
 
         # truncated2is / cd2i need an FPR scratch: fctiwz must not clobber
         # the source FPR (callers keep using the double), and the int32
-        # result must move via mfvsrwz, not a stack word whose offset the
-        # old lowering got wrong on LE.  Expand to a pseudo carrying a
+        # result moves out with mfvsrwz.  Expand to a pseudo carrying a
         # fresh FPR Tmp.
         if node.opcode == "truncated2is" || node.opcode == "cd2i"
             co   = node.codeOrigin
@@ -499,12 +495,11 @@ def ppc64leLowerMalformedAddresses(list)
         # baddis imm, addr, label — read-modify-write counter then branch if (signed)
         # negative.  PPC has no fused arith-and-branch on memory; decompose into:
         #   loadi  addr, tmp
-        #   addi   imm,  tmp        ; plain add, no flags (per Power ISA v2.07B §3.3.9)
+        #   addi   imm,  tmp        ; plain add, no flags
         #   storei tmp,  addr
         #   bilt   tmp, 0, label    ; cmpwi+blt (signed 32-bit < 0)
-        # This is semantically equivalent to "add to memory, branch if result < 0".
-        # Only baddis (32-bit signed) is exercised by current LLInt sources; pointer/
-        # quad and bsub variants will be added on demand.
+        # Only baddis (32-bit signed) is used by LLInt; the pointer/quad and
+        # bsub variants are not implemented.
         if node.opcode == "baddis" && ops[1].is_a?(Address)
             co  = node.codeOrigin
             tmp = Tmp.new(co, :gpr)
@@ -622,9 +617,8 @@ end
 # offlineasm allows `bineq 0, t0, label` (IPInt's `if` handler is written
 # exactly so), but PPC's cmp*i forms only take the immediate second, and
 # ppc64leEmitCompareAndBranch/ppc64leEmitConditionalSet print ops[0] as a
-# register: the 0 above came out as `cmpw 0, 3`, a compare against whatever
-# r0 held -- a silent miscompile (it made every wasm `if` take its then-arm
-# on whatever r0 said).  Materialise such an operand into a Tmp first.
+# register: the 0 above would come out as `cmpw 0, 3`, a silent compare
+# against r0.  Materialise such an operand into a Tmp first.
 # Only real comparisons qualify: badd*/bsub*/bmul* (arith-and-branch, where
 # an immediate first operand is the addend), bt* (bit tests), bo (overflow)
 # and the FP bf*/bd* forms are left alone.
@@ -673,9 +667,9 @@ def ppc64leLowerLargeImmediates(list)
                     newList << node
                 end
             when /^and[ipq]$/, /^or[ipq]$/, /^xor[ipq]$/
-                # PPC andi./ori/xori take 16-bit UNSIGNED immediates (Power ISA v2.07B
-                # §3.3.13).  If the immediate doesn't fit, materialize it via
-                # ppc64le_li64 into a Tmp and rewrite to use the register-form op.
+                # PPC andi./ori/xori take 16-bit UNSIGNED immediates.  If the immediate
+                # doesn't fit, materialize it via ppc64le_li64 into a Tmp and rewrite
+                # to use the register-form op.
                 ops = node.operands
                 imm_idx = ops.index { |o| o.is_a?(Immediate) }
                 if imm_idx && !ops[imm_idx].ppc64le16BitUnsignedImmediate?
@@ -689,7 +683,7 @@ def ppc64leLowerLargeImmediates(list)
                     newList << node
                 end
             when /^add[ipq]$/
-                # PPC addi RT,RA,SI takes 16-bit SIGNED immediate (Power ISA v2.07B §3.3.9).
+                # PPC addi RT,RA,SI takes a 16-bit SIGNED immediate.
                 # Materialize larger constants via Tmp and use register-form add.
                 ops = node.operands
                 imm_idx = ops.index { |o| o.is_a?(Immediate) }
@@ -735,9 +729,9 @@ def ppc64leLowerLargeImmediates(list)
                 newList << node
             when /^b[ipqb][a-z]+\z/
                 # Compare-and-branch (3-operand form) lowering uses cmpdi/cmpwi which take
-                # 16-bit signed immediates, or cmpldi/cmplwi which take 16-bit unsigned
-                # (Power ISA v2.07B §3.3.10).  If ops[1] is an out-of-range Immediate,
-                # materialize and let the lowering pick the register-form compare.
+                # 16-bit signed immediates, or cmpldi/cmplwi which take 16-bit unsigned.
+                # If ops[1] is an out-of-range Immediate, materialize and let the
+                # lowering pick the register-form compare.
                 # Skip 2-operand bt*z forms (only one register operand).
                 ops = node.operands
                 if ops.length == 3 && ops[1].is_a?(Immediate)
@@ -777,8 +771,7 @@ end
 # into CR0, not this instruction's OV, so one earlier overflow anywhere
 # makes every later bso fire; addic. never touches OV at all; and addo/
 # subfo detect 64-bit overflow, which two int32 operands can never produce,
-# so int32 overflow goes silently undetected (observed: s+=i loops wrapping
-# mod 2^32 instead of promoting to double).  We avoid XER entirely:
+# so int32 overflow would go undetected.  We avoid XER entirely:
 #
 #   int32 overflow (baddio/bsubio): do the arithmetic exactly in 64 bits on
 #   sign-extended copies; overflow iff the 64-bit result differs from its
@@ -925,8 +918,7 @@ end
 # A PPC conditional branch (B-form bc) reaches only +/-32 KB, so by default
 # every compare-and-branch is emitted as an inverted bc over an unconditional
 # `b` (+/-32 MB) -- see ppc64leEmitLongBranch.  That costs an instruction per
-# branch, and IPInt handlers must fit fixed 256-byte slots: f32/f64 min/max
-# overflowed theirs by 32 bytes, all of it long-branch overhead.
+# branch, and IPInt handlers must fit fixed 256-byte slots.
 #
 # Here, on the final instruction list, a branch to a LOCAL label is marked
 # near when an upper bound on the bytes between it and the label is well
@@ -973,13 +965,6 @@ def ppc64leMarkNearBranches(list)
     }
 end
 
-# -------------------------------------------------------------------------
-# Helper: emit a conditional branch that may target a label more than ±32 KB
-# away.  PPC BC-form (Power ISA v2.07B §2.4.1) has only a 14-bit BD field
-# (×4 = ±32 KB byte displacement); the unconditional B-form has 24 bits ×4 =
-# ±32 MB.  We invert the condition and skip over a long-form `b` so any
-# target reachable by `b` works.  The cost is +1 fall-through instruction.
-# -------------------------------------------------------------------------
 # Zero-extend a 32-bit result into the full 64-bit register (rldicl SH=0,
 # MB=32 = clrldi).  See the width-contract comment at the arithmetic section:
 # offlineasm "i" ops must match x86/arm64 semantics where 32-bit writes
@@ -988,6 +973,11 @@ def ppc64leZeroExtend32(dst)
     $asm.puts "rldicl #{dst}, #{dst}, 0, 32"
 end
 
+# -------------------------------------------------------------------------
+# Conditional branch to a label that may be more than ±32 KB away.  bc has a
+# 14-bit word displacement (±32 KB), b has 24 bits (±32 MB): invert the
+# condition and skip over a `b`, at the cost of one extra instruction.
+# -------------------------------------------------------------------------
 $ppc64leLongBranchCounter = 0
 PPC64LE_BRANCH_INVERSE = {
     "blt" => "bge", "bge" => "blt",
@@ -1027,10 +1017,7 @@ def ppc64leEmitLI64(dest, value)
         # lis sign-extends its 16-bit field into the upper word, so
         #   signed 32-bit values:   lis hi ; ori lo        (1-2 instructions)
         #   unsigned 32-bit values: lis hi ; ori lo ; clrldi 32  (2-3)
-        # (clrldi = rldicl d,d,0,32 zeroes the upper word).  Hardware-checked
-        # on the POWER9 box: 0xcf000000, INT32_MIN, INT32_MAX, 0xffffffff,
-        # 0x10002 and -0x1edcc all materialise to the same value as the
-        # five-instruction form.
+        # (clrldi = rldicl d,d,0,32 zeroes the upper word).
         v = value & 0xffffffffffffffff
         sv = v >= (1 << 63) ? v - (1 << 64) : v
         if (-0x80000000..0xffffffff).include?(sv)
@@ -1089,18 +1076,6 @@ def ppc64leEmitCompareAndBranch(cond, size, signed, ops)
 end
 
 # -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-# Helper: conditional set (c* opcodes).
-# Emits: compare → mfcr → rlwinm to extract a single CR0 bit into LSB.
-#
-# After mfcr, CRF0 occupies x86-bit positions 31..28:
-#   bit 31 = CR0.LT, bit 30 = CR0.GT, bit 29 = CR0.EQ, bit 28 = CR0.SO
-# rlwinm(dst, dst, SH, 31, 31) rotates x86-bit (31-SH+1) to bit 0 and masks.
-# To get CR0.LT (bit 31) to bit 0: SH=1  (31+1=32 mod 32=0) ✓
-# To get CR0.GT (bit 30) to bit 0: SH=2  (30+2=32 mod 32=0) ✓
-# To get CR0.EQ (bit 29) to bit 0: SH=3  (29+3=32 mod 32=0) ✓
-# -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
 # Helper: FP conditional set (cd*/cf* opcodes).
 # fcmpu cr0, fA, fB sets CR0: LT(bit31), GT(bit30), EQ(bit29), FU(bit28).
 # Same bit layout as integer CR0 — reuse rlwinm rotations.
@@ -1114,15 +1089,15 @@ def ppc64leEmitFPConditionalSet(cond, is_double, ops)
     $asm.puts "fcmpu cr0, #{fA}, #{fB}"
     case cond
     when :lt
-        # LT=1 only when ordered and fA < fB. NaN → LT=0. ✓
+        # LT=1 only when ordered and fA < fB. NaN → LT=0.
         $asm.puts "mfcr #{dst}"
         $asm.puts "rlwinm #{dst}, #{dst}, 1, 31, 31"
     when :gt
-        # GT=1 only when ordered and fA > fB. NaN → GT=0. ✓
+        # GT=1 only when ordered and fA > fB. NaN → GT=0.
         $asm.puts "mfcr #{dst}"
         $asm.puts "rlwinm #{dst}, #{dst}, 2, 31, 31"
     when :eq
-        # EQ=1 only when ordered and fA == fB. NaN → EQ=0. ✓
+        # EQ=1 only when ordered and fA == fB. NaN → EQ=0.
         $asm.puts "mfcr #{dst}"
         $asm.puts "rlwinm #{dst}, #{dst}, 3, 31, 31"
     when :lteq
@@ -1151,7 +1126,7 @@ def ppc64leEmitFPConditionalSet(cond, is_double, ops)
         # Not equal or NaN (unordered variant). EQ=0 OR FU=1 → true.
         $asm.puts "mfcr #{dst}"
         $asm.puts "rlwinm #{dst}, #{dst}, 3, 31, 31"  # EQ bit
-        $asm.puts "xori #{dst}, #{dst}, 1"             # NOT EQ (NaN→EQ=0→NOT EQ=1) ✓
+        $asm.puts "xori #{dst}, #{dst}, 1"             # NOT EQ (NaN→EQ=0→NOT EQ=1)
     else
         raise "ppc64le: unknown FP conditional set condition #{cond}"
     end
@@ -1166,11 +1141,11 @@ def ppc64leEmitFPBranch(cond, ops)
     lbl = ops[2].asmLabel
     $asm.puts "fcmpu cr0, #{fA}, #{fB}"
     case cond
-    when :lt                                    # ordered <: NaN→LT=0 ✓
+    when :lt                                    # ordered <: NaN→LT=0
         ppc64leEmitLongBranch("blt", lbl)
-    when :gt                                    # ordered >: NaN→GT=0 ✓
+    when :gt                                    # ordered >: NaN→GT=0
         ppc64leEmitLongBranch("bgt", lbl)
-    when :eq                                    # ordered =: NaN→EQ=0 ✓
+    when :eq                                    # ordered =: NaN→EQ=0
         ppc64leEmitLongBranch("beq", lbl)
     when :lteq                                  # ordered ≤: NaN→no branch
         ppc64leEmitLongBranch("blt", lbl)
@@ -1181,7 +1156,7 @@ def ppc64leEmitFPBranch(cond, ops)
     when :neq                                   # ordered ≠: LT or GT; NaN→no branch
         ppc64leEmitLongBranch("blt", lbl)
         ppc64leEmitLongBranch("bgt", lbl)
-    when :neq_un                                # not-equal or NaN: bne = NOT EQ ✓
+    when :neq_un                                # not-equal or NaN: bne = NOT EQ
         ppc64leEmitLongBranch("bne", lbl)
     when :ltun                                  # < or NaN
         ppc64leEmitLongBranch("blt", lbl)
@@ -1189,15 +1164,21 @@ def ppc64leEmitFPBranch(cond, ops)
     when :gtun                                  # > or NaN
         ppc64leEmitLongBranch("bgt", lbl)
         ppc64leEmitLongBranch("bso", lbl)
-    when :ltequn                                # ≤ or NaN: ble = NOT GT ✓
+    when :ltequn                                # ≤ or NaN: ble = NOT GT
         ppc64leEmitLongBranch("ble", lbl)
-    when :gtequn                                # ≥ or NaN: bge = NOT LT ✓
+    when :gtequn                                # ≥ or NaN: bge = NOT LT
         ppc64leEmitLongBranch("bge", lbl)
     else
         raise "ppc64le: unknown FP branch condition #{cond}"
     end
 end
 
+# -------------------------------------------------------------------------
+# Helper: conditional set (c* opcodes): compare, then mfcr and rlwinm to move
+# one CR0 bit to the low bit.  After mfcr, CR0's LT, GT, EQ and SO are bits
+# 31, 30, 29 and 28 counting from the least significant, so rotating the low
+# word left by 1, 2 or 3 brings LT, GT or EQ to bit 0.
+# -------------------------------------------------------------------------
 def ppc64leEmitConditionalSet(cond, size, signed, ops)
     raise "ppc64le: compare with an immediate first operand reached the emitter (#{ops[0].value}); ppc64leLowerImmediateFirstCompares should have moved it to a register" if ops[0].is_a?(Immediate)
     ra  = ops[0].ppc64leOperand
@@ -1293,19 +1274,16 @@ class Instruction
              "nop", "breakpoint"
             $asm.puts "nop"
 
-        # Memory barriers. These were previously lumped in with the no-ops
-        # above, which silently compiled every fence in the LLInt to nothing --
-        # including the one in skipIfIsRememberedOrInEden, the GC write-barrier
-        # fast path, where it orders the store to the object against the load of
-        # m_cellState. PPC64 has a weaker memory model than either arch that
-        # this file was cribbed from, so the fences have to be real.
+        # Memory barriers.  PPC64's memory model is weaker than x86's and
+        # ARM64's, so these must be real fences: e.g. the one in
+        # skipIfIsRememberedOrInEden, the GC write-barrier fast path, orders
+        # the store to the object against the load of m_cellState.
         #
         # memfence/fence match ARM64's "dmb sy"/"dmb ish" and x86's locked
         # read-modify-write: a full barrier, which on PPC is sync (hwsync, L=0)
         # -- lwsync is not enough because it does not order store-then-load.
         # loadStoreFence only has to order loads and stores against each other,
         # which is exactly lwsync.
-        # Verified with as -mpower8: sync 0x7c0004ac, lwsync 0x7c2004ac.
         when "memfence", "fence"
             $asm.puts "sync"
 
@@ -1313,8 +1291,7 @@ class Instruction
             $asm.puts "lwsync"
 
         when "checkStackPointerAlignment"
-            # Alignment check: NOP in optimised builds, crash on misalign.
-            # For now always NOP; add assertion probe later if needed.
+            # Not checked on PPC64LE.
 
         # ------------------------------------------------------------------
         # Move
@@ -1353,10 +1330,9 @@ class Instruction
         # value whose upper word still holds JSValue tag bits and then uses
         # the full register as a jump-table index; without the implicit
         # truncation the numberTag survives and the table load dereferences
-        # (tag << 2) + base (the generator-suite crash, 2026-07-14).  PPC
-        # 64-bit arith (add/subf/neg/nor/or/xor/and) leaves the upper word
-        # dirty and sraw sign-extends (hardware-verified probe matrix on the
-        # POWER9 box), so each i-op clears its result via ppc64leZeroExtend32.
+        # (tag << 2) + base.  PPC 64-bit arith (add/subf/neg/nor/or/xor/and)
+        # leaves the upper word dirty and sraw sign-extends, so each i-op
+        # clears its result via ppc64leZeroExtend32.
         # slw/srw/slwi/srwi/andi./lwz/lhz/lbz/cntlzw zero-extend natively.
         # Inputs may be dirty: 32-bit PPC ops read only the low word, and the
         # low word of a 64-bit add/sub/mul/logic result equals the 32-bit
@@ -1368,8 +1344,8 @@ class Instruction
 
         when "addis"
             # offlineasm addis = "add integers and set a flag" (x86/arm64
-            # width-table op) — NOT PPC's add-immediate-shifted.  No LLInt
-            # source uses it today; implement against a real consumer.
+            # width-table op) — NOT PPC's add-immediate-shifted.  Not used by
+            # LLInt, so not implemented.
             raise "ppc64le: offlineasm addis (add-and-set-flags) not implemented at #{codeOriginString}"
 
         # ------------------------------------------------------------------
@@ -1409,11 +1385,9 @@ class Instruction
         # muli          →  mullw or mulli (immediate)
         # ------------------------------------------------------------------
         # Multiply. Two forms: 2-operand `mul src, dst` (dst *= src) and
-        # 3-operand `mul src1, src2, dst` (dst = src1 * src2). The dest is
-        # always the LAST operand; earlier hardcoding of operands[1] as dest
-        # silently miscompiled the 3-operand form (e.g. the LLInt
-        # argumentProfileLoop's `mulp sizeof, t0, t2` wrote to t0, corrupting
-        # the loop counter and leaving t2 unset — crashed every JIT-on call).
+        # 3-operand `mul src1, src2, dst` (dst = src1 * src2).  The dest is
+        # always the LAST operand (argumentProfileLoop's `mulp sizeof, t0, t2`
+        # writes t2).
         when "mulp", "mulq"
             ops = operands
             dst = ops.last.ppc64leOperand
@@ -1482,19 +1456,10 @@ class Instruction
         # i32/i64 div_s/div_u/rem_s/rem_u handlers in
         # llint/InPlaceInterpreter64.asm), which is also the unambiguous one.
         #
-        # divw/divwu define only bits 32:63 of RT — bits 0:31 are
-        # ARCHITECTURALLY UNDEFINED (Power ISA v2.07B Book I §3.3.9), even
-        # though the POWER9 part observed here happens to leave them zero.
-        # This port keeps int32 values zero-extended in the 64-bit register,
-        # so the 32-bit forms re-establish that, exactly like div32/uDiv32 in
-        # assembler/MacroAssemblerPPC64.h (which call zeroExtend32ToWordInternal
-        # for the same reason).  divd/divdu are full-width; no fixup needed.
-        #
-        # Encodings verified with `as -mpower8 -a64`:
-        #   divw  3,4,5 → 7c642bd6    divwu 3,4,5 → 7c642b96
-        #   divd  3,4,5 → 7c642bd2    divdu 3,4,5 → 7c642b92
-        # Behaviour verified on the POWER9 box against the C operators for
-        # 7/2, -7/2, 7/-2, -7/-2, 0/5, INT32_MIN/1, INT32_MIN/3, INT32_MAX/-1.
+        # divw/divwu leave bits 0:31 of RT undefined.  int32 values are kept
+        # zero-extended in the 64-bit register, so the 32-bit forms
+        # re-establish that, as div32/uDiv32 in MacroAssemblerPPC64.h do.
+        # divd/divdu are full-width; no fixup needed.
         #
         # PPC has no divide-immediate; an Immediate operand has no encoding.
         # Division by zero and the INT_MIN/-1 overflow are guarded by the
@@ -1747,13 +1712,6 @@ class Instruction
         # (width → 0) and for amount >= width.  x86 rol/ror and arm64 ror
         # mask the count the same way, and Wasm i32.rotl requires it.
         # r0 is a pure data scratch here (never a load/store base).
-        #
-        # Encodings verified with `as -mpower8 -a64`:
-        #   rlwnm  3,4,5,0,31 → 5c83283e   rlwinm 3,4,7,0,31 → 5483383e
-        #   rldcl  3,4,5,0    → 78832810   rldicl 3,4,7,0    → 78833800
-        #   subfic 0,5,64     → 20050040   subfic 0,5,32     → 20050020
-        # Behaviour verified on the POWER9 box against C rotates for rotate
-        # counts 0..79 over a spread of 32- and 64-bit patterns.
         # ------------------------------------------------------------------
         when "lrotatei", "rrotatei", "lrotateq", "rrotateq"
             quad = (opcode == "lrotateq" or opcode == "rrotateq")
@@ -1799,8 +1757,6 @@ class Instruction
         # i32.clz/i32.ctz are total functions.
         # cntlzw/cntlzd write the full 64-bit RA (result is 0..width, so the
         # upper word is naturally zero) — no ppc64leZeroExtend32 needed.
-        # Encodings verified with `as -mpower8 -a64`:
-        #   cntlzw 3,4 → 7c830034    cntlzd 3,4 → 7c830074
         # ------------------------------------------------------------------
         when "countLeadingZerosp", "countLeadingZerosq", "lzcntq"
             dst = operands[1].ppc64leOperand
@@ -1812,23 +1768,13 @@ class Instruction
             src = operands[0].ppc64leOperand
             $asm.puts "cntlzw #{dst}, #{src}"
 
-        # cnttzd/cnttzw are POWER9 (ISA 3.0) — outside the v2.07/POWER8
-        # baseline.  Use the classic isolate-lowest-bit identity instead:
+        # cnttzd/cnttzw are POWER9 (ISA 3.0), outside the POWER8 baseline.
+        # Use the isolate-lowest-bit identity instead:
         # cnttz(x) = popcnt((x & -x) - 1); for x == 0 the mask becomes all
-        # ones and popcnt correctly yields the type width.  popcntd/popcntw
-        # are v2.06 (Power ISA v2.07B Book I §3.3.13) — POWER8-safe.
+        # ones and popcnt yields the type width.
         # r0 is a pure data scratch here (never a load/store base).
-        # NOTE: the decrement must be addic, NOT addi — addi's RA field
-        # reads r0 as literal zero (the (RA|0) ISA rule); addic reads the
-        # register.  Caught by the empirical harness: the addi version
-        # returned width for every input.
-        # This is the same operation MacroAssemblerPPC64.h's
-        # countTrailingZeros32/64 synthesise as 32 - clz(~x & (x - 1)); both
-        # forms are 4 instructions, both give ctz(0) == width, and both were
-        # re-checked against __builtin_ctz{,ll} on the POWER9 box (values 0,
-        # 1, 2, 5, 8, 0x10000, 0x80000000, 0xFFFFFFFF, 0x100000000,
-        # 0x8000000000000000, 0xFFFFFFFFFFFFFFFF and mixed patterns).  Keep
-        # the popcnt form so the backend has exactly one ctz sequence.
+        # The decrement must be addic, NOT addi: addi reads RA = r0 as a
+        # literal zero (the (RA|0) rule); addic reads the register.
         when "countTrailingZerosp", "countTrailingZerosq", "tzcntq"
             dst = operands[1].ppc64leOperand
             src = operands[0].ppc64leOperand
@@ -1954,7 +1900,7 @@ class Instruction
             ppc64leZeroExtend32(dst)
 
         when "loadhsq"
-            # lha sign-extends 16-bit to 64-bit in 64-bit mode (POWER ISA §3.3.2)
+            # lha sign-extends 16-bit to 64-bit in 64-bit mode
             addr = operands[0]
             dst  = operands[1].ppc64leOperand
             ppc64leValidateDOffset(addr.offset.value, codeOriginString)
@@ -1993,9 +1939,8 @@ class Instruction
 
         # ------------------------------------------------------------------
         # Load-linked / store-conditional (LL/SC), used by the IPInt/LLInt
-        # weakCASExchange* macros.  Mirrors MacroAssemblerPPC64.h
-        # loadLinkAcq{8,16,32,64} / storeCondRel{8,16,32,64}, which are the
-        # same operations in C++ and are already validated.
+        # weakCASExchange* macros.  Mirrors MacroAssemblerPPC64.h's
+        # loadLinkAcq{8,16,32,64} / storeCondRel{8,16,32,64}.
         #
         # offlineasm operand contract (must match arm64.rb, which is the
         # reference lowering — see arm64.rb "loadlinkacq*"/"storecondrel*"):
@@ -2020,19 +1965,11 @@ class Instruction
         # the leading-sync seq_cst mapping also used by C++11 compilers on
         # Power and by MacroAssemblerPPC64's branchAtomicWeakCAS; `lwsync`
         # after the load-reserve gives acquire, and `lwsync` before the
-        # store-conditional gives release (Power ISA v2.07B B.2.1.1).  The
+        # store-conditional gives release.  The
         # sync sits inside the retry loop (offlineasm lowers per
         # instruction), which costs time on contention but not correctness:
         # neither sync nor lwsync clears a reservation.
-        # POWER8-safe: lbarx/lharx/stbcx./sthcx. are v2.06; the rest are older.
-        #
-        # Encodings verified with `as -mpower8 -a64` on the POWER9 box:
-        #   lbarx  3,0,4 → 0x7c602068   stbcx. 3,0,4 → 0x7c60256d
-        #   lharx  3,0,4 → 0x7c6020e8   sthcx. 3,0,4 → 0x7c6025ad
-        #   lwarx  3,0,4 → 0x7c602028   stwcx. 3,0,4 → 0x7c60212d
-        #   ldarx  3,0,4 → 0x7c6020a8   stdcx. 3,0,4 → 0x7c6021ad
-        #   lwsync       → 0x7c2004ac   mfcr 3       → 0x7c600026
-        #   rlwinm 3,3,3,31,31 → 0x54631ffe   xori 3,3,1 → 0x68630001
+        # All of these are in the POWER8 baseline.
         # ------------------------------------------------------------------
         when "loadlinkacqb", "loadlinkacqh", "loadlinkacqi", "loadlinkacqq"
             addr = ppc64leReservationAddress(operands[0], opcode, codeOriginString)
@@ -2085,7 +2022,7 @@ class Instruction
                     raise "ppc64le: leap offset #{off} out of 16-bit range at #{codeOriginString}"
                 end
             elsif addr.is_a?(LabelReference)
-                # ELFv2 §3.5: load the symbol's address from its GOT entry.
+                # Load the symbol's address from its GOT entry.
                 # Using @toc@ha+@toc@l(rD) with `ld` would compute an offset to
                 # the SYMBOL itself (DS-form load FROM the symbol), which only
                 # works if the symbol is within ±2 GB of TOC AND we want its
@@ -2093,9 +2030,6 @@ class Instruction
                 # @got@ha+@got@l(rD) with `ld` makes the linker create a GOT
                 # entry containing the symbol's address; the load reads that
                 # entry, giving us &symbol regardless of where the symbol lives.
-                # Empirical test: gcc -fPIC -shared on inline asm using this
-                # exact form against a hidden extern resolves to a single
-                # `ld rD, NN(r2)` after linker relaxation.
                 lbl = addr.asmLabel
                 $asm.puts "addis #{dst}, 2, #{lbl}@got@ha"
                 $asm.puts "ld #{dst}, #{lbl}@got@l(#{dst})"
@@ -2223,18 +2157,11 @@ class Instruction
         # lxvd2x/stxvd2x transfer doubleword 0 to/from EA+0 with only
         # per-doubleword byte reversal under LE — so `stxvd2x n, 0, 1` after
         # `addi 1, 1, -16` writes the FPR value at sp+0 and preserves the
-        # other 8 bytes.  Hardware-checked on the POWER9 box: after
-        # `lfd 1, x ; addi 1,1,-16 ; stxvd2x 1,0,1`, the doubleword at 0(sp)
-        # equalled the raw bits of x, and the lxvd2x/stfd round trip returned
-        # the original double bit-for-bit.
+        # other 8 bytes.
         #
-        # stxvd2x/lxvd2x are VSX (Power ISA v2.06), inside the POWER8
-        # baseline, and are unaligned-tolerant (sp stays 16-byte aligned
+        # stxvd2x/lxvd2x tolerate misalignment (sp stays 16-byte aligned
         # here regardless).  RA is written as literal 0 — the (RA|0) rule
         # makes that "no base register", not r0.
-        # Encodings verified with `as -mpower8 -a64`:
-        #   stxvd2x 1,0,1 → 7c200f98    lxvd2x 1,0,1 → 7c200e98
-        #   addi 1,1,-16  → 3821fff0    addi 1,1,16  → 38210010
         # ------------------------------------------------------------------
         #
         # VecRegisterID operands (v0..v7 → VSR 32+, see class VecRegisterID)
@@ -2244,11 +2171,7 @@ class Instruction
         # byte swap is undone on the way back.  The EA+0 doubleword is VSR
         # doubleword 0 for VSR 32+ exactly as for VSR 0-31, so a slot moved
         # through a v register and then read with lfd/ld at +0 sees the
-        # same 8 bytes.  Hardware-checked on the POWER9 box: 16 distinct
-        # bytes round-tripped through VSR 32 and VSR 46 unchanged, and a
-        # double at +0 copied via VSR 32 then lxvd2x'd into FPR 1 read back
-        # equal.  `as -mpower8`: lxvd2x 32,0,4 → 7c002699,
-        # stxvd2x 32,0,4 → 7c002799, lxvd2x 51,3,4 → 7e632699.
+        # same 8 bytes.
         when "pushv"
             operands.each { | op |
                 raise "ppc64le: pushv expects an FPR/vector register, got #{op.class} #{op.respond_to?(:name) ? op.name : op.inspect} at #{codeOriginString}" unless op.is_a?(FPRegisterID) or op.is_a?(VecRegisterID) or op.is_a?(SpecialRegister)
@@ -2330,7 +2253,7 @@ class Instruction
             kind, tagName = ppc64leClassifyCallTag(tagValue, codeOriginString)
             if op.is_a?(RegisterID) || op.is_a?(SpecialRegister)
                 $asm.comment "call #{kind}#{tagName ? " (#{tagName})" : ""}"
-                # ELFv2 sec 2.4.2: caller sets r12 = callee entry so the
+                # The caller sets r12 = callee entry so the
                 # callee's GEP can compute its TOC (harmless for JS callees).
                 if kind == :c
                     # C callee follows full ABI: it'll write lr at caller_sp+16
@@ -2365,11 +2288,10 @@ class Instruction
                 $asm.puts "bl #{op.asmLabel}"
             elsif op.is_a?(LabelReference)
                 # Direct call to a C function (slow path / runtime helper).
-                # ELFv2 sec 2.2.4: the callee writes its saved lr at 16(r1) of
+                # The ELFv2 callee writes its saved lr at 16(r1) of
                 # the CALLER's sp.  We must reserve at least 32 bytes of
                 # "linkage area" so that store does not clobber caller data.
-                # GCC's canonical caller emits `stdu 1,-32(1); bl ...; addi 1,1,32`,
-                # verified empirically with `g++ -O2 -fPIC -S` on extern "C" calls.
+                # This matches GCC's `stdu 1,-32(1); bl ...; addi 1,1,32`.
                 $asm.puts "stdu 1, -32(1)"
                 $asm.puts "bl #{op.asmLabel}"
                 $asm.puts "addi 1, 1, 32"
@@ -2764,7 +2686,7 @@ class Instruction
             $asm.puts "fmr #{dst}, #{src}"
 
         # Bitwise and/or on FP registers (f32/f64 min/max merge the sign of
-        # +0/-0 this way).  xxland/xxlor (VSX, v2.06) operate on the full
+        # +0/-0 this way).  xxland/xxlor operate on the full
         # VSR, and FPR n is doubleword 0 of VSR n, so the VSR number is the
         # FPR number.  This is correct for floats too: the double-format
         # image of a float keeps its sign in bit 0 and equal floats have
@@ -2783,21 +2705,17 @@ class Instruction
         # f64.promote_f32 (whose result must be an arithmetic NaN) all quiet
         # it.  frsp does exactly that: on a value that is already a float it
         # is exact (the input is representable), and it quiets SNaNs keeping
-        # the payload.  Hardware-checked: 0x7fa00000 -> 0x7ffc000000000000,
-        # 0x7f800001 -> 0x7ff8000020000000, 0x7fc00000 -> 0x7ff8000000000000,
-        # and 1.0, the smallest denormal, -0.0, FLT_MAX and -inf unchanged.
-        # (Caught by the wasm spec suite's conversions.wast.)
+        # the payload.
         when "cd2f", "cf2d"
             $asm.puts "frsp #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
 
         # Round to integral value, result stays floating point.  frip/frim/
-        # friz (v2.02) are ceil/floor/trunc.  "round" is offlineasm's
+        # friz are ceil/floor/trunc.  "round" is offlineasm's
         # round-half-to-even (arm64 frintn, x86 roundss/sd $0); PPC's frin
         # rounds half AWAY from zero, so use xsrdpic instead, which rounds
         # per FPSCR[RN] -- round-to-nearest-even, which JSC never changes.
         # All four are exact for float inputs (an integer nearest a float is
-        # itself a float).  Hardware-checked: xsrdpic gives 0.5->0, 1.5->2,
-        # 2.5->2, -0.5->-0, -2.5->-2.
+        # itself a float).
         when "ceilf", "ceild"
             $asm.puts "frip #{operands[1].ppc64leOperand}, #{operands[0].ppc64leOperand}"
         when "floorf", "floord"
@@ -2809,16 +2727,12 @@ class Instruction
 
         # Raw bit moves between a GPR and a float (arm64 fmov Sd, Wn / Wd, Sn).
         # The FPR holds the double-format image, so these are conversions,
-        # not copies: xscvspdpn/xscvdpspn (v2.07, POWER8) convert between the
+        # not copies: xscvspdpn/xscvdpspn convert between the
         # single-format word and the double image WITHOUT signalling, so NaN
         # payloads (including signalling NaNs) and denormals survive exactly.
         # xscvspdpn reads word 0 of the VSR, hence the sldi; mfvsrwz reads
         # word 1 and zero-extends, matching the 32-bit-write convention.
         # This is GCC -mcpu=power8's own memcpy(float<->uint32) sequence.
-        # Hardware-checked on the POWER9 box for 1.0, -0.0, the smallest
-        # denormal, a signalling NaN (0x7f800001), a payload qNaN, -inf,
-        # 0x4f000000/0xcf000000 and 0x007fffff: the FPR image equals lfs's
-        # and ff2i(fi2f(x)) == x with garbage in the GPR's upper word.
         # Scratch: r0 for fi2f, f0 (VSR 0) for ff2i.
         when "fi2f"
             src = operands[0].ppc64leOperand
@@ -2838,10 +2752,8 @@ class Instruction
         # the out-of-range behaviour of fcti* never matters.  The convert
         # happens in f0 so the source survives; the integer moves out with
         # mfvsrwz (zero-extending, 32-bit results) or mfvsrd (64-bit).
-        # fctiwuz/fctiduz are v2.06.  Float sources need nothing extra: the
-        # FPR already holds the double image.  Hardware-checked: fctiwuz
-        # 4e9 = 4000000000, fctiwz -3.9 = -3 (zero-extended word),
-        # fctiduz 1.8e19 = 18000000000000000000.
+        # Float sources need nothing extra: the FPR already holds the double
+        # image.
         when "truncatef2i", "truncated2i"
             $asm.puts "fctiwuz 0, #{operands[0].ppc64leOperand}"
             $asm.puts "mfvsrwz #{operands[1].ppc64leOperand}, 0"
@@ -2864,11 +2776,8 @@ class Instruction
         # converting all 64 bits turns boxed 1 into -(2^49-1).
         #
         # mtvsrwa (sign-extend word), mtvsrwz (zero-extend word) and mtvsrd
-        # move GPR→VSR directly (Power ISA v2.07B Book I §7.6, POWER8);
-        # FPR f_n aliases VSR n, so fcfid* can consume the result in place.
-        # fcfid/fcfids/fcfidu/fcfidus: v2.07B Book I §4.6.7.
-        # Empirically verified on POWER9 (scratchpad ovf/cvt tests,
-        # 2026-07-14): mtvsrwa+fcfid on boxed 0xFFFE000000000001 yields 1.0.
+        # move GPR→VSR directly; FPR f_n aliases VSR n, so fcfid* can consume
+        # the result in place.
         when "ci2ds"
             src = operands[0].ppc64leOperand
             dst = operands[1].ppc64leOperand
@@ -2917,13 +2826,10 @@ class Instruction
             raise "ppc64le: unlowered #{opcode} at #{codeOriginString}"
 
         when "ppc64le_truncd2i"
-            # fctiwz (Power ISA v2.07B §4.6.7): truncate toward zero to
-            # int32; result lands in bits 32:63 of the target FPR with bits
-            # 0:31 undefined.  mfvsrwz (§7.6, POWER8 VSX) moves exactly that
-            # word zero-extended — matching x86 cvttsd2si Ed / arm64 fcvtzs
-            # Wn register semantics.  The previous lowering clobbered the
-            # source (fctiwz src, src) and read the UNDEFINED word on LE
-            # (lwz dst, 4(sp) reads FPR bits 0:31).
+            # fctiwz: truncate toward zero to int32; the result lands in bits
+            # 32:63 of the target FPR with bits 0:31 undefined.  mfvsrwz moves
+            # exactly that word zero-extended — matching x86 cvttsd2si Ed /
+            # arm64 fcvtzs Wn register semantics.
             src  = operands[0].ppc64leOperand
             dst  = operands[1].ppc64leOperand
             ftmp = operands[2].ppc64leOperand
@@ -2953,7 +2859,7 @@ class Instruction
         # Unordered variants ("un"/"equn"): NaN MUST trigger the branch.
         # ------------------------------------------------------------------
 
-        # ordered equal: EQ=1 only when not NaN ✓
+        # ordered equal: EQ=1 only when not NaN
         when "bdeq", "bfeq"
             ppc64leEmitFPBranch(:eq, operands)
 
@@ -2961,7 +2867,7 @@ class Instruction
         when "bdneq", "bfneq"
             ppc64leEmitFPBranch(:neq, operands)
 
-        # not-equal or NaN: bne = NOT EQ covers both cases ✓
+        # not-equal or NaN: bne = NOT EQ covers both cases
         when "bdnequn", "bfnequn"
             ppc64leEmitFPBranch(:neq_un, operands)
 
@@ -2977,7 +2883,7 @@ class Instruction
         when "bdgteq", "bfgteq"
             ppc64leEmitFPBranch(:gteq, operands)
 
-        # unordered (NaN → branch): ble = NOT GT ✓ for ltequn; bge = NOT LT ✓ for gtequn
+        # unordered (NaN → branch): ble = NOT GT for ltequn; bge = NOT LT for gtequn
         when "bdltequn", "bfltequn"
             ppc64leEmitFPBranch(:ltequn, operands)
         when "bdgtequn", "bfgtequn"

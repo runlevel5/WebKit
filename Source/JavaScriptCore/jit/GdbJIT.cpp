@@ -894,7 +894,7 @@ private:
         // RISC-V 64
         header->machine = 0xF3;
 #elif CPU(PPC64LE)
-        // EM_PPC64 = 21 (per /usr/include/elf.h on Linux PPC64LE).
+        // EM_PPC64
         header->machine = 21;
 #else
 #error Unsupported target architecture.

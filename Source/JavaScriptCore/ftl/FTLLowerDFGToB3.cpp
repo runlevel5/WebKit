@@ -14044,18 +14044,10 @@ IGNORE_CLANG_WARNINGS_END
                     }
                     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
 #if CPU(PPC64LE)
-                    // ELFv2: the C callee writes its linkage area into the
-                    // CALLER's frame — CR save at [sp+8], LR at [sp+16], TOC at
-                    // [sp+24]. After emitFunctionPrologue sp == cfr here, so
-                    // those writes land on this JS frame's header, destroying
-                    // the returnPC, codeBlock and callee slots; a host function
-                    // that then throws made getStackTrace read the saved LR as
-                    // the callee cell. Same fix as the DFG twin in
-                    // DFGSpeculativeJIT64; sp deliberately stays lowered through
-                    // the exception check, since the HandleException thunk makes
-                    // its own C call whose linkage writes would stomp the callee
-                    // slot that genericUnwind reads. The normal path's
-                    // emitFunctionEpilogue restores sp from the frame pointer.
+                    // As in the DFG: an ELFv2 C callee's CR/LR/TOC saves at
+                    // sp + 8..31 would overwrite this frame's header (sp == cfr).
+                    // sp stays lowered through the exception check; the epilogue
+                    // restores it from cfr.
                     jit.makeSpaceOnStackForCCall();
 #endif
                     if (Options::useJITCage()) {
@@ -14957,14 +14949,8 @@ IGNORE_CLANG_WARNINGS_END
                 // - Potentially two arguments on the stack.
                 CodeBlock* baselineCodeBlock = state->graph.baselineCodeBlockFor(semanticNodeOrigin);
 #if CPU(PPC64LE)
-                // ELFv2: a C callee clobbers its caller's linkage + parameter save
-                // area, i.e. [sp, sp + maxFrameExtentForSlowPathCall). The
-                // prototypical eval callee frame sits just below the current sp
-                // (its CallerFrameAndPC at sp-16), so the C-call scratch area must
-                // be reserved entirely below that frame; otherwise the callee's LR
-                // save at [sp+16] lands on the callerFrame slot and the operation
-                // dereferences a return address as a CallFrame*. Same fix as the
-                // DFG twin in DFGSpeculativeJIT64.
+                // As in the DFG: reserve the ELFv2 C-call area below the eval
+                // callee frame's CallerFrameAndPC at sp - 16.
                 unsigned requiredBytes = sizeof(CallerFrameAndPC) + maxFrameExtentForSlowPathCall;
 #else
                 unsigned requiredBytes = sizeof(CallerFrameAndPC) + sizeof(CallFrame*) * 2;

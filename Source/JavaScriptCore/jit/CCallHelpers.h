@@ -78,17 +78,12 @@ public:
 
 #if CPU(PPC64LE)
     // ELFv2 gives every C argument, integer or floating point, one doubleword of
-    // the parameter save area by its position in the argument list. The area
-    // starts after the 32-byte linkage area (back chain, CR, LR and TOC saves) at
-    // the caller's sp + 32. Positions 0-7 are also r3-r10, so an integer argument
-    // takes the GPR of its position (an FP argument skips its GPR) or, from
-    // position 8 on, its own doubleword. FP arguments take f1-f13 in order -- not
-    // just FPRInfo's eight JS argument registers -- and only then their
-    // doubleword. Nothing is packed: an argument in memory is always at
-    // sp + 32 + 8 * position. GCC 16 on POWER9 agrees: for a call with 12 integer
-    // and 14 double arguments interleaved, the caller stores the integer at
-    // position 8 to 96(r1), position 22 to 208(r1), and the 14th double
-    // (position 25) to 232(r1), and passes the other 13 doubles in f1-f13.
+    // the parameter save area by its position in the argument list, starting
+    // after the 32-byte linkage area at sp + 32. Positions 0-7 are also r3-r10:
+    // an integer argument takes the GPR of its position (an FP argument skips its
+    // GPR) or, from position 8 on, its doubleword. FP arguments take f1-f13 in
+    // order, then their doubleword. An argument in memory is always at
+    // sp + 32 + 8 * position.
     static constexpr unsigned elfV2ArgumentGPRs = 8;
     static constexpr unsigned elfV2ArgumentFPRs = 13;
     static constexpr unsigned elfV2ParameterSaveAreaOffsetInWords = 4;
@@ -151,9 +146,7 @@ public:
         Moved
     };
 
-    // GCC 16 cannot prove this recursion terminates (status updates break the
-    // recursion at runtime), so suppress the false-positive infinite-recursion
-    // warning.  Behaviour is unchanged.
+    // GCC cannot prove this recursion terminates (the status updates end it).
 #if COMPILER(GCC) && !COMPILER(CLANG)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winfinite-recursion"
@@ -358,16 +351,10 @@ private:
         }
 
 #if CPU(PPC64LE)
-        // ELFv2: a floating-point argument is passed in an FPR but still
-        // consumes its doubleword in the parameter save area, so the matching
-        // GPR (r3-r10) is skipped. An integer/pointer argument is therefore
-        // assigned a GPR by its total argument position (GP + FP args seen so
-        // far), not by the count of GP args alone. FP args still select FPRs by
-        // FP count. Verified on POWER9 with gcc -O2:
-        //   p(void* a, double b, void* c)          -> a=r3, c=r5   (r4 skipped)
-        //   p(double a, void* b)                   -> b=r4         (r3 skipped)
-        //   p(void* a, double b, double c, void* d)-> a=r3, d=r6   (r4,r5 skipped)
-        // extraGPRArgs is always 0 on this JSVALUE64 target.
+        // ELFv2: an FP argument skips its GPR, so an integer argument's GPR is
+        // chosen by its position among all arguments, not by the GP count.
+        // FP arguments still select FPRs by FP count.
+        // e.g. f(void* a, double b, void* c) passes a in r3, c in r5.
         unsigned argCount(GPRReg) { return numGPRArgs + numFPRArgs + extraGPRArgs; }
 #else
         unsigned argCount(GPRReg) { return numGPRArgs + extraGPRArgs; }
@@ -659,13 +646,9 @@ private:
         if (currentArgCount < numArgRegisters) {
             setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
 #if CPU(PPC64LE)
-            // ELFv2 requires the caller to extend a 32-bit register argument
-            // to 64 bits according to its signedness; the callee may read the
-            // full register. move(TrustedImm32) zero-extends (the ARM64/x86_64
-            // contract), which mis-passes negative signed arguments — e.g. the
-            // varargs machineStart stack offset reached operationLoadVarargs
-            // as a huge positive value. Materialize immediates with the C
-            // argument type's own extension.
+            // ELFv2 has the caller extend a 32-bit argument to 64 bits by its
+            // signedness, but move(TrustedImm32) zero-extends. Materialize the
+            // immediate with the C argument type's own extension.
             if constexpr (std::is_same_v<std::decay_t<Arg>, TrustedImm32> && std::is_integral_v<CURRENT_ARGUMENT_TYPE> && sizeof(CURRENT_ARGUMENT_TYPE) <= 4) {
                 if constexpr (std::is_signed_v<CURRENT_ARGUMENT_TYPE>)
                     move(TrustedImm64(static_cast<int64_t>(arg.m_value)), GPRInfo::toArgumentRegister(currentArgCount));
@@ -802,13 +785,10 @@ private:
                 signExtend32ToPtr(argReg, argReg);
             }
 #if CPU(PPC64LE)
-            // ELFv2 likewise makes the caller widen an integer argument narrower than a register to
-            // 64 bits, sign- or zero-extending by its type, and callees rely on it: compiled code
-            // uses an int32_t parameter directly as a 64-bit index. JIT code keeps 32-bit values in
-            // registers whose upper half is unspecified (a DFG int32 may even still carry the
-            // number tag), so widen every such argument here. ELFv2 assigns GPRs by argument
-            // position (an FP argument skips its GPR), so the register is the position's, not
-            // gprIndex's.
+            // ELFv2 likewise has the caller sign- or zero-extend every narrow integer argument
+            // to 64 bits, and compiled callees rely on it. JIT code leaves the upper half of a
+            // 32-bit value unspecified (a DFG int32 may still carry the number tag). The register
+            // is the argument position's, not gprIndex's, since an FP argument skips its GPR.
             if (arityIndex < elfV2ArgumentGPRs)
                 widenNarrowIntegerArgument<ArgumentType>(GPRInfo::toArgumentRegister(arityIndex));
 #endif
@@ -1073,9 +1053,8 @@ public:
         push(Address(framePointerRegister, sizeof(void*)));
         subPtr(TrustedImm32(sizeof(void*)), newFrameSizeGPR);
 #elif CPU(PPC64LE)
-        // linkRegister is an r0 placeholder on PPC; commit the caller's return PC
-        // to the real LR (mtlr). Like ARM64, the callee prologue re-pushes fp +
-        // returnPC, so the new frame's counted size excludes those two header words.
+        // linkRegister is only a placeholder on PPC64; restore the caller's return PC
+        // to LR. As on ARM64, the callee prologue re-pushes fp and the return PC.
         restoreReturnAddressBeforeReturn(Address(framePointerRegister, CallFrame::returnPCOffset()));
         subPtr(TrustedImm32(2 * sizeof(void*)), newFrameSizeGPR);
 #else

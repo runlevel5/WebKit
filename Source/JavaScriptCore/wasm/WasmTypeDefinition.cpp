@@ -1076,11 +1076,8 @@ void Type::dump(PrintStream& out) const
     }
 }
 
-// PPC64 keeps an f32 in an FPR in double format (lfs widens, stfs narrows), but
-// IPInt stack slots and locals hold the 4-byte IEEE encoding, so moving an f32
-// between an FPR and a slot needs lfs/stfs rather than the type-blind copy that
-// is right for f64 (and for every type on x86/arm64, whose FPRs hold the raw
-// float bits). The *FPRFloat IPInt bytecodes exist only on PPC64LE for this.
+// PPC64 keeps an f32 in an FPR in double format, but IPInt slots hold its 4-byte
+// encoding, so moving one needs lfs/stfs: the PPC64LE-only *FPRFloat bytecodes.
 
 void RTT::ensureArgumINTBytecode(const CallInformation& callCC) const
 {

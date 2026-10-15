@@ -42,49 +42,15 @@
 #define PPC64_FEATURE2_ARCH_3_00 0x00800000
 #define PPC64_FEATURE2_ARCH_3_1 0x00040000
 
-// MacroAssemblerPPC64 — Phase 1 skeleton.
-//
-// This class exists only so a JSC build with ENABLE_JIT=ON can link on
-// PPC64LE. Every operation currently traps at runtime via
-// UNREACHABLE_FOR_PLATFORM(). The actual instruction lowering will be
-// filled in Phase 3 (Baseline JIT) — before any code path that calls a
-// stub is exercised, we will have working implementations.
-//
-// File structure and register-role conventions mirror
-// MacroAssemblerRISCV64.h (most recent clean new-arch template). The
-// *semantic* reference — what each method needs to do, how it interacts
-// with OSR exit, IC patching, etc. — is MacroAssemblerARM64.h. See
-// PLAN.md §"Architecture survey" for the rationale.
+// The semantic contract of each operation follows MacroAssemblerARM64.h.
 
 namespace JSC {
 
 using Assembler = TARGET_ASSEMBLER;
 
-// Two traps, so a crash reports which kind of gap it hit. Both abort; they
-// differ in what the reader should do about it, and they are separately
-// greppable when auditing what is left to port.
-//
-// PPC64_UNIMPLEMENTED -- a hole in the port. The operation does belong on this
-// platform and should eventually be written; reaching it just means bring-up
-// has not got there yet. These are the port's TODO list. Names the missing
-// method on the way down so each testmasm/bring-up iteration identifies its
-// next target directly.
-#define PPC64_UNIMPLEMENTED() do { \
-        WTFLogAlways("PPC64 MacroAssembler unimplemented: %s", __PRETTY_FUNCTION__); \
-        RELEASE_ASSERT_NOT_REACHED(); \
-    } while (0)
-
-// PPC64_UNSUPPORTED -- deliberately not provided here. The feature is switched
-// off for this platform by configuration, and the method exists only so that
-// shared code which references it still compiles. Reaching one is therefore
-// NOT a missing implementation: it means a gate that was supposed to keep us
-// out has leaked, and that gate is the bug to go and fix.
-//
-// Every current user is wasm SIMD, which is off on two independent levels:
-// Options::notifyOptionsChanged() forces useWasmSIMD() false for every target
-// that is not x86_64 or arm64, and run-jsc-stress-tests skips the SIMD test
-// variants because $isSIMDPlatform excludes ppc64le. Implementing these for
-// real means writing VSX sequences and then removing both gates.
+// PPC64_UNSUPPORTED: deliberately not provided; the method exists only so
+// shared code compiles. Reaching one means a caller that should never route
+// here on PPC64 did.
 #define PPC64_UNSUPPORTED() do { \
         WTFLogAlways("PPC64 MacroAssembler unsupported on this platform (feature should have been gated off): %s", __PRETTY_FUNCTION__); \
         RELEASE_ASSERT_NOT_REACHED(); \
@@ -105,12 +71,8 @@ public:
     // regions of this size for that. See PPC64Assembler's linking notes.
     static constexpr size_t nearJumpRange = 32 * MB;
 
-    // Scratch pool per ELFv2: r11 is the environment / PLT-call scratch,
-    // r12 is the function-entry / static-chain scratch. Both are volatile
-    // and not used by our JIT-emitted ABI. See PLAN.md §"Quick reference:
-    // register convention to adopt". f0 is the FP scratch. (There is no
-    // second FP scratch: the only other volatile FPRs, f1-f13, are all ELFv2
-    // argument registers, and f1 is also the FP return register.)
+    // r11 and r12 are volatile in ELFv2 and not allocated. f0 is the only FP
+    // scratch: the other volatile FPRs, f1-f13, are all argument registers.
     static constexpr RegisterID dataTempRegister = PPC64Registers::r11;
     static constexpr RegisterID memoryTempRegister = PPC64Registers::r12;
     static constexpr FPRegisterID fpTempRegister = PPC64Registers::f0;
@@ -154,18 +116,13 @@ public:
         return dataTempRegister;
     }
 
-    // ABI-mandated register roles (ELFv2 §2.2.1). The MacroAssembler reads
-    // these constants when setting up frames and indirect calls.
+    // ABI-mandated register roles.
     static constexpr RegisterID stackPointerRegister = PPC64Registers::sp;   // r1
     static constexpr RegisterID framePointerRegister = PPC64Registers::fp;   // r31
-    // PPC has no general "link register" GPR — LR is a dedicated SPR.
-    // We set linkRegister to r0 as a placeholder that's never allocated;
-    // callers that need LR must go through mflr/mtlr. This matches the
-    // fact that any ABI caller-save pattern that would mention LR also
-    // needs an mflr sequence, not a regular register move.
+    // LR is an SPR, not a GPR. linkRegister is a never-allocated placeholder;
+    // code that needs LR uses mflr/mtlr.
     static constexpr RegisterID linkRegister = PPC64Registers::r0;
 
-    // Feature flags consulted by JSC when generating code.
     static bool supportsFloatingPointRounding() { return true; } // frip/frim/friz + xsrdpic
     // Power ISA level beyond the POWER8 (2.07) baseline, from AT_HWCAP2 and
     // capped by Options::maximumPPC64ISALevel() so POWER9/POWER10 machines can
@@ -192,14 +149,11 @@ public:
     // later. On POWER8 this is false and Float16 stays on the C++ paths (the
     // DFG, the FTL and the typed-array inline caches all check it).
     static bool supportsFloat16() { return supportsISA3_00(); }
-    // xsmaxjdp/xsminjdp (ISA 3.0) implement JS and wasm min/max directly.
+    // xsmaxjdp/xsminjdp (ISA 3.0) implement JS min/max directly (not wasm's:
+    // see doubleMax()).
     static bool supportsFloatingPointMinMax() { return supportsISA3_00(); }
 
-    // Conditions. Values are opaque to callers — the branch-emitting
-    // methods (branch32, branchPtr, branchAdd32, etc.) will decode these
-    // to the appropriate (BO, BI) tuple when we implement them. For now
-    // they only need to exist as a type so that ABI-agnostic JIT code
-    // that references MacroAssembler::Equal compiles.
+    // Opaque to callers; the branch emitters map them to (BO, BI) pairs.
     enum RelationalCondition : uint8_t {
         Equal,
         NotEqual,
@@ -259,132 +213,73 @@ public:
         DoubleLessThanOrEqualOrUnordered,
     };
 
-    // ===================================================================
-    // Method implementations begin here. Phase 1 strategy:
-    //   * Methods named in PLAN.md "minimal compile" list (nop, breakpoint,
-    //     move, load64, store64, add64, sub64, jump, call, ret, push, pop)
-    //     get real implementations that emit the right Power ISA.
-    //   * All other MacroAssembler methods get `UNREACHABLE_FOR_PLATFORM()`
-    //     bodies, added on demand as the JIT/DFG/FTL/Wasm builds surface
-    //     them. This keeps unverified code from accumulating.
-    //
-    // Cross-platform reference for what each method's BODY needs to do:
-    // MacroAssemblerARM64.h. We follow ARM64's contract here and use
-    // PPC64Assembler primitives to emit the right encodings.
-    // ===================================================================
-
-    // nop — single-instruction no-op. Power ISA preferred form is
-    //   `ori 0, 0, 0` → 0x60000000.
     void nop()
     {
         m_assembler.nop();
     }
 
-    // breakpoint — emit a trap that delivers SIGTRAP to the process when
-    //   executed. Used by JSC's JIT-debug paths and as a marker after
-    //   unreachable codegen. Power ISA encoding: `tw 31, 0, 0` → 0x7fe00008.
+    // tw 31,0,0: an unconditional trap (SIGTRAP).
     void breakpoint()
     {
         m_assembler.trap();
     }
 
-    // move — 64-bit register-to-register copy. The `if (src != dest)`
-    // guard avoids emitting a no-op `mr rN, rN` (self-move) which some
-    // JIT call sites emit redundantly. Power ISA: `mr RA, RS` is the
-    // simplified mnemonic for `or RA, RS, RS` (X-form, opcode 31,
-    // XO=444). Verified earlier: mr 7,8 → 0x7d074378.
     void move(RegisterID src, RegisterID dest)
     {
         if (src != dest)
             m_assembler.mr(dest, src);
     }
 
-    // move — load a 32-bit signed immediate, sign-extended to 64 bits.
-    //
-    // Three encoding strategies depending on the value:
-    //   (a) v ∈ [-32768, 32767]    →  addi dest, r0, v       (1 insn, "li")
-    //   (b) v & 0xFFFF == 0        →  lis  dest, v >> 16     (1 insn)
-    //   (c) general                →  lis  dest, hi16
-    //                                 ori  dest, dest, lo16  (2 insns)
-    //
-    // Why lis+ori (not lis+addi): addi sign-extends its 16-bit immediate.
-    // For values where the LOW-16 bit pattern has bit 15 set (e.g.
-    // 0x7FFF8000), lis + addi would subtract from the lis-loaded value
-    // because addi would treat 0x8000 as -32768. ori does NOT sign-extend,
-    // so it cleanly OR-merges the low 16 bits regardless of the high bit.
-    //
-    // Sign-extension of the final 32-bit result up to 64 bits happens
-    // automatically because lis sign-extends its imm<<16 to 64 bits;
-    // ori only writes the low 16 bits and leaves the rest untouched.
+    // li, lis, or lis + ori (ori, unlike addi, does not sign-extend its
+    // immediate).
     void move(TrustedImm32 imm, RegisterID dest)
     {
-        // Contract (matches ARM64 `mov wN` / x86_64 `movl`): the upper 32 bits
-        // of dest are ZEROED, never sign-extended. JSValue boxing depends on
-        // it — e.g. move(TrustedImm32(-1)) then or64(numberTag) must yield the
-        // int32 box 0xFFFE0000FFFFFFFF, not all-ones (which still decodes as
-        // int32 -1 but breaks the 64-bit strictEq/full-box comparison; seen as
-        // DFG ArrayIndexOf's miss result -1 failing `=== -1`). addi/lis
-        // sign-extend, so clear the upper word for negative values.
+        // As with ARM64 `mov wN` / x86_64 `movl`, the upper 32 bits of dest are
+        // zeroed, not sign-extended: JSValue boxing depends on it (move(-1) then
+        // or64(numberTag) must give 0xFFFE0000FFFFFFFF). li/lis sign-extend, so
+        // clear the upper word for negative values.
         int32_t v = imm.m_value;
         if (v >= INT16_MIN && v <= INT16_MAX) {
-            // case (a): 16-bit signed range — single addi.
-            m_assembler.addi(dest, PPC64Registers::r0, static_cast<int16_t>(v));
+                m_assembler.addi(dest, PPC64Registers::r0, static_cast<int16_t>(v));
             if (v < 0)
                 m_assembler.rldicl(dest, dest, 0, 32); // clrldi: zero upper 32
             return;
         }
 
-        // Extract the high 16 bits of v as a 16-bit pattern (unsigned shift
-        // first to avoid implementation-defined behavior of right-shifting
-        // a signed negative value, then narrow to int16_t).
         int16_t hi16 = static_cast<int16_t>(static_cast<uint32_t>(v) >> 16);
         uint16_t lo16 = static_cast<uint16_t>(v);
 
         if (lo16 == 0) {
-            // case (b): low 16 zero — single lis.
             m_assembler.lis(dest, hi16);
             if (v < 0)
                 m_assembler.rldicl(dest, dest, 0, 32);
             return;
         }
 
-        // case (c): general 32-bit immediate.
         m_assembler.lis(dest, hi16);
         m_assembler.ori(dest, dest, lo16);
         if (v < 0)
             m_assembler.rldicl(dest, dest, 0, 32);
     }
 
-    // move — load a 64-bit pointer immediate, in as few instructions as
-    // moveImmToScratch can manage (a user-space pointer below 2^47 takes four:
-    // li, sldi, oris, ori). Nothing patches this sequence in place; patchable
-    // pointers go through moveWithPatch, which keeps the fixed 5-instruction
-    // li64 that repatchPointer rewrites.
+    // Shortest sequence (a user-space pointer below 2^47 takes four: li, sldi,
+    // oris, ori). Nothing patches it in place; patchable pointers go through
+    // moveWithPatch, which keeps the fixed 5-instruction li64.
     void move(TrustedImmPtr imm, RegisterID dest)
     {
         moveImmToScratch(static_cast<int64_t>(reinterpret_cast<uintptr_t>(imm.m_value)), dest);
     }
 
-    // ===================================================================
-    // 64-bit add. Power ISA: `add RT, RA, RB` → RT = RA + RB (XO-form).
-    // For immediate variants: `addi RT, RA, SI` → RT = RA + sign_extend(SI).
-    // ===================================================================
-
-    // dest = dest + src
     void add64(RegisterID src, RegisterID dest)
     {
         m_assembler.add(dest, dest, src);
     }
 
-    // dest = src1 + src2
     void add64(RegisterID src1, RegisterID src2, RegisterID dest)
     {
         m_assembler.add(dest, src1, src2);
     }
 
-    // Integer division (Air Div32/UDiv32/Div64/UDiv64). divw/divwu operate on
-    // the low 32 bits and leave the upper half undefined, so re-establish the
-    // zero-extended-32 convention on the result.
     // High half of the full-width product. mulhw/mulhwu leave the top 32 bits
     // of the target undefined, so the 32-bit forms re-extend (UMulHigh32's Air
     // form declares a zero-extended destination).
@@ -413,6 +308,8 @@ public:
     void subBorrow64(RegisterID a, RegisterID b, RegisterID dest) { m_assembler.subfe(dest, b, a); }
     // uMulHigh64 is defined with the other 64-bit multiplies below.
 
+    // divw/divwu leave the upper half of the target undefined, so re-establish
+    // the zero-extended-32 convention on the result.
     void div32(RegisterID dividend, RegisterID divisor, RegisterID dest)
     {
         m_assembler.divw(dest, dividend, divisor);
@@ -457,46 +354,34 @@ public:
         m_assembler.modud(dest, dividend, divisor);
     }
 
-    // dest = dest + imm
     void add64(TrustedImm32 imm, RegisterID dest)
     {
         add64(imm, dest, dest);
     }
 
-    // dest = src + imm
     void add64(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
         if (imm.m_value >= INT16_MIN && imm.m_value <= INT16_MAX) {
             m_assembler.addi(dest, src, static_cast<int16_t>(imm.m_value));
             return;
         }
-        // Out of 16-bit range: materialize the SIGN-EXTENDED immediate in the
-        // scratch, then add. move(TrustedImm32) zero-extends per the
-        // MacroAssembler contract, which would turn a negative offset into
-        // +2^32 in 64-bit address arithmetic.
+        // Sign-extend the immediate: move(TrustedImm32) zero-extends, which
+        // would turn a negative addend into +2^32.
         moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
         m_assembler.add(dest, src, dataTempRegister);
     }
 
-    // ===================================================================
-    // 64-bit subtract. Power ISA: `subf RT, RA, RB` → RT = RB - RA
-    // (note the REVERSED operand order versus most ISAs).
-    // ===================================================================
-
-    // dest = dest - src
+    // subf RT, RA, RB computes RB - RA: the operand order is reversed.
     void sub64(RegisterID src, RegisterID dest)
     {
         m_assembler.subf(dest, src, dest);
     }
 
-    // dest = src1 - src2
     void sub64(RegisterID src1, RegisterID src2, RegisterID dest)
     {
-        // subf reverses: RT = RB - RA, so pass (dest, src2, src1).
         m_assembler.subf(dest, src2, src1);
     }
 
-    // dest = dest - imm
     void sub64(TrustedImm32 imm, RegisterID dest)
     {
         sub64(imm, dest, dest);
@@ -556,45 +441,34 @@ public:
         m_assembler.xor_(dest, src, dataTempRegister);
     }
 
-    // dest = src - imm (operand order used by DFG/thunks)
     void sub64(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
         sub64(imm, src, dest);
     }
 
-    // dest = src - imm
     void sub64(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
-        // Implement as `dest = src + (-imm)` when -imm fits in int16_t.
-        // The lower bound is -INT16_MAX rather than INT16_MIN because
-        // negating INT16_MIN (= -32768) overflows int16_t.
+        // addi with -imm; the lower bound excludes INT16_MIN, whose negation
+        // does not fit.
         if (imm.m_value >= -INT16_MAX && imm.m_value <= INT16_MAX) {
             m_assembler.addi(dest, src, static_cast<int16_t>(-imm.m_value));
             return;
         }
-        // Out of negatable-int16 range: materialize the SIGN-EXTENDED imm in
-        // the scratch (see add64), then subf.
+        // Sign-extended, as in add64.
         moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
         m_assembler.subf(dest, dataTempRegister, src);
     }
 
-    // ===================================================================
-    // 64-bit memory access. Power ISA `ld` / `std` are DS-form: 14-bit
-    // signed displacement, 4-byte aligned (low 2 bits of byte offset
-    // forced to 0 — they hold the DS-form XO field). For arbitrary
-    // offsets we fall through to compute-address-into-scratch + ldx/stdx.
-    // ===================================================================
+    // ld/std are DS-form: the displacement must be a multiple of 4. Other
+    // offsets go through ldx/stdx with the offset in a scratch register.
 
     void load64(Address address, RegisterID dest)
     {
         int32_t offset = address.offset;
-        // ld can encode offset in [-32768, 32767] AND multiple of 4.
         if (offset >= INT16_MIN && offset <= INT16_MAX && (offset & 0x3) == 0) {
             m_assembler.ld(dest, static_cast<int16_t>(offset), address.base);
             return;
         }
-        // Out-of-range / unaligned offset: materialize the SIGN-EXTENDED
-        // offset in memoryTempRegister (r12), then load via indexed form.
         moveImmToScratch(int64_t(offset), memoryTempRegister);
         m_assembler.ldx(dest, address.base, memoryTempRegister);
     }
@@ -610,66 +484,31 @@ public:
         m_assembler.stdx(src, address.base, memoryTempRegister);
     }
 
-    // ===================================================================
-    // Return / push / pop. JSC's MacroAssembler push/pop manipulate a
-    // GPR-sized stack slot (8 bytes on PPC64). They are NOT function
-    // prologue/epilogue — those have their own ELFv2-shaped sequences
-    // (LR save area at +16, parameter save area, TOC restore, etc.) and
-    // get emitted by higher-level frame-setup helpers.
-    // ===================================================================
-
     static constexpr int stackSlotSize = 8;
 
-    // Return — branch to LR. Power ISA `blr` (= bclr with BO=20=always).
-    // Verified: blr → 0x4e800020.
     void ret()
     {
         m_assembler.blr();
     }
 
-    // Push: pre-decrement SP by 8 and atomically store RS at the new SP.
-    // The stdu update form does both in one instruction.
-    // Verified: stdu r3, -8(r1) → 0xf861fff9.
     void push(RegisterID src)
     {
         m_assembler.stdu(src, -stackSlotSize, stackPointerRegister);
     }
 
-    // Pop: load from SP, then post-increment SP by 8. Two instructions
-    // because PPC has no `ld with post-update` (ldu is pre-update,
-    // which gives the wrong address for pop). Order matters: load first,
-    // then bump SP — otherwise the load would read past the stack frame.
-    // Verified: ld r3, 0(r1) → 0xe8610000;  addi r1, r1, 8 → 0x38210008.
+    // There is no post-update load (ldu is pre-update), so pop is ld + addi.
     void pop(RegisterID dest)
     {
         m_assembler.ld(dest, 0, stackPointerRegister);
         m_assembler.addi(stackPointerRegister, stackPointerRegister, stackSlotSize);
     }
 
-    // ===================================================================
-    // Stub block — minimal one-overload-per-method UNREACHABLE_FOR_PLATFORM
-    // bodies. These exist solely to satisfy the `using MacroAssemblerBase::*`
-    // declarations in MacroAssembler.h. Every method here is unimplemented
-    // and will trap at runtime; real bodies will be added when a JIT/DFG/FTL
-    // call site surfaces a need for it during build iteration.
-    //
-    // Each stub provides the most common (RegisterID, RegisterID) /
-    // (TrustedImm32, RegisterID) overload — the C++ compiler will report
-    // additional missing overloads at actual call sites, which we add
-    // one-at-a-time as the build iteration drives them.
-    // ===================================================================
-
-    // ===================================================================
-    // Phase 3 core — real implementations.
-    //
-    // Register contract: r11 (dataTemp) and r12 (memoryTemp) are the two
-    // assembler scratches (SM convention; neither is JIT-allocatable).
-    // Width contract: every 32-bit op zero-extends its result into the
-    // 64-bit register, matching x86 32-bit ops and arm64 Wn writes (and
-    // the offlineasm i-op contract established in Phase 2).
-    // Condition mapping: compares set CR0 (LT=bit0, GT=bit1, EQ=bit2);
-    // branches test one CR0 bit with bo=12 (bit set) / bo=4 (bit clear).
-    // ===================================================================
+    // Conventions:
+    // - r11 (dataTempRegister) and r12 (memoryTempRegister) are the scratches.
+    // - Every 32-bit operation zero-extends its result to 64 bits, as x86
+    //   32-bit operations and ARM64 Wn writes do (and as offlineasm's i-ops do).
+    // - Compares set CR0 (LT = bit 0, GT = bit 1, EQ = bit 2); branches test
+    //   one CR0 bit with BO = 12 (bit set) or BO = 4 (bit clear).
 
     static bool isInt16(int64_t v) { return v >= INT16_MIN && v <= INT16_MAX; }
     static bool isUInt16(int64_t v) { return v >= 0 && v <= 0xFFFF; }
@@ -723,10 +562,8 @@ public:
         m_assembler.ori(dest, dest, uint16_t(value));
     }
 
-    // Compute an Address / BaseIndex effective address into `dest`
-    // (which may be memoryTempRegister).  Returns the base register and
-    // a 16-bit displacement usable directly in a D-form access when
-    // possible, else (dest, 0) after materializing.
+    // Returns a base register and a 16-bit displacement for a D-form access,
+    // computing into `scratch` when the address does not fit one directly.
     struct ResolvedAddress {
         RegisterID base;
         int16_t offset;
@@ -750,9 +587,8 @@ public:
             m_assembler.add(scratch, address.index, address.base);
         if (isInt16(address.offset))
             return { scratch, int16_t(address.offset) };
-        // Large offset: materialize and add.  (An addis high-adjust trick
-        // overflows int16 for offsets >= 0x7FFF8000 — testmasm exercises
-        // offsets near INT32_MAX.)
+        // Large offset: materialize and add. (An addis high-adjust would
+        // overflow int16 for offsets >= 0x7FFF8000.)
         moveImmToScratch(int64_t(address.offset), dataTempRegister);
         m_assembler.add(scratch, scratch, dataTempRegister);
         return { scratch, 0 };
@@ -856,9 +692,9 @@ public:
     }
 
     // dest = 1 if CR0 bit `bi` is set (whenSet) or clear (!whenSet), else 0.
-    // isel reads the CR bit directly: compare -> 0/1 is ~4 cycles on POWER9,
-    // where mfcr (microcoded) + rlwinm is ~13 and even mfocrf + rlwinm ~9.
-    // isel's RA = r0 means a literal 0. Clobbers memoryTempRegister (or
+    // setbc on POWER10; otherwise isel, which reads the CR bit directly and is
+    // much cheaper than mfcr (microcoded) + rlwinm. isel's RA = r0 means a
+    // literal 0. Clobbers memoryTempRegister (or
     // dataTempRegister when dest is memoryTempRegister); every caller has
     // finished with them once CR0 is set.
     void setFromCR0Bit(unsigned bi, bool whenSet, RegisterID dest)
@@ -977,7 +813,7 @@ public:
     void and32(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
         if (isUInt16(uint32_t(imm.m_value))) {
-            m_assembler.andi_(dest, src, uint16_t(imm.m_value));   // clears upper ✓
+            m_assembler.andi_(dest, src, uint16_t(imm.m_value)); // clears the upper bits
             return;
         }
         moveImmToScratch(uint32_t(imm.m_value), dataTempRegister);
@@ -1393,10 +1229,9 @@ public:
         }
     }
 
-    // branchAdd32 / branchSub32 / branchMul32 with Overflow use the
-    // exact-64-bit technique validated in the Phase 2 offlineasm work:
-    // do the arithmetic on sign-extended copies; int32 overflow iff the
-    // 64-bit result differs from its own low-word sign extension.
+    // branchAdd32 / branchSub32 / branchMul32 with Overflow do the arithmetic
+    // on sign-extended copies: int32 overflow iff the 64-bit result differs
+    // from its own low-word sign extension.
     Jump branchAdd32(ResultCondition cond, RegisterID src, RegisterID dest) { return branchAdd32(cond, src, dest, dest); }
     Jump branchAdd32(ResultCondition cond, RegisterID a, RegisterID b, RegisterID dest)
     {
@@ -1767,10 +1602,6 @@ public:
         moveImmToScratch(imm.m_value, dest);
     }
 
-    // Memory-to-memory transfers: load via dataTempRegister, store back.
-    // (dataTempRegister holds the value; memoryTempRegister resolves each
-    // address in turn — the load's address is fully consumed before the
-    // store resolves its own.)
     // Memory-to-memory transfers, templated over the address forms as on
     // ARM64 so that mixed pairs work: BBQ's wasm GC struct/array field copies
     // pass an Address source with a BaseIndex destination. The value travels
@@ -1806,10 +1637,8 @@ public:
     enum BranchTruncateType { BranchIfTruncateFailed, BranchIfTruncateSuccessful };
 
     // ------------------------------------------------------------------
-    // Floating point.  FPRs hold doubles; float32 values live in the FPR
-    // in double format (lfs/stfs and the -s arithmetic forms convert),
-    // matching the classic PPC float model.  f0 is the FP scratch (SM
-    // convention: ScratchDoubleReg = f0).
+    // Floating point. float32 values live in FPRs in double format (lfs/stfs
+    // and the -s arithmetic forms convert). f0 is the FP scratch.
     // ------------------------------------------------------------------
 
     void loadDouble(Address address, FPRegisterID dest)
@@ -2010,7 +1839,7 @@ public:
 
     // FP bitwise ops treat the doubles as bit patterns (used for sign-bit
     // masking, NaN canonicalization, SIMD-lane logic). FPR f_n aliases
-    // VSR n, so the VSX logical ops apply directly (Power ISA v2.07B §7.6).
+    // VSR n, so the VSX logical ops apply directly.
     void andDouble(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
         m_assembler.xxland(dest, a, b);
@@ -2041,11 +1870,8 @@ public:
     void ceilDouble(FPRegisterID src, FPRegisterID dest)              { m_assembler.frip(dest, src); }
     void truncDouble(FPRegisterID src, FPRegisterID dest)             { m_assembler.friz(dest, src); }
     void roundTowardZeroDouble(FPRegisterID src, FPRegisterID dest)   { m_assembler.friz(dest, src); }
-    // NOTE: frin rounds ties AWAY from zero; JS ties-to-even call sites
-    // guard this at a higher level.  Revisit if testmasm flags it.
-    // Ties-to-even (ARM64 frintn semantics): frin rounds ties away from
-    // zero, which is wrong for the MacroAssembler contract; xsrdpic rounds
-    // in the current mode (default ties-to-even).
+    // Ties-to-even, as ARM64 frintn: frin rounds ties away from zero, so use
+    // xsrdpic, which rounds in the current mode (round-to-nearest-even).
     void roundTowardNearestIntDouble(FPRegisterID src, FPRegisterID dest) { m_assembler.xsrdpic(dest, src); }
 
     void truncateDoubleToInt32(FPRegisterID src, RegisterID dest)
@@ -2347,7 +2173,7 @@ public:
     }
 
     // =====================================================================
-    // WebAssembly SIMD (v128) on the POWER8 baseline (VSX + VMX, ISA v2.07B).
+    // WebAssembly SIMD (v128) on the POWER8 baseline (VSX + VMX).
     //
     // Register model. A v128 lives in the full 128-bit VSR that aliases
     // FPRegisterID fN (VSR N, N = 0..31), so the register allocators, spill
@@ -3440,7 +3266,6 @@ public:
     void vectorUnsignedMin(SIMDInfo, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
     void vectorUnsignedMax(SIMDInfo, FPRegisterID, FPRegisterID) { PPC64_UNSUPPORTED(); }
 
-
     Jump branchTruncateDoubleToInt32(FPRegisterID src, RegisterID dest, BranchTruncateType branchType = BranchIfTruncateFailed)
     {
         // fctiwz saturates out-of-range/NaN inputs to INT32_MIN/INT32_MAX;
@@ -3797,21 +3622,15 @@ public:
     void countLeadingZeros32(RegisterID src, RegisterID dest) { m_assembler.cntlzw(dest, src); }
     void countLeadingZeros64(RegisterID src, RegisterID dest) { m_assembler.cntlzd(dest, src); }
 
-    // cnttzw/cnttzd are Power ISA v3.0 (POWER9); this port targets v2.07B
-    // (POWER8), so synthesise it: ctz(x) == 32 - clz(~x & (x - 1)). The
-    // identity also yields the required ctz(0) == 32, since ~0 & -1 is all
-    // ones and clz of that is 0. Verified on POWER9 hardware against
-    // __builtin_ctz for 0, 1, 5, 6, 8, 0x10000, 0x80000000 and 0xFFFFFFFF.
-    // Pick an assembler temp that is not `live`, an operand still read after the
-    // temp has been written. Callers may legitimately pass dataTempRegister (r11):
-    // BBQ's wasmScratchGPR (GPRInfo::nonPreservedNonArgumentGPR0) was r11 when
-    // this was written and held operands such as a materialised constant. It is
-    // r29 now, but nothing stops another caller handing in r11, so keep the guard.
+    // An assembler temp other than `live`, an operand still read after the temp
+    // has been written. Callers may pass dataTempRegister as an operand.
     static RegisterID tempRegisterAvoiding(RegisterID live)
     {
         return live == dataTempRegister ? memoryTempRegister : dataTempRegister;
     }
 
+    // cnttzw/cnttzd are ISA 3.0. Before that, ctz(x) == 32 - clz(~x & (x - 1)),
+    // which also gives ctz(0) == 32.
     void countTrailingZeros32(RegisterID src, RegisterID dest)
     {
         if (supportsISA3_00()) {
@@ -3837,7 +3656,6 @@ public:
         m_assembler.subfic(dest, dest, 64);
     }
 
-    // popcntw/popcntd are v2.06+, comfortably inside the POWER8 baseline.
     static bool supportsCountPopulation() { return true; }
     // The FP temp is part of the shared signature (ARM64 needs a vector
     // register for its cnt/addv sequence); PPC64 has a direct instruction.
@@ -3850,9 +3668,8 @@ public:
     }
     void countPopulation64(RegisterID src, RegisterID dest, FPRegisterID) { m_assembler.popcntd(dest, src); }
 
-    // dest = minuend - mulLeft * mulRight. PPC64 has no integer multiply-sub,
-    // so this is mullw/mulld followed by subf (subf rD, rA, rB = rB - rA).
-    // The product temp must not be the minuend, which is read after it is written.
+    // dest = minuend - mulLeft * mulRight: no integer multiply-subtract, so
+    // mullw/mulld then subf. The product temp must not be the minuend, which is read after it is written.
     void multiplySub32(RegisterID mulLeft, RegisterID mulRight, RegisterID minuend, RegisterID dest)
     {
         RegisterID product = tempRegisterAvoiding(minuend);
@@ -4098,10 +3915,9 @@ public:
         // ELFv2: a tail jump to a C function reaches its global entry, whose
         // prologue recomputes the TOC as r2 = addis/addi(r12, .TOC.-func). So
         // r12 must equal the target (its own entry address); a bare mtctr/bctr
-        // leaves r12 stale, giving the callee a wrong TOC that faults the moment
-        // it makes a TOC-relative/PLT call (e.g. the StringEqual thunk tail-
-        // jumping to operationCompareStringEq -> resolveRope PLT). Harmless for
-        // JIT-to-JIT targets. memoryTempRegister is r12.
+        // leaves r12 stale, giving the callee a wrong TOC that faults on its
+        // first TOC-relative or PLT call. Harmless for JIT-to-JIT targets.
+        // memoryTempRegister is r12.
         if (target != memoryTempRegister)
             m_assembler.mr(memoryTempRegister, target);
         m_assembler.mtctr(memoryTempRegister);
@@ -4133,26 +3949,20 @@ public:
     void farJump(RegisterID target, RegisterID)                            { farJump(target, NoPtrTag); }
     void farJump(Address address, RegisterID)                              { farJump(address, NoPtrTag); }
 
-    // Stores (stub) — store64 with Address is implemented above.
-
-    // FP / SIMD moves (stub)
     void moveVector(FPRegisterID src, FPRegisterID dest)
     {
         if (src != dest)
             m_assembler.xxlor(dest, src, src); // 128-bit VSR copy
     }
 
-    // Push (stub) — TrustedImm32 overload required by MacroAssembler.h wrappers.
     void push(TrustedImm32 imm)
     {
         moveImmToScratch(imm.m_value, dataTempRegister);
         push(dataTempRegister);
     }
 
-    // 32-bit / float / double / vector loads and stores (stub)
     // lxvd2x/stxvd2x are indexed (RA+RB) with no displacement, so compute the
-    // effective address into a GPR and use RA=0 (literal zero). See the VSX
-    // note in PPC64Assembler.h re: little-endian doubleword order.
+    // effective address into a GPR and use RA=0 (literal zero).
     void loadVector(Address address, FPRegisterID dest)
     {
         add64(TrustedImm32(address.offset), address.base, memoryTempRegister);
@@ -4164,9 +3974,6 @@ public:
         m_assembler.stxvd2x(src, PPC64Registers::r0, memoryTempRegister);
     }
 
-    // Additional branch32 overloads (stub)
-
-    // Patchable branch stubs
     Jump branchPtrWithPatch(RelationalCondition cond, Address left, DataLabelPtr& dataLabel, TrustedImmPtr initialRightValue = TrustedImmPtr(nullptr))
     {
         load64(left, dataTempRegister);
@@ -4180,7 +3987,6 @@ public:
         return branch32(cond, dataTempRegister, memoryTempRegister);
     }
 
-    // Abort (stub) — called by MacroAssembler::oops() via abortWithReason(B3Oops).
     void abortWithReason(AbortReason reason)
     {
         moveImmToScratch(static_cast<int64_t>(reason), dataTempRegister);
@@ -4217,18 +4023,6 @@ public:
         store64(dataTempRegister, const_cast<void*>(address.m_ptr));
     }
 
-    // and64 TrustedImmPtr overload (MacroAssembler::andPtr uses it).
-
-    // 64-bit shifts (MacroAssembler::lshiftPtr / rshiftPtr / urshiftPtr).
-
-    // neg64 (MacroAssembler::negPtr)
-
-    // Additional or64 overloads (MacroAssembler::orPtr)
-
-    // rotateRight64 (MacroAssembler::rotateRightPtr)
-
-    // Additional sub64 overloads (MacroAssembler::subPtr)
-
     // Additional xor64 overloads (MacroAssembler::xorPtr)
     void xor64(Address address, RegisterID dest)
     {
@@ -4241,14 +4035,6 @@ public:
         m_assembler.xor_(dataTempRegister, dataTempRegister, src);
         store64(dataTempRegister, address);
     }
-
-    // Additional load64 overloads (MacroAssembler::loadPtr)
-
-    // loadPair64 (MacroAssembler::loadPairPtr)
-
-    // Additional store64 overloads (MacroAssembler::storePtr)
-
-    // storePair64 (MacroAssembler::storePairPtr)
 
     // test64 (MacroAssembler::testPtr)
     void test64(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
@@ -4270,10 +4056,6 @@ public:
         m_assembler.cmpdi(0, dataTempRegister, 0);
         setFromResultCondition(cond, dest);
     }
-
-    // Additional branch64 overloads (MacroAssembler::branchPtr)
-
-    // branchTest64 (MacroAssembler::branchTestPtr)
 
     // branchAdd64 / branchSub64 (MacroAssembler::branchAddPtr/branchSubPtr)
     // dest = dest + src, branch on cond. Signed overflow iff the operands
@@ -4382,10 +4164,6 @@ public:
         return branchSub64(cond, left, memoryTempRegister, dest);
     }
 
-    // move(TrustedImm64) — used by blinding helpers in MacroAssembler.
-
-    // convertInt32ToDouble(TrustedImm32) — blinding path in MacroAssembler.
-
     // Additional and64 / xor64 / or64 / sub64 / compare64 overloads.
     void sub64(RegisterID src, TrustedImm64 imm, RegisterID dest)
     {
@@ -4397,12 +4175,6 @@ public:
         emitCompare64(cond, left, right);
         setFromCondition(cond, dest);
     }
-
-    // move32ToFloat / move64ToDouble with immediate forms.
-
-    // branchDouble — used by MacroAssembler::compareDouble on non-X86/ARM64.
-
-    // 3-operand 32-bit forms (MacroAssembler blinding helpers + lea32).
 
     // 3-operand 32-bit shifts.
     // Shift an immediate value by a register count (dest = imm OP (count & 31)).
@@ -4507,10 +4279,8 @@ public:
             emitCCallGuardPost();
         // General repatchable call (callOperation etc.): must be Linkable and NOT
         // Near — locationOf()/link() require a non-near call, and JITMathIC queries
-        // locationOf(slowPathCall) to repatch it. Flagging it Near made locationOf
-        // return a bogus location (RELEASE builds silently repatched the wrong PC →
-        // code corruption; the exact fallout was ASLR/layout-sensitive). Only
-        // nearCall() is LinkableNear. Both emit the same slot; the flag picks the
+        // locationOf(slowPathCall) to repatch it; for a Near call locationOf
+        // returns the wrong location. Only nearCall() is LinkableNear. Both emit the same slot; the flag picks the
         // linked form (see linkCall below) as well as location/repatch routing.
         return Call(label, Call::Linkable);
     }
@@ -4542,12 +4312,6 @@ public:
     // patchableJumpSize — used by JITMathIC for size computation.
     static ptrdiff_t patchableJumpSize() { return Assembler::patchableJumpSize(); }
 
-    // xor64(TrustedImm32, src, dst) — AssemblyHelpers::branchIfBoolean.
-
-    // branchTest64 with TrustedImm64 mask — AssemblyHelpers::isStrictInt52.
-
-    // FP <-> GPR bit-cast moves.
-
     // Sign/zero extension.
     void signExtend32ToPtr(TrustedImm32 imm, RegisterID dest)
     {
@@ -4562,26 +4326,13 @@ public:
         m_assembler.rldicl(dest, src, 0, 32);
     }
 
-    // byte loads — AssemblyHelpers::barrierBranch and load8SignedExtendTo32.
-
-    // branch8 with AbsoluteAddress — AssemblyHelpers::barrierBranchWithoutFence.
-
-    // branchTest8 with AbsoluteAddress — AssemblyHelpers::jumpIfMutatorFenceNotNeeded.
-
-    // load8 with raw pointer — AssemblyHelpers::barrierBranch(VM&, JSCell*, GPRReg).
-
-    // or32 with Address — AssemblyHelpers::nukeStructureAndStoreButterfly.
-
-    // Memory barriers (Power ISA v2.07B §1.7.1). lwsync orders all pairs
+    // Memory barriers. lwsync orders all pairs
     // except StoreLoad; a full StoreLoad / seq-cst fence needs sync.
     void memoryFence()    { m_assembler.sync(); }       // full (StoreLoad) fence
     void storeFence()     { m_assembler.lwsync(); }     // release ordering
     void loadFence()      { m_assembler.lwsync(); }     // acquire ordering
     void storeLoadFence() { m_assembler.sync(); }
 
-    // Count-leading-zeros — AssemblyHelpers::emitComputeButterflyIndexingMask.
-
-    // Register swap — CCallHelpers::setupArgumentsWithExecState.
     void swap(RegisterID a, RegisterID b)
     {
         if (a == b)
@@ -4590,12 +4341,6 @@ public:
         m_assembler.mr(a, b);
         m_assembler.mr(b, dataTempRegister);
     }
-
-    // store64(TrustedImmPtr, Address) — CCallHelpers::storeWasmCalleeToCalleeCallFrame.
-
-    // transferPtr(BaseIndex, BaseIndex) — CCallHelpers tail-call frame copy.
-
-    // Operations first surfaced by InlineCacheCompiler / DFGSpeculativeJIT compilation.
 
     // 32-bit negate
     void neg32(RegisterID src, RegisterID dest)
@@ -4640,21 +4385,6 @@ public:
         m_assembler.xscvhpdp(vsr(dest), vsr(src));
     }
 
-    // FP branches
-
-    // 32-bit arithmetic — 3-arg forms (DFGSpeculativeJIT.h:641-679)
-
-    // add32 with TrustedImm32 + Address — DFG/IC use.
-
-    // store32 with absolute pointer — DFGSpeculativeJIT.cpp:511 abortWithReason.
-
-    // branchTest32 with Address operand
-
-    // branchPtr with two Address operands — DFGJITCompiler.h:369
-
-    // getEffectiveAddress — InlineCacheCompiler.cpp:2840
-
-    // BaseIndex / TrustedImmPtr variants of FP load/store not already declared.
     Jump branchIfNaN(FPRegisterID reg)
     {
         // NaN iff reg is unordered with itself. fcmpu sets CR0[FU] (bit 3).
@@ -4696,7 +4426,6 @@ public:
         call(dataTempRegister, tag);
     }
 
-    // test32 — DFG/IC test-and-result. Mirrors RISCV64.
     void test32(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
     {
         if (mask.m_value == -1)
@@ -4740,8 +4469,6 @@ public:
         m_assembler.stb(dataTempRegister, r.offset, r.base);
     }
 
-    // Stores to absolute (raw void*) addresses — DFGOSRExit, DFGJITCompiler.
-    // (store64(RegisterID, void*) and store32(RegisterID, void*) already declared above.)
     void store8(TrustedImm32 imm, void* address)
     {
         moveImmToScratch(int64_t(imm.m_value), dataTempRegister);
@@ -4754,9 +4481,6 @@ public:
         store64(dataTempRegister, address);
     }
 
-    // add32 with TrustedImm32 + AbsoluteAddress — DFGOSRExitCompilerCommon.cpp:52
-
-    // moveWithPatch — DFGLazyJSValue.cpp:252.  Returns DataLabelPtr / DataLabel32.
     DataLabelPtr moveWithPatch(TrustedImmPtr initialValue, RegisterID dest)
     {
         DataLabelPtr label(this);
@@ -4772,13 +4496,6 @@ public:
         return label;
     }
 
-    // load32 with absolute pointer — DFGSpeculativeJIT.cpp:511.
-
-    // branchTest32 with AbsoluteAddress — DFGSpeculativeJIT.cpp:2460
-
-    // 3-arg add32 — DFGSpeculativeJIT.cpp:2693.
-
-    // FP truncate / convert / zero-to-double — DFGSpeculativeJIT.cpp.
     void branchConvertDoubleToInt32(FPRegisterID src, RegisterID dest, JumpList& failureCases, FPRegisterID fpTemp, bool negZeroCheck = true)
     {
         // Convert the (integer-valued) double to int32 via round-toward-zero,
@@ -4798,8 +4515,6 @@ public:
             valueIsNonZero.link(this);
         }
     }
-
-    // FP rounding / arithmetic — DFGSpeculativeJIT.
 
     // Byte-width test/compare and bitwise NOT.
     void test8(ResultCondition cond, Address address, TrustedImm32 mask, RegisterID dest)
@@ -4827,16 +4542,12 @@ public:
         zeroExtend32ToWordInternal(dest);
     }
 
-    // 4-arg branchAdd32 (ResultCondition, src1, src2, dest).
-
     // Imm64 overloads — Imm64 is privately derived from TrustedImm64, so callers
     // pass it explicitly for "untrusted" 64-bit immediates (range-check checked).
     Jump branch64(RelationalCondition cond, RegisterID left, Imm64 right)
     {
         return branch64(cond, left, right.asTrustedImm64());
     }
-
-    // FP arithmetic — DFGSpeculativeJIT.
 
     // Negate-with-branch-on-overflow.
     // srcDest = -srcDest (32-bit). Signed overflow iff srcDest was INT32_MIN.
@@ -4884,12 +4595,6 @@ public:
     }
     Jump branchMul64(ResultCondition cond, RegisterID src, RegisterID dest) { return branchMul64(cond, src, dest, dest); }
 
-    // FP truncate / bitwise — DFGSpeculativeJIT FP paths.
-
-    // branch32 / branch64 with memory operand source — DFG.
-    // (branch64(RelationalCondition, Address, RegisterID) is already declared above.)
-
-    // branchAdd32 with Address operand — DFG.
     Jump branchAdd32(ResultCondition cond, Address address, RegisterID dest)
     {
         load32(address, dataTempRegister);
@@ -4943,9 +4648,7 @@ public:
         zeroExtend32ToWordInternal(dest);
     }
     // Register byte-reverse: brh/brw/brd on POWER10, else rotate/mask sequences.
-    // Verified on POWER9 (bswap16(0xABCD)=0xCDAB, bswap32(0x11223344)=0x44332211,
-    // bswap64(0x1122334455667788)=0x8877665544332211). The 16- and 32-bit
-    // results are zero-extended.
+    // The 16- and 32-bit results are zero-extended.
     void byteSwap16(RegisterID reg)
     {
         if (supportsISA3_1()) {
@@ -4992,7 +4695,6 @@ public:
         m_assembler.or_(reg, reg, dataTempRegister);
     }
 
-    // Atomic CAS — Atomics typed-array operations in DFG.
     // Fold an Address/BaseIndex into a single register holding the full
     // effective address, as required by the indexed larx/stcx. forms (which
     // take rA+rB and no displacement). We pass rA=0, rB=this register.
@@ -5007,7 +4709,7 @@ public:
         return r.base;
     }
 
-    // Atomic weak compare-and-swap (Power ISA v2.07B larx/stcx.). Load-reserve,
+    // Atomic weak compare-and-swap (larx/stcx.). Load-reserve,
     // compare against `expected`, and if equal attempt a store-conditional of
     // `newValue`. The returned Jump follows the StatusCondition:
     //   Success -> taken iff the value matched AND the store-conditional held
@@ -5136,8 +4838,7 @@ public:
         // that store-conditional fails, but by then it has already replaced the
         // comparand with the observed value, so the retry compares the value
         // against itself, matches, and stores newValue: a mismatching CAS that
-        // writes. stcx. failures on the store-back made that happen here
-        // (stress/atomic-multimemory.js, memory64-atomics.js).
+        // writes, whenever the store-back's stcx. fails.
         move(tmp, expectedAndResult); // report the value we actually saw
         m_assembler.isync();
         move(TrustedImm32(cond == Failure), result);
@@ -5344,11 +5045,6 @@ public:
     void depend32(RegisterID src, RegisterID dest) { m_assembler.xor_(dest, src, src); zeroExtend32ToWordInternal(dest); }
     void depend64(RegisterID src, RegisterID dest) { m_assembler.xor_(dest, src, src); }
 
-
-    // sub32 with memory destination — DFGSpeculativeJIT64.cpp:4332/5858.
-
-    // branchPtr with BaseIndex — DFGSpeculativeJIT64.cpp:5830.
-
     // Float16 bit-pattern moves (see loadFloat16 for the in-FPR format).
     void move16ToFloat16(RegisterID src, FPRegisterID dest)
     {
@@ -5388,9 +5084,6 @@ public:
         }
     }
 
-    // 64-bit int ops on FP registers — used for NaN-boxing arithmetic in
-    // DFGSpeculativeJIT64.  Implementing these properly will need VSX/VMX
-    // (Power ISA v2.07B Book I §6) — out of scope for Phase 1.
     // 64-bit integer add/sub on values held in FP registers (dest = left +/-
     // right on the raw bit patterns). Used by DFGSpeculativeJIT64 to NaN-box /
     // unbox doubles (add/subtract DoubleEncodeOffset). PPC FPRs can't do integer
@@ -5411,11 +5104,6 @@ public:
         move64ToDouble(dataTempRegister, dest);
     }
 
-    // sub32 with Address source — DFG.
-
-    // 4-arg storePair32 (RegisterID, RegisterID, RegisterID baseGPR, TrustedImm32 offset)
-    // is the same as ARM64's pre-indexed pair store with a base+offset operand.
-
     // store32 to BaseIndex with immediate source.
     void store32(TrustedImm32 imm, BaseIndex address)
     {
@@ -5425,10 +5113,6 @@ public:
     // storeDouble to absolute pointer.
     // and32 with Address source.
 
-    // moveConditionally — 32-bit and test-64 forms.
-
-    // pushPair / popPair — frame management. ARM64 atomically pushes two regs;
-    // PPC64LE has no equivalent atomic — Phase 1 stub.
     void pushPair(RegisterID src1, RegisterID src2)
     {
         m_assembler.stdu(src1, -16, stackPointerRegister);
@@ -5441,15 +5125,6 @@ public:
         m_assembler.addi(stackPointerRegister, stackPointerRegister, 16);
     }
 
-    // Memory-source variants of FP arithmetic — DFG/IC.
-
-    // 16-bit memory branch and shift-add.
-
-    // xor32 with Address source — AssemblyHelpers.
-
-    // not64 — bitwise NOT.
-
-    // Atomic 64-bit load — AssemblyHelpers.
     // A naturally-aligned 64-bit ld is single-copy atomic on PPC64; add an
     // lwsync after it to give load-acquire ordering (matches loadAcq64 use).
     void atomicLoad64(Address address, RegisterID dest)
@@ -5477,9 +5152,6 @@ public:
         lshift64(memoryTempRegister, shiftAmount, dest);
     }
 
-    // farJump with TrustedImmPtr target — LLIntThunks.
-
-    // branchAdd32 with TrustedImm32 + Address — JITOpcodes.
     // In-memory add: [address] += imm, then branch on the 32-bit result. The
     // store MUST be emitted before the branch. Assumes an in-range (non-scratch
     // base) Address, which is the DFG/baseline norm; memoryTempRegister is then
@@ -5521,7 +5193,7 @@ public:
     // int/uint -> single-precision float. Mirrors convertInt32ToDouble but uses
     // the round-to-single convert (fcfids/fcfidus). Move the integer into the
     // FPR/VSR: mtvsrwa sign-extends a 32-bit source, mtvsrwz zero-extends it,
-    // mtvsrd moves a full 64-bit source. fcfids/fcfidus were verified on POWER9.
+    // mtvsrd moves a full 64-bit source.
     void convertInt32ToFloat(RegisterID src, FPRegisterID dest)
     {
         m_assembler.mtvsrwa(dest, src);
@@ -5543,7 +5215,6 @@ public:
         m_assembler.fcfidus(dest, dest);
     }
 
-    // branchTest8 with ExtendedAddress — YarrJIT.
     Jump branchTest8(ResultCondition cond, ExtendedAddress address, TrustedImm32 mask = TrustedImm32(-1))
     {
         // ExtendedAddress is a base register plus a (possibly large) offset.
@@ -5553,7 +5224,6 @@ public:
         return finishNarrowTest(cond, mask, 0xFF, /*halfword*/ false);
     }
 
-    // load16 with ExtendedAddress — YarrJIT's latin1CanonicalizationTable lookup.
     // As on x86_64/ARM64, the base register is a uint16_t index into the table
     // at `offset`: dest = *(uint16_t*)(offset + base * 2).
     void load16(ExtendedAddress address, RegisterID dest)
@@ -5563,7 +5233,6 @@ public:
         m_assembler.lhzx(dest, memoryTempRegister, dataTempRegister);
     }
 
-    // Unaligned 16-bit load — YarrJIT.
     // PPC64LE performs unaligned integer loads in hardware for cacheable
     // memory, so these are ordinary zero-extending loads.
     void load16Unaligned(Address address, RegisterID dest)
@@ -5582,12 +5251,7 @@ public:
         m_assembler.lwz(dest, r.offset, r.base);
     }
 
-    // Sign-extending loads to 64.
-
-    // loadPair32 / loadPair64 — paired loads.
-
-    // Bitfield extract — YarrJIT BoyerMoore SIMD path.
-    // dest = (src >> lsb) & ((1 << width) - 1). Verified on POWER9.
+    // dest = (src >> lsb) & ((1 << width) - 1).
     void extractUnsignedBitfield32(RegisterID src, TrustedImm32 lsb, TrustedImm32 width, RegisterID dest)
     {
         int l = lsb.m_value & 31, w = width.m_value;
@@ -5599,15 +5263,6 @@ public:
         m_assembler.rldicl(dest, src, (64 - l) & 63, 64 - w);
     }
 
-    // sub32 3-arg form (RegisterID,RegisterID,RegisterID) — DFG.
-
-    // moveConditionally64 — conditional move based on 64-bit compare.
-
-    // transferPtr Address → Address (additional overload; BaseIndex form already above).
-
-    // 64-bit logical 3-arg form — JITInlines.h. (or64 RegisterID×3 already declared above.)
-
-    // storePtrWithPatch / storePtr-with-patch + patch label — CallLinkInfo.cpp.
     DataLabelPtr storePtrWithPatch(TrustedImmPtr initialValue, Address address)
     {
         DataLabelPtr label = moveWithPatch(initialValue, dataTempRegister);
@@ -5619,7 +5274,6 @@ public:
         return storePtrWithPatch(TrustedImmPtr(nullptr), address);
     }
 
-    // Static patch helpers — JIT compile-time stubs (Phase 1 placeholders).
     template<PtrTag startTag, PtrTag destTag>
     static void replaceWithJump(CodeLocationLabel<startTag> instructionStart, CodeLocationLabel<destTag> destination)
     {
@@ -5652,7 +5306,6 @@ public:
         return CodePtr<resultTag>(PPC64Assembler::readCallTarget(call.dataLocation()));
     }
 
-    // Required by LinkBuffer — Phase 1 stub.
     friend class LinkBuffer;
     template<PtrTag tag>
     static void linkCall(void* code, Call call, CodePtr<tag> function)

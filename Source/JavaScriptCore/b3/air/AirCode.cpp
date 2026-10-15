@@ -103,43 +103,28 @@ Code::Code(Procedure& proc)
             all.remove(MacroAssembler::addressTempRegister);
 #endif // CPU(ARM)
 #if CPU(PPC64LE)
-            // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21
-            // (fpRegCS0-7) as VM callee-saves, so only those have a slot in
-            // the VMEntryRecord buffer, and no C-to-VM entry saves f22-f31 for
-            // its C caller. If Air used one of them and an exception unwound
-            // through the frame, the C caller's value would be lost. Keep f22-
-            // f31 out of the pool.
+            // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21 as
+            // VM callee-saves, and no C-to-VM entry saves f22-f31. An exception
+            // unwinding through Air code using them would lose the C caller's
+            // values, so keep them out of the pool.
             //
-            // r24-r30 are different: they are scratch to the LLInt, IPInt and
-            // the JITs, and pushCalleeSaves saves them at every C-to-VM entry,
-            // so Air may use them. It still saves them in its prologue (Air
-            // code can be called straight from C), and the unwinder drops them
-            // just as it does for ARMv7's non-VM callee-saves. Without them the
-            // GP pool is only r3-r10 and r14-r23: every JS call clobbers
-            // r3-r12 and r24-r30, so the two unspillable FTL tag constants
-            // (numberTag, notCellMask), which are live across those calls,
-            // end up with K-1 precolored neighbours each plus each other, and
-            // the graph-coloring allocators can neither simplify nor spill
-            // them ("No color for %tmpN").
+            // r24-r30 are scratch to the LLInt, IPInt and the JITs, and
+            // pushCalleeSaves saves them at every C-to-VM entry, so Air may use
+            // them (saving them in its prologue, as Air code can be called from
+            // C). Without them the graph-coloring allocators cannot color the
+            // unspillable FTL tag registers, which are live across calls.
             if (bank == FP) {
                 for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
                     all.remove(reg);
             }
-            // The MacroAssembler folds out-of-range immediates, wide offsets and
-            // scaled indices through its scratch registers, so anything Air holds
-            // in one of them is destroyed by the very next instruction that needs
-            // to fold. They are not in reservedHardwareRegisters (which must stay
-            // free of FPRs), so remove them here, as the ARM ports do. Only
-            // register pressure high enough to reach them exposes this, which
-            // made it look like sporadic miscompiles.
+            // The MacroAssembler's scratch registers are clobbered by immediate and
+            // offset folding. They are not in reservedHardwareRegisters (which must
+            // stay free of FPRs), so remove them here, as the ARM ports do.
             if (bank == GP) {
                 all.remove(MacroAssembler::dataTempRegister);
                 all.remove(MacroAssembler::memoryTempRegister);
-                // GPRInfo's non-preserved non-argument scratch registers are
-                // r29/r30, which C calls preserve. CCallSpecial and FTL/wasm
-                // patchpoints use them as scratch around C calls without
-                // declaring them clobbered, which is only sound if Air never
-                // holds a value in them. See GPRInfo.h.
+                // CCallSpecial and patchpoints use GPRInfo's r29/r30 scratch
+                // registers without declaring them clobbered. See GPRInfo.h.
                 static_assert(GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::nonArgGPR0 && GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::regWS0 && GPRInfo::nonPreservedNonArgumentGPR0 == GPRInfo::wasmScratchGPR0);
                 static_assert(GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::nonArgGPR1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::regWS1 && GPRInfo::nonPreservedNonArgumentGPR1 == GPRInfo::wasmScratchGPR1);
                 all.remove(GPRInfo::nonPreservedNonArgumentGPR0);

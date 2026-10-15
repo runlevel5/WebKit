@@ -43,9 +43,8 @@ JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampoline);
 
 extern "C" void SYSV_ABI executeJSCJITProbe(Probe::State*) REFERENCED_FROM_ASM;
 
-// Probe::State layout, mirrored as numeric offsets for the handwritten
-// assembly below and confirmed against offsetof() via static_assert (the
-// RISCV64 port's approach).
+// Probe::State layout as numeric offsets for the handwritten assembly below,
+// checked against offsetof() by static_asserts.
 #define PTR_SIZE 8
 #define PROBE_PROBE_FUNCTION_OFFSET (0 * PTR_SIZE)
 #define PROBE_ARG_OFFSET (1 * PTR_SIZE)

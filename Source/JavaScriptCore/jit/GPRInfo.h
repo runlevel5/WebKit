@@ -862,12 +862,9 @@ public:
 class GPRInfo {
 public:
     typedef GPRReg RegisterType;
-    // 8 volatile temps (r3-r10) plus the 6 non-reserved callee-saved GPRs
-    // (r14-r19 = regCS0-regCS5). regCS6-9 (r20-r23) are reserved for
-    // metadataTable/jitData/numberTag/notCellMask and stay out of the pool.
-    // The callee-saves are in calleeSaveRegisters() so the register allocator
-    // preserves them; a larger pool is needed for complex inline caches
-    // (put_by_val_direct, defineProperty) which otherwise exhaust scratch GPRs.
+    // The 8 volatile temps r3-r10 plus regCS0-regCS5 (r14-r19); regCS6-9 hold
+    // metadataTable/jitData/numberTag/notCellMask. Complex inline caches need
+    // more than the 8 volatiles.
     static constexpr unsigned numberOfRegisters = 14;
     static constexpr unsigned numberOfArgumentRegisters = NUMBER_OF_ARGUMENT_REGISTERS;
 
@@ -909,27 +906,15 @@ public:
     static constexpr GPRReg argumentGPR6 = PPC64Registers::r9;  // regT6
     static constexpr GPRReg argumentGPR7 = PPC64Registers::r10; // regT7
 
-    // ELFv2 has no volatile GPR outside the argument registers r3-r10 and
-    // r11/r12, and r11/r12 are MacroAssemblerPPC64's dataTempRegister and
-    // memoryTempRegister, which almost any MacroAssembler operation may
-    // overwrite (folding an immediate, a wide offset or an absolute address).
-    // A "non-preserved non-argument" scratch that callers keep a value in
-    // across MacroAssembler operations therefore cannot live there: e.g. BBQ's
-    // wasmScratchGPR held a counter address in r11 and branchAdd32 loaded the
-    // counter into r11 on top of it. Use r29/r30 instead. They are ELFv2
-    // callee-saved, but to JSC they are scratch: the LLInt and IPInt use them
-    // as offlineasm temporaries, no JIT tier preserves them across JS calls
-    // (they are not VM callee-saves), and pushCalleeSaves saves them for the C
-    // caller at every C-to-VM entry. They are kept out of Air's register pool
-    // (AirCode.cpp), so Air never holds a value in them, which is what lets
-    // CCallSpecial and FTL patchpoints use them as scratch without declaring
-    // them clobbered. Being preserved by C calls is merely more than these
-    // names promise.
+    // ELFv2's only volatile non-argument GPRs are r11/r12, which are the
+    // MacroAssembler's dataTempRegister and memoryTempRegister and so cannot
+    // hold a value across MacroAssembler operations. Use r29/r30: ELFv2
+    // callee-saved, but scratch to JSC. The LLInt and IPInt use them as
+    // temporaries, they are not VM callee-saves, pushCalleeSaves saves them at
+    // C-to-VM entry, and Air never allocates them (AirCode.cpp), so
+    // CCallSpecial and FTL patchpoints may use them without declaring a clobber.
     //
-    // These are JIT-side names only. offlineasm's ws0/ws1 stay r11/r12: the
-    // offlineasm backend itself scratches through r0 and r27-r30, not r11/r12,
-    // and on PPC64 no JIT thunk and no offlineasm code hand a value to each
-    // other through these registers (the gates that do are ARM64E-only).
+    // These are JIT-side names only; offlineasm's ws0/ws1 stay r11/r12.
     static constexpr GPRReg nonArgGPR0 = PPC64Registers::r29;
     static constexpr GPRReg nonArgGPR1 = PPC64Registers::r30;
 
@@ -940,9 +925,7 @@ public:
     static constexpr GPRReg nonPreservedNonArgumentGPR0 = PPC64Registers::r29;
     static constexpr GPRReg nonPreservedNonArgumentGPR1 = PPC64Registers::r30;
 
-    // r12 is assembler scratch and not in the 8-reg allocatable pool {r3..r10}.
-    // StaticScratchRegisterAllocator requires handlerGPR to be in the pool.
-    // Use r10 (= regT7 = argumentGPR7) which is the last pool register.
+    // StaticScratchRegisterAllocator requires handlerGPR to be allocatable.
     static constexpr GPRReg handlerGPR = PPC64Registers::r10;
 
     static constexpr GPRReg wasmScratchGPR0 = PPC64Registers::r29;

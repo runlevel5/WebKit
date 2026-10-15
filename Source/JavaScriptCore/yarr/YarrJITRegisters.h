@@ -168,19 +168,13 @@ public:
     static constexpr GPRReg matchingContext = PPC64Registers::r7;
     static constexpr GPRReg freelistRegister = InvalidGPRReg;
 
-    // Scratch registers. ELFv2 has only eight volatile GPRs that are free to
-    // use (r3-r10; r0 is the linkRegister placeholder and r11/r12 are the
-    // MacroAssembler's own scratches), and five of them carry arguments. The
-    // rest come from the ELFv2 callee-saved r24-r28, which the generated code
-    // saves and restores itself (calleeSaveRegisters() below), exactly like
-    // x86_64's rbx/r12-r15. They stay clear of the JSC-reserved r20-r23,
-    // r29/r30 (the JIT's non-preserved scratches) and r31 (fp).
+    // Scratch registers. Only r3-r10 are free volatile GPRs and five carry
+    // arguments, so the rest are the ELFv2 callee-saved r24-r28, which the
+    // generated code saves itself, like x86_64's rbx/r12-r15.
     static constexpr GPRReg regT0 = PPC64Registers::r8;
     static constexpr GPRReg regT1 = PPC64Registers::r9;
     static constexpr GPRReg regT2 = PPC64Registers::r10;
-    // No volatile GPR is left for a fourth scratch, so regT3 is ELFv2
-    // callee-saved r19 (clear of the JSC-reserved r20-r23), saved whenever the
-    // generated code runs as a function (see calleeSaveRegisters()).
+    // No volatile GPR is left for regT3, so it is the callee-saved r19.
     static constexpr GPRReg regT3 = PPC64Registers::r19;
     static constexpr GPRReg initialStart = PPC64Registers::r24;
     static constexpr GPRReg remainingMatchCount = PPC64Registers::r25;

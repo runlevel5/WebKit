@@ -50,10 +50,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> handleExceptionGenerator(VM& vm)
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
 
     jit.move(CCallHelpers::TrustedImmPtr(&vm), GPRInfo::argumentGPR0);
-    // This thunk is jumped to with whatever sp the throwing code had, which for
-    // FTL is the bottom of the Air frame. On PPC64 the C callee writes its
-    // CR/LR/TOC saves at sp+8..sp+31, so give it the slow-path extent (0 on ARM64
-    // and x86_64). Not reclaimed: every handler re-derives sp from its frame.
+    // sp here is the throwing code's, e.g. the bottom of an FTL frame, and an ELFv2
+    // C callee saves CR/LR/TOC at sp + 8..31. Not reclaimed: handlers reset sp.
     jit.makeSpaceOnStackForCCall();
     jit.prepareCallOperation(vm);
     CCallHelpers::Call operation = jit.call(OperationPtrTag);
@@ -140,9 +138,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallGenerator(VM& vm)
     jit.emitFunctionPrologue();
 
 #if CPU(PPC64LE)
-    // ELFv2: the C call below has its callee save our LR/TOC at 16(sp)/24(sp),
-    // which alias this frame's codeBlock/callee slots. Reserve a scratch
-    // linkage area first (the exception handler resets sp, so no restore).
+    // ELFv2: the C callee saves LR/TOC at 16(sp)/24(sp), this frame's codeBlock and
+    // callee slots. The exception handler resets sp.
     if (maxFrameExtentForSlowPathCall)
         jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
 #endif
@@ -169,8 +166,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallSlowPathGenerator(VM
     jit.preserveReturnAddressAfterCall(GPRInfo::nonPreservedNonReturnGPR);
 
 #if CPU(PPC64LE)
-    // ELFv2: reserve a scratch linkage area so the C call's LR/TOC save at
-    // 16(sp)/24(sp) does not clobber a live call frame's codeBlock/callee.
+    // ELFv2: the C callee's LR/TOC saves at 16(sp)/24(sp) would clobber the frame's
+    // codeBlock and callee slots.
     if (maxFrameExtentForSlowPathCall)
         jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
 #endif
@@ -499,14 +496,9 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
     jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 
 #if CPU(PPC64LE)
-    // ELFv2 requires a called C function to save the caller's LR at 16(sp)
-    // and TOC at 24(sp) *before* allocating its own frame — writing into the
-    // caller's frame. This native thunk's frame is just the 2-word JS call
-    // header, so 16(sp)/24(sp) alias the codeBlock and callee slots. Reserve
-    // a scratch linkage+param area (matching every other C-call site) so the
-    // host clobbers scratch instead of the live JS call frame. sp is reset
-    // from fp by emitFunctionEpilogue / the exception handler, so no explicit
-    // restore is needed.
+    // An ELFv2 C callee saves LR and TOC at 16(sp)/24(sp), in its caller's frame,
+    // which here are the JS frame's codeBlock and callee slots. sp is reset from fp
+    // afterwards, so there is no explicit restore.
     if (maxFrameExtentForSlowPathCall)
         jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(maxFrameExtentForSlowPathCall)), CCallHelpers::stackPointerRegister);
 #endif
@@ -1448,10 +1440,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationThrowStackOverflowErrorFromThunk)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
@@ -1546,11 +1535,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeBoundFunctionTargetCode)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // Reserve the C-call linkage/parameter area so the callee's ABI prologue
-    // saves (e.g. its LR at [sp+16] under ELFv2) land in scratch rather than
-    // clobbering the callee JS frame being built here — on PPC the JS frame's
-    // argumentCount slot overlaps [sp+16] at this point. No-op on platforms
-    // where maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The ELFv2 callee's LR save at sp + 16 would clobber the argumentCount slot
+    // of the frame being built.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.reclaimSpaceOnStackForCCall();
@@ -1565,10 +1551,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
@@ -1629,10 +1612,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationThrowStackOverflowErrorFromThunk)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.jumpToExceptionHandler(vm);
@@ -1685,10 +1665,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
         jit.prepareCallOperation(vm);
         jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationGetWrappedValueForTarget)), GPRInfo::nonArgGPR0);
         emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-        // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-        // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-        // Reserve the linkage+parameter area first. No-op where
-        // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+        // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
         jit.makeSpaceOnStackForCCall();
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
         jit.reclaimSpaceOnStackForCCall();
@@ -1729,10 +1706,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeRemoteFunctionTargetCode)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.reclaimSpaceOnStackForCCall();
@@ -1775,10 +1749,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationGetWrappedValueForCaller)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.reclaimSpaceOnStackForCCall();
@@ -1794,10 +1765,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.prepareCallOperation(vm);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
     emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
-    // ELFv2: the callee writes its CR/LR/TOC saves into this frame at
-    // [sp+8]/[sp+16]/[sp+24], which is the JS call frame header built above.
-    // Reserve the linkage+parameter area first. No-op where
-    // maxFrameExtentForSlowPathCall == 0 (x86_64/ARM64).
+    // The C callee saves CR/LR/TOC at sp + 8..31 under ELFv2, which is the frame built above.
     jit.makeSpaceOnStackForCCall();
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
     jit.reclaimSpaceOnStackForCCall();

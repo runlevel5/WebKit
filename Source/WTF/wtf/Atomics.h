@@ -308,11 +308,9 @@ inline void loadLoadFence() { std::atomic_thread_fence(std::memory_order_seq_cst
 inline void loadStoreFence() { std::atomic_thread_fence(std::memory_order_seq_cst); }
 inline void storeLoadFence() { std::atomic_thread_fence(std::memory_order_seq_cst); }
 inline void storeStoreFence() { std::atomic_thread_fence(std::memory_order_seq_cst); }
-// Power's instruction cache is not coherent with the data cache, and `sync`
-// (what a seq_cst thread fence compiles to) does not discard instructions the
-// processor has already prefetched. Only `isync` does, and the ISA requires it
-// to be executed by *each* processor that will run the modified instructions.
-// See Power ISA v2.07B Book II, "Instruction Storage".
+// `sync` (a seq_cst fence) does not discard instructions the processor has
+// already prefetched; `isync` does, and each processor that will run the
+// modified instructions must execute it.
 inline void crossModifyingCodeFence() { ppc_isync(); }
 
 #else

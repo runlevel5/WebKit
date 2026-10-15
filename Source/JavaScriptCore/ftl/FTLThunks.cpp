@@ -89,11 +89,8 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
         (stackMisalignment - pushToSaveByteOffset) / sizeof(void*));
     jit.prepareCallOperation(vm);
 #if CPU(PPC64LE)
-    // ELFv2: the C callee writes its linkage area into the caller's frame
-    // (CR save at [sp+8], LR at [sp+16], TOC at [sp+24]). The pushToSave
-    // slots this thunk just laid out live exactly there, and the saved frame
-    // pointer at [sp+16] would come back as the call's return address.
-    // Reserve the slow-path call extent for the duration of the call.
+    // An ELFv2 C callee saves CR/LR/TOC at sp + 8..31, where this thunk's
+    // pushToSave slots are.
     jit.makeSpaceOnStackForCCall();
 #endif
     jit.callOperation<OperationPtrTag>(generationFunction.retagged<OperationPtrTag>());

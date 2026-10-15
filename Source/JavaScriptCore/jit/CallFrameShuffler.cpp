@@ -459,9 +459,7 @@ void CallFrameShuffler::prepareForTailCall()
 #endif
 
 #elif CPU(PPC64LE)
-    // linkRegister is an r0 placeholder on PPC; loadPtr into it would not touch
-    // the real LR. Load the caller's return PC and commit it to LR via mtlr, so
-    // the tail-callee returns to the caller's caller.
+    // linkRegister is only a placeholder on PPC64; load the return PC into LR.
     m_jit.restoreReturnAddressBeforeReturn(MacroAssembler::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()));
 #endif
 
