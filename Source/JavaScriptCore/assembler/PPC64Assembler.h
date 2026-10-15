@@ -1595,6 +1595,12 @@ public:
         ASSERT(uim <= 14);
         insn(vxForm(4, vrt, PPC64Registers::v0, vrb, 845) | (uim << 16));
     }
+    // CR field BF's GT bit = whether the low byte of RA equals any byte of RB.
+    void cmpeqb(unsigned bf, RegisterID ra, RegisterID rb)
+    {
+        ASSERT(bf < 8);
+        insn((31u << 26) | (bf << 23) | (registerValue(ra) << 16) | (registerValue(rb) << 11) | (224u << 1));
+    }
     // Byte-reverse each halfword / word / doubleword of RS.
     void brh(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 219, /*Rc*/ 0)); }
     void brw(RegisterID ra, RegisterID rs) { insn(xForm(31, rs, ra, PPC64Registers::r0, /*XO*/ 155, /*Rc*/ 0)); }

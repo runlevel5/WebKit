@@ -2888,6 +2888,17 @@ public:
         m_assembler.or_(dest, dest, dataTempRegister);
         m_assembler.srdi(dest, dest, 63);
     }
+    // Branch if the low byte of character equals any byte of set, which the
+    // caller pads by repeating a member. POWER9 only (cmpeqb).
+    Jump branchCharacterInByteSet(RegisterID character, uint64_t set)
+    {
+        ASSERT(supportsISA3_00());
+        ASSERT(character != dataTempRegister);
+        moveImmToScratch(static_cast<int64_t>(set), dataTempRegister);
+        m_assembler.cmpeqb(0, character, dataTempRegister);
+        return Jump(m_assembler.emitUnlinkedBranch(12, 1)); // CR0 GT set
+    }
+
     // Zero / NonZero on all 128 bits of vec.
     Jump branchTest128(ResultCondition cond, FPRegisterID vec)
     {

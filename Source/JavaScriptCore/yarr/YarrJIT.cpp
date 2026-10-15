@@ -1069,6 +1069,23 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
 
+#if CPU(PPC64LE)
+        // POWER9's cmpeqb tests a character against up to eight bytes at once.
+        // It compares only the low byte, so wider characters are excluded first.
+        if (matches.size() <= 8 && matches.back() <= 0xff && MacroAssembler::supportsISA3_00()) {
+            uint64_t set = 0;
+            for (unsigned i = 0; i < 8; ++i)
+                set |= static_cast<uint64_t>(matches[std::min<size_t>(i, matches.size() - 1)]) << (8 * i);
+            MacroAssembler::Jump notLatin1;
+            if (m_charSize != CharSize::Char8)
+                notLatin1 = m_jit.branch32(MacroAssembler::Above, character, MacroAssembler::TrustedImm32(0xff));
+            matchDest.append(m_jit.branchCharacterInByteSet(character, set));
+            if (notLatin1.isSet())
+                notLatin1.link(&m_jit);
+            return;
+        }
+#endif
+
         // If we have multiple matches close together (not necessarily contiguous), we
         // can try a biased bitmask - subtract the minimum match from the character,
         // then see if it's present in a precomputed mask. We keep the bitset size quite
