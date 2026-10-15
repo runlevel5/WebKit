@@ -280,8 +280,16 @@ Build traps — both look like compile errors that contradict the file you just 
 
 - **POWER8 silicon** — the largest risk. Everything ran on POWER9/POWER10, with POWER8 paths tested
   only by capping the ISA level, which cannot catch an unguarded newer instruction.
-- POWER9 performance candidates: vector lane insert/extract (`vinsertw`, `vextublx`), `cmpeqb` for
-  Yarr character classes.
+- POWER9 candidates, measured on POWER9 (worth doing):
+  - wasm replace_lane without the GPR round trip: i32 `mtvsrwz; xxinsertw` 3.58 → 0.87 ns,
+    f32 `xscvdpspn; xxsldwi; xxinsertw` 3.24 → 0.93 ns, i8/i16 `vinsertb/h` (plus VR copies)
+    3.19 → 2.02 ns, in a dependent chain. Self-contained in MacroAssemblerPPC64.
+    Extract lane gains nothing (`mfvsrld` vs `xxswapd; mfvsrd`: same time).
+  - Yarr `cmpeqb` for classes of up to 8 Latin-1 characters that now use a compare chain or the
+    64-bit bit test: `[,;:]` 1.63 → 0.70 ns/char, `[aeiou]` 1.81 → 1.01 (random input 3.70 → 1.18).
+    Needs a hook in the shared matchCharacterClassSet and, for 16-bit strings, a `> 0xff` guard
+    (cmpeqb compares only the low byte). `cmprb` for one or two ranges is not worth it
+    (`[a-zA-Z]` 1.56 → 1.54 ns on text). Classes spanning 64+ characters already use a table.
 - Not worth doing: POWER10 prefixed `pli`/`pla`. Measured on POWER10, a pointer constant
   (`li; sldi; oris; ori` vs `pli; sldi; ori`), an int32 (`lis; ori` vs `pli`) and a far call
   (`li64; mtctr; bctrl` vs `pla r12; mtctr; bctrl`) run at the same speed, and only the far call
