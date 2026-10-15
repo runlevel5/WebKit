@@ -51,7 +51,7 @@ namespace MachineContext {
 using PPC64LEGPRegs = decltype(mcontext_t::gp_regs);
 static_assert(std::is_array_v<PPC64LEGPRegs>, "mcontext_t::gp_regs is expected to be a flat gregset_t array.");
 static_assert(sizeof(std::remove_extent_t<PPC64LEGPRegs>) == sizeof(void*), "gp_regs slots must be pointer sized; the accessors below reinterpret_cast them to void*&.");
-static_assert(std::extent_v<PPC64LEGPRegs> > PT_NIP, "gp_regs must be long enough to hold the NIP slot.");
+static_assert(std::extent_v<PPC64LEGPRegs> > PT_NIP && std::extent_v<PPC64LEGPRegs> > PT_LNK, "gp_regs must be long enough to hold the NIP and LR slots.");
 // gp_regs[n] is rn.
 static_assert(PT_R1 == 1 && PT_R4 == 4 && PT_R7 == 7 && PT_R14 == 14 && PT_R31 == 31, "gp_regs is expected to be indexed by register number.");
 #endif
@@ -551,6 +551,12 @@ inline CodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters& 
     void* value = __darwin_arm_thread_state64_get_lr_fptr(regs);
 #endif
     return CodePtr<PlatformRegistersLRPtrTag>(value);
+}
+#elif CPU(PPC64LE) && HAVE(MACHINE_CONTEXT) && (OS(LINUX) || OS(FUCHSIA) || OS(HURD))
+
+inline CodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters& regs)
+{
+    return CodePtr<PlatformRegistersLRPtrTag>(reinterpret_cast<void*>(regs.machineContext.gp_regs[PT_LNK]));
 }
 #endif // OS(DARWIN) && CPU(ARM64)
 
