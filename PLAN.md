@@ -17,8 +17,9 @@ On by default, all tested on POWER9 and POWER10:
 - LLInt (offlineasm backend), Baseline, DFG, FTL (B3/Air).
 - WebAssembly: IPInt (including SIMD), BBQ, OMG; SIMD, tail calls, wide arithmetic; signal-based
   bounds checks (`useWasmFastMemory`, `useWasmFaultSignalHandler`).
-- Yarr RegExp JIT (all features ARM64 has except the SIMD searches), sampling profiler,
-  signal-based VM traps, jump islands, branch compaction.
+- Yarr RegExp JIT (all features ARM64 has, including the SIMD Boyer-Moore and multi-pattern
+  searches), sampling profiler (with `--sampleCCode`), signal-based VM traps, jump islands,
+  branch compaction.
 - Float16 JIT paths on POWER9+; POWER9/POWER10 fast paths (see ISA levels below).
 
 Latest gates (2.54.1 suites):
@@ -143,7 +144,9 @@ are entered as leaves with the return address in LR and must spill it before a n
 option `maximumPPC64ISALevel` (`JSC_maximumPPC64ISALevel=207|300|310`). Gated instructions:
 
 - 3.0: `cnttzw/d`, `modsw/uw/sd/ud` (DFG, BBQ, Air `Mod32/UMod32/Mod64/UMod64`),
-  `xsmaxjdp/xsminjdp`, `xscvhpdp/xscvdphp` (Float16).
+  `xsmaxjdp/xsminjdp`, `xscvhpdp/xscvdphp` (Float16), `xxinsertw`/`vinsertb/h` (wasm
+  replace_lane), `cmpeqb` (Yarr classes of up to 8 Latin-1 characters; 16-bit strings exclude
+  characters above 0xff first, since it compares only the low byte).
 - 3.1: `brh/brw/brd`, `setbc/setbcr`, `vmulld`, `vextract{b,h,w,d}m`.
 
 `xsmaxjdp/xsminjdp` return a signalling NaN unquieted: fine for JS (NaNs are purified), wrong for
@@ -280,25 +283,20 @@ Build traps — both look like compile errors that contradict the file you just 
 
 - **POWER8 silicon** — the largest risk. Everything ran on POWER9/POWER10, with POWER8 paths tested
   only by capping the ISA level, which cannot catch an unguarded newer instruction.
-- POWER9 candidates, measured on POWER9 (worth doing):
-  - wasm replace_lane without the GPR round trip: i32 `mtvsrwz; xxinsertw` 3.58 → 0.87 ns,
-    f32 `xscvdpspn; xxsldwi; xxinsertw` 3.24 → 0.93 ns, i8/i16 `vinsertb/h` (plus VR copies)
-    3.19 → 2.02 ns, in a dependent chain. Self-contained in MacroAssemblerPPC64.
-    Extract lane gains nothing (`mfvsrld` vs `xxswapd; mfvsrd`: same time).
-  - Yarr `cmpeqb` for classes of up to 8 Latin-1 characters that now use a compare chain or the
-    64-bit bit test: `[,;:]` 1.63 → 0.70 ns/char, `[aeiou]` 1.81 → 1.01 (random input 3.70 → 1.18).
-    Needs a hook in the shared matchCharacterClassSet and, for 16-bit strings, a `> 0xff` guard
-    (cmpeqb compares only the low byte). `cmprb` for one or two ranges is not worth it
-    (`[a-zA-Z]` 1.56 → 1.54 ns on text). Classes spanning 64+ characters already use a table.
+- Measured and not worth doing: POWER9 extract lane (`mfvsrld` runs as fast as
+  `xxswapd; mfvsrd`) and `cmprb` for one or two RegExp ranges (`[a-zA-Z]` 1.56 → 1.54 ns/char).
 - Not worth doing: POWER10 prefixed `pli`/`pla`. Measured on POWER10, a pointer constant
   (`li; sldi; oris; ori` vs `pli; sldi; ori`), an int32 (`lis; ori` vs `pli`) and a far call
   (`li64; mtctr; bctrl` vs `pla r12; mtctr; bctrl`) run at the same speed, and only the far call
   is smaller (12 bytes, mostly in cold slow paths). Prefixed instructions must not cross a 64-byte
   boundary, which LinkBuffer's branch compaction and the allocator's alignment do not preserve.
-- Yarr: SIMD Boyer-Moore and multi-pattern searches are ARM64/x86_64-only;
-  `maximumRegExpTestInlineCodesize` (500 bytes) is untuned for PPC64's larger code (~4 of 23 sample
-  patterns inline).
-- `--sampleCCode`: GCC does not keep a frame pointer; needs `-fno-omit-frame-pointer` or an unwinder.
+- Yarr: `maximumRegExpTestInlineCodesize` (500 bytes) is untuned for PPC64's larger code (~4 of 23
+  sample patterns inline). The RegExp fuzzer (`fuzz.sh 1 300 3000`) shows JIT/interpreter
+  disagreements on ~41 seeds that predate the PPC64 Yarr work (identical JIT output before and
+  after it); they are not yet classified beyond the known case-folding interpreter bug.
+- `--sampleCCode` walks C frames by the ELFv2 back chain, so only the C frames above the first JS
+  frame are recorded, and internal (hidden) functions show as `(unknown C PC)`: `dladdr` sees only
+  exported symbols.
 - Narrow integer *register* arguments on FTL slow-path calls are not widened (see ELFv2 calls).
 - ASSERT build: `stack-overflow-llint-large-params-and-large-locals.js` (`no-llint`) needs a 35.6 MB
   single allocation, more than one island region holds.
