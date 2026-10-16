@@ -985,7 +985,7 @@ void SpeculativeJIT::emitCall(Node* node)
         // - The caller frame and PC of a call to operationCallDirectEvalSloppy/operationCallDirectEvalStrict.
         // - Potentially two arguments on the stack.
         CodeBlock* baselineCodeBlock = m_graph.baselineCodeBlockFor(staticOrigin);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // An ELFv2 C callee writes into [sp, sp + maxFrameExtentForSlowPathCall).
         // The eval callee frame's CallerFrameAndPC is at sp - 16, so reserve the
         // C-call area below it.
@@ -1042,7 +1042,7 @@ void SpeculativeJIT::emitCall(Node* node)
                     loadPtr(Address(GPRInfo::argumentGPR2, JSCallee::offsetOfScopeChain()), GPRInfo::argumentGPR0);
                 }
                 move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 // An ELFv2 C callee saves CR/LR/TOC at sp + 8..31, in its caller's
                 // frame, and sp == cfr here, so those saves would overwrite this
                 // frame's header.
@@ -1126,7 +1126,7 @@ void SpeculativeJIT::emitCall(Node* node)
             if (isX86())
                 pop(selectScratchGPR(calleeGPR));
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // calleeGPR is dead once the callee is stored into the staged frame, so on a relink
             // it may hold something else. Reload the callee from its slot.
             load64(calleeFrameSlot(CallFrameSlot::callee), calleeGPR);

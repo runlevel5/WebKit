@@ -76,7 +76,7 @@ public:
     // It offers DerivedClass::materialize and poke functions.
     class ConstantMaterializer { };
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // ELFv2 gives every C argument, integer or floating point, one doubleword of
     // the parameter save area by its position in the argument list, starting
     // after the 32-byte linkage area at sp + 32. Positions 0-7 are also r3-r10:
@@ -132,7 +132,7 @@ public:
         }
 
         functor(GPRInfo::nonArgGPR0);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // Every argument here is GPR-class, so the index is the ELFv2 position.
         poke(GPRInfo::nonArgGPR0, elfV2ParameterSaveAreaOffsetInWords + argumentIndex);
 #else
@@ -350,7 +350,7 @@ private:
             return ArgCollection<numGPRArgs, numGPRSources, numFPRArgs, numFPRSources, numCrossSources, extraGPRArgs, nonArgGPRs, extraPoke + 1>(*this);
         }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // ELFv2: an FP argument skips its GPR, so an integer argument's GPR is
         // chosen by its position among all arguments, not by the GP count.
         // FP arguments still select FPRs by FP count.
@@ -395,7 +395,7 @@ private:
 
     ALWAYS_INLINE unsigned calculatePokeOffset(unsigned currentGPRArgument, unsigned currentFPRArgument, unsigned numCrossSources, unsigned extraGPRArgs, unsigned nonArgGPRs, unsigned extraPoke)
     {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // The argument's ELFv2 position is the number of arguments of either bank
         // before it; its doubleword is at sp + 32 + 8 * position (see
         // elfV2ArgumentGPRs). extraGPRArgs, numCrossSources and extraPoke are
@@ -461,7 +461,7 @@ private:
     template<typename OperationType, unsigned numGPRArgs, unsigned numGPRSources, unsigned numFPRArgs, unsigned numFPRSources, unsigned numCrossSources, unsigned extraGPRArgs, unsigned nonArgGPRs, unsigned extraPoke, typename RegType, typename... Args>
     ALWAYS_INLINE void marshallArgumentRegister(ArgCollection<numGPRArgs, numGPRSources, numFPRArgs, numFPRSources, numCrossSources, extraGPRArgs, nonArgGPRs, extraPoke> argSourceRegs, RegType arg, Args... args)
     {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // Decided at compile time: instantiating the register path for an argument
         // that goes to memory would size the source arrays past the register file
         // (FPRInfo has 13 registers, so a 14th FP argument could not compile).
@@ -635,7 +635,7 @@ private:
         // gross so it's probably better to do that marshalling before the call operation...
         static_assert(!std::is_floating_point_v<CURRENT_ARGUMENT_TYPE>, "We don't support immediate floats/doubles in setupArguments");
         auto numArgRegisters = GPRInfo::numberOfArgumentRegisters;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // ELFv2: FP arguments consume their GPR slot, so an immediate integer
         // argument's register is selected by total argument position, matching
         // ArgCollection::argCount(GPRReg).
@@ -645,7 +645,7 @@ private:
 #endif
         if (currentArgCount < numArgRegisters) {
             setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // ELFv2 has the caller extend a 32-bit argument to 64 bits by its
             // signedness, but move(TrustedImm32) zero-extends. Materialize the
             // immediate with the C argument type's own extension.
@@ -662,7 +662,7 @@ private:
             return;
         }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // In memory too, ELFv2 has the caller extend an int to its whole doubleword.
         if constexpr (std::is_same_v<std::decay_t<Arg>, TrustedImm32> && std::is_integral_v<CURRENT_ARGUMENT_TYPE> && sizeof(CURRENT_ARGUMENT_TYPE) <= 4) {
             if constexpr (std::is_signed_v<CURRENT_ARGUMENT_TYPE>)
@@ -712,7 +712,7 @@ private:
     {
         static_assert(!std::is_floating_point_v<CURRENT_ARGUMENT_TYPE>, "We don't support immediate floats/doubles in setupArguments");
         auto numArgRegisters = GPRInfo::numberOfArgumentRegisters;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // ELFv2 position, as in ArgCollection::argCount(GPRReg).
         auto currentArgCount = numGPRArgs + numFPRArgs + extraGPRArgs;
 #else
@@ -729,7 +729,7 @@ private:
         setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
     }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     template<typename ArgumentType>
     void widenNarrowIntegerArgument(GPRReg reg)
     {
@@ -784,7 +784,7 @@ private:
                 GPRReg argReg = GPRInfo::toArgumentRegister(gprIndex);
                 signExtend32ToPtr(argReg, argReg);
             }
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // ELFv2 likewise has the caller sign- or zero-extend every narrow integer argument
             // to 64 bits, and compiled callees rely on it. JIT code leaves the upper half of a
             // 32-bit value unspecified (a DFG int32 may still carry the number tag). The register
@@ -861,7 +861,7 @@ private:
 
 public:
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // JIT C-call sites reserve maxFrameExtentForSlowPathCall bytes at sp for the
     // callee's linkage area and any memory arguments. An operation that needs
     // more must raise it rather than have its arguments stored past the area.
@@ -1052,7 +1052,7 @@ public:
 #elif CPU(X86_64)
         push(Address(framePointerRegister, sizeof(void*)));
         subPtr(TrustedImm32(sizeof(void*)), newFrameSizeGPR);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         // linkRegister is only a placeholder on PPC64; restore the caller's return PC
         // to LR. As on ARM64, the callee prologue re-pushes fp and the return PC.
         restoreReturnAddressBeforeReturn(Address(framePointerRegister, CallFrame::returnPCOffset()));

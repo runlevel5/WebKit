@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#if ENABLE(ASSEMBLER) && CPU(PPC64)
 
 #include "AbstractMacroAssembler.h"
 #include "PPC64Assembler.h"
@@ -4269,7 +4269,7 @@ public:
     // ABI: they run their GEP off r12 (we set it), scribble the caller's
     // linkage area at sp+0..31, and may clobber r2 (TOC).  Every JSC
     // C-call site reserves maxFrameExtentForSlowPathCall (96 bytes on
-    // PPC64LE) below the live frame, so sp+24 — the ELFv2 TOC save slot —
+    // PPC64) below the live frame, so sp+24 — the ELFv2 TOC save slot —
     // is ours to save/restore r2 across the call.  JS callees follow the
     // JSC convention (caller-arranged frame; writing sp+24 would corrupt
     // an argument slot), so they get a bare mtctr/bctrl.
@@ -5279,7 +5279,7 @@ public:
         m_assembler.lhzx(dest, memoryTempRegister, dataTempRegister);
     }
 
-    // PPC64LE performs unaligned integer loads in hardware for cacheable
+    // PPC64 performs unaligned integer loads in hardware for cacheable
     // memory, so these are ordinary zero-extending loads.
     void load16Unaligned(Address address, RegisterID dest)
     {
@@ -5373,4 +5373,4 @@ public:
 
 } // namespace JSC
 
-#endif // ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#endif // ENABLE(ASSEMBLER) && CPU(PPC64)

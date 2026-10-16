@@ -425,7 +425,7 @@ public:
     void emitSaveThenMaterializeTagRegisters()
     {
 #if USE(JSVALUE64)
-#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
         pushPair(GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
 #else
         push(GPRInfo::numberTagRegister);
@@ -438,7 +438,7 @@ public:
     void emitRestoreSavedTagRegisters()
     {
 #if USE(JSVALUE64)
-#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
         popPair(GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
 #else
         pop(GPRInfo::notCellMaskRegister);
@@ -645,7 +645,7 @@ public:
     }
 #endif
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // As on ARM64/RISCV64: [fp] = caller fp, [fp+8] = return pc. The return
     // address arrives in LR and is spilled through a scratch register.
     void emitFunctionPrologue()
@@ -2269,7 +2269,7 @@ public:
     }
 
 #if ENABLE(WEBASSEMBLY)
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2) || CPU(PPC64)
     JumpList checkWasmStackOverflow(GPRReg instanceGPR, TrustedImm32, GPRReg framePointerGPR);
 #endif
 #endif

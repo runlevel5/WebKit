@@ -171,7 +171,7 @@ __asm__(
      ".previous" "\n"
 );
 
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
 // ELFv2: r1 is the stack pointer, r3 the return value.
 __asm__(
     ".text" "\n"

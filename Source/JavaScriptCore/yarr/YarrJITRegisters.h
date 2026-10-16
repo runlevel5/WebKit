@@ -159,7 +159,7 @@ public:
 
     static constexpr GPRReg returnRegister = RISCV64Registers::x10;
     static constexpr GPRReg returnRegister2 = RISCV64Registers::x11;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
     // ELFv2 argument GPRs r3-r7 carry the incoming Yarr arguments.
     static constexpr GPRReg input = PPC64Registers::r3;
     static constexpr GPRReg index = PPC64Registers::r4;

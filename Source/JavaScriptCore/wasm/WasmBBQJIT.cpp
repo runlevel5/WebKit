@@ -695,7 +695,7 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
     for (auto reg = ARMRegisters::d16; reg <= ARMRegisters::d31; reg = MacroAssembler::nextFPRegister(reg))
         fprSetBuilder.remove(reg);
 #endif
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // Nothing saves the ELFv2 callee-saves f22-f31, which JSC does not model as
     // VM callee-saves. Air excludes them too (see AirCode.cpp).
     for (auto reg = PPC64Registers::f22; reg <= PPC64Registers::f31; reg = static_cast<PPC64Registers::FPRegisterID>(reg + 1))
@@ -4484,7 +4484,7 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
     parameterLocations.append(Location::fromStack(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))));
 #elif CPU(ARM64) || CPU(ARM_THUMB2)
     m_jit.loadPairPtr(MacroAssembler::framePointerRegister, callerFramePointer, MacroAssembler::linkRegister);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
     // As on ARM64, but linkRegister is only a placeholder: the return PC goes to LR.
     // Nothing between here and the jump makes a call.
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister, CallFrame::callerFrameOffset()), callerFramePointer);
@@ -4763,7 +4763,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 
     resolvedArguments.append(Value::pinned(pointerType(), Location::fromStack(sizeof(Register))));
     parameterLocations.append(Location::fromStack(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))));
-#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64)
     auto preserved = callingConvention.argumentGPRs();
     preserved.add(importableFunction, IgnoreVectors);
     if constexpr (isARM64E())
@@ -4771,7 +4771,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     ScratchScope<1, 0> scratches(*this, WTF::move(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
     scratches.unbindPreserved();
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // See emitTailCall: LR is a special-purpose register, written with mtlr.
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister, CallFrame::callerFrameOffset()), callerFramePointer);
     m_jit.restoreReturnAddressBeforeReturn(Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()));
@@ -4826,7 +4826,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister, tailCallStackOffsetFromFP), wasmScratchGPR);
     m_jit.addPtr(TrustedImm32(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))), MacroAssembler::framePointerRegister, MacroAssembler::stackPointerRegister);
     m_jit.move(wasmScratchGPR, MacroAssembler::framePointerRegister);
-#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+#elif CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64)
     m_jit.addPtr(TrustedImm32(tailCallStackOffsetFromFP + Checked<int>(sizeof(CallerFrameAndPC))), MacroAssembler::framePointerRegister, MacroAssembler::stackPointerRegister);
     m_jit.move(callerFramePointer, MacroAssembler::framePointerRegister);
 #else

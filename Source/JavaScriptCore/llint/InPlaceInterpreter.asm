@@ -104,7 +104,7 @@ elsif RISCV64
     const sc1 = ws1
     const sc2 = csr9
     const sc3 = csr10
-elsif PPC64LE
+elsif PPC64
     const PC = csr7
     const MC = csr6
 
@@ -116,7 +116,7 @@ elsif PPC64LE
     # ARM64's layout.  sc2/sc3 must not be csr9/csr10 (the RISCV64 choice):
     # csr9 is r23, the JIT's notCellMaskRegister, which JS code calling into
     # or called from wasm relies on being preserved, and IPInt never restores
-    # sc2/sc3.  ws2/ws3 are r25/r26, scratch inside JS/wasm on PPC64LE (the C
+    # sc2/sc3.  ws2/ws3 are r25/r26, scratch inside JS/wasm on PPC64 (the C
     # caller's values are saved at every vmEntry by pushCalleeSaves).
     const sc0 = ws0
     const sc1 = ws1
@@ -166,7 +166,7 @@ const WasmEntryPtrTag = constexpr WasmEntryPtrTag
 
 # These must match the definition in GPRInfo.h
 const wasmInstance = csr0
-if X86_64 or ARM64 or ARM64E or RISCV64 or PPC64LE
+if X86_64 or ARM64 or ARM64E or RISCV64 or PPC64
     const memoryBase = csr3
     const boundsCheckingSize = csr4
 elsif ARMv7
@@ -192,7 +192,7 @@ const IPIntLocalsBaseOffset = IPIntCalleeSaveSpaceStackAligned + LocalSize
 if X86_64
     const NumberOfWasmArgumentGPRs = 6
     const NumberOfVolatileGPRs = NumberOfWasmArgumentGPRs + 2 // +2 for ws0 and ws1
-elsif ARM64 or ARM64E or RISCV64 or PPC64LE
+elsif ARM64 or ARM64E or RISCV64 or PPC64
     const NumberOfWasmArgumentGPRs = 8
     const NumberOfVolatileGPRs = NumberOfWasmArgumentGPRs
 elsif ARMv7
@@ -447,7 +447,7 @@ end
 macro ipintReloadMemory(scratch)
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64 or PPC64LE
+    elsif X86_64 or PPC64
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -475,17 +475,17 @@ macro operationCall(fn)
 
     move wasmInstance, a0
     push PC, MC
-    # ARM64 and PPC64LE keep the unboxed IPIntCallee live in ws0 across a
+    # ARM64 and PPC64 keep the unboxed IPIntCallee live in ws0 across a
     # handler (X86_64 instead reloads it from UnboxedWasmCalleeStackSlot,
     # because there ws0 is t0 = rax).  ws0 is volatile on both (x9 / r11), so
     # it must be saved around the C call.
-    if ARM64 or ARM64E or PPC64LE
+    if ARM64 or ARM64E or PPC64
         # Save ws0 with padding for 16-byte alignment (PC+MC=16, ws0+pad=16, total=32)
         subp MachineRegisterSize * 2, sp
         storep ws0, [sp]
     end
     fn()
-    if ARM64 or ARM64E or PPC64LE
+    if ARM64 or ARM64E or PPC64
         loadp [sp], ws0
         addp MachineRegisterSize * 2, sp
     end
@@ -498,9 +498,9 @@ macro operationCallMayThrowImpl(fn, sizeOfExtraRegistersPreserved)
 
     move wasmInstance, a0
     push PC, MC
-    if ARM64 or ARM64E or PPC64LE
+    if ARM64 or ARM64E or PPC64
         # Save ws0 with padding for 16-byte alignment (PC+MC=16, ws0+ws0=16, total=32)
-        # (see operationCall for why PPC64LE does this too)
+        # (see operationCall for why PPC64 does this too)
         push ws0, ws0
     end
     fn()
@@ -512,7 +512,7 @@ macro operationCallMayThrowImpl(fn, sizeOfExtraRegistersPreserved)
         move sp, a2
         operationCall(macro() cCall3(_ipint_extern_handle_debugger_trap_if_needed) end)
         addp sizeOfExtraRegistersPreserved + (4 * MachineRegisterSize), sp
-    elsif PPC64LE
+    elsif PPC64
         # Same frame as ARM64 (PC, MC, ws0, ws0), but no wasm debugger hook:
         # the debugger is ARM64-only (see handleDebuggerTrapIfNeededAndThrowWasmTrap).
         addp sizeOfExtraRegistersPreserved + (4 * MachineRegisterSize), sp
@@ -521,7 +521,7 @@ macro operationCallMayThrowImpl(fn, sizeOfExtraRegistersPreserved)
     end
     jmp _wasm_throw_from_slow_path_trampoline
 .continuation:
-    if ARM64 or ARM64E or PPC64LE
+    if ARM64 or ARM64E or PPC64
         loadp [sp], ws0
         addp MachineRegisterSize * 2, sp
     end
@@ -659,9 +659,9 @@ end
 
 # On JSVALUE64, each 64-bit argument GPR holds one whole Wasm value.
 macro forEachWasmArgumentGPR(fn)
-    # PPC64LE passes eight GPR arguments (r3-r10) like ARM64, not six like
+    # PPC64 passes eight GPR arguments (r3-r10) like ARM64, not six like
     # X86_64; the JSVALUE64 arm below would silently drop wa6/wa7.
-    if ARM64 or ARM64E or PPC64LE
+    if ARM64 or ARM64E or PPC64
         fn(0, wa0, wa1)
         fn(2, wa2, wa3)
         fn(4, wa4, wa5)
@@ -713,8 +713,8 @@ macro preserveWasmFPRArgumentRegistersImpl(fprBaseOffset)
     forEachWasmArgumentFPR(macro (index, fpr1, fpr2)
         if ARM64 or ARM64E
             storepairv fpr1, fpr2, fprBaseOffset + index * VectorRegisterSize[sp]
-        elsif X86_64 or PPC64LE
-            # PPC64LE: full VSRs, since a wasm FPR argument may be a v128.
+        elsif X86_64 or PPC64
+            # PPC64: full VSRs, since a wasm FPR argument may be a v128.
             storev fpr1, fprBaseOffset + (index + 0) * VectorRegisterSize[sp]
             storev fpr2, fprBaseOffset + (index + 1) * VectorRegisterSize[sp]
         else
@@ -728,7 +728,7 @@ macro restoreWasmFPRArgumentRegistersImpl(fprBaseOffset)
     forEachWasmArgumentFPR(macro (index, fpr1, fpr2)
         if ARM64 or ARM64E
             loadpairv fprBaseOffset + index * VectorRegisterSize[sp], fpr1, fpr2
-        elsif X86_64 or PPC64LE
+        elsif X86_64 or PPC64
             loadv fprBaseOffset + (index + 0) * VectorRegisterSize[sp], fpr1
             loadv fprBaseOffset + (index + 1) * VectorRegisterSize[sp], fpr2
         else
@@ -876,9 +876,9 @@ op(js_to_wasm_wrapper_entry, macro ()
         if ARM64 or ARM64E
             storepairq memoryBase, boundsCheckingSize, -2 * SlotSize[cfr]
             storep wasmInstance, -3 * SlotSize[cfr]
-        elsif X86_64 or PPC64LE
+        elsif X86_64 or PPC64
             # These must match the wasmToJS thunk, since the unwinder won't be able to tell who made this frame.
-            # PPC64LE: RegisterAtOffsetList::wasmPinnedRegisters() orders
+            # PPC64: RegisterAtOffsetList::wasmPinnedRegisters() orders
             # wasmInstance (r14) < memoryBase (r17) < boundsCheckingSize (r18),
             # giving the same -3/-2/-1 slots as X86_64; the ARMv7 `else` arm
             # would save only a 32-bit wasmInstance.
@@ -894,7 +894,7 @@ op(js_to_wasm_wrapper_entry, macro ()
         if ARM64 or ARM64E
             loadpairq -2 * SlotSize[cfr], memoryBase, boundsCheckingSize
             loadp -3 * SlotSize[cfr], wasmInstance
-        elsif X86_64 or PPC64LE
+        elsif X86_64 or PPC64
             loadp -1 * SlotSize[cfr], boundsCheckingSize
             loadp -2 * SlotSize[cfr], memoryBase
             loadp -3 * SlotSize[cfr], wasmInstance
@@ -987,7 +987,7 @@ end
     # Memory
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64 or PPC64LE
+    elsif X86_64 or PPC64
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -1111,8 +1111,8 @@ end
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(a0, a1)
 
 # Should be (not USE_BUILTIN_FRAME_ADDRESS) but need to keep down the size of LLIntAssembly.h.
-# Every target without USE(BUILTIN_FRAME_ADDRESS) (ARMv7, PPC64LE) must be listed.
-if ASSERT_ENABLED or ARMv7 or PPC64LE
+# Every target without USE(BUILTIN_FRAME_ADDRESS) (ARMv7, PPC64) must be listed.
+if ASSERT_ENABLED or ARMv7 or PPC64
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
@@ -1143,7 +1143,7 @@ end
     # Memory
     if ARM64 or ARM64E
         loadpairq constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase, boundsCheckingSize
-    elsif X86_64 or PPC64LE
+    elsif X86_64 or PPC64
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0))[wasmInstance], memoryBase
         loadp constexpr (JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0) + 8)[wasmInstance], boundsCheckingSize
     end
@@ -1194,7 +1194,7 @@ op(wasm_to_js_wrapper_entry, macro()
         end
     end)
 
-if ASSERT_ENABLED or ARMv7 or PPC64LE
+if ASSERT_ENABLED or ARMv7 or PPC64
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
@@ -1231,8 +1231,8 @@ end
     pcrtoaddr _llint_default_call_trampoline, t5
     loadp CallLinkInfo::m_codeBlock[t2], t3
     storep t3, (CodeBlock - CallerFrameAndPCSize)[sp]
-if PPC64LE
-    # The ppc64le backend lowers a call to a label as an ELFv2 C call, which
+if PPC64
+    # The ppc64 backend lowers a call to a label as an ELFv2 C call, which
     # first allocates a 32-byte linkage area (stdu 1,-32(1)). That would move
     # sp off the callee frame just built at sp, and the JS callee would read
     # its Callee/argument slots 32 bytes away. Call through t5, which already
@@ -1291,7 +1291,7 @@ end
     loadp JSWebAssemblyInstance::m_vm[wasmInstance], a0
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(a0, a1)
 
-if ASSERT_ENABLED or ARMv7 or PPC64LE
+if ASSERT_ENABLED or ARMv7 or PPC64
     storep cfr, JSWebAssemblyInstance::m_temporaryCallFrame[wasmInstance]
 end
 
@@ -1385,7 +1385,7 @@ op(wasm_throw_from_fault_handler_trampoline_reg_instance, macro ()
 end)
 
 op(ipint_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
     preserveCallerPCAndCFR()
     saveIPIntRegisters()
     storep wasmInstance, CodeBlock[cfr]
@@ -1399,7 +1399,7 @@ else
 end
 end)
 
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
 .ipint_entry_end_local:
     loadp UnboxedWasmCalleeStackSlot[cfr], MC
     loadp Wasm::IPIntCallee::m_localInitBytecode + VectorBufferOffset[MC], MC
@@ -1490,7 +1490,7 @@ end
 end
 
 op(ipint_catch_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or PPC64)
     ipintCatchCommon()
 
     move cfr, a1
@@ -1506,7 +1506,7 @@ end
 end)
 
 op(ipint_catch_all_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or PPC64)
     ipintCatchCommon()
 
     move cfr, a1
@@ -1522,7 +1522,7 @@ end
 end)
 
 op(ipint_table_catch_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
     ipintCatchCommon()
 
     # push arguments but no ref: sp in a2, call normal operation
@@ -1540,7 +1540,7 @@ end
 end)
 
 op(ipint_table_catch_ref_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
     ipintCatchCommon()
 
     # push both arguments and ref
@@ -1558,7 +1558,7 @@ end
 end)
 
 op(ipint_table_catch_all_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
     ipintCatchCommon()
 
     # do nothing: 0 in sp for no arguments, call normal operation
@@ -1576,7 +1576,7 @@ end
 end)
 
 op(ipint_table_catch_allref_entry, macro()
-if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64LE)
+if WEBASSEMBLY and (ARM64 or ARM64E or X86_64 or ARMv7 or PPC64)
     ipintCatchCommon()
 
     # push only the ref
@@ -2153,7 +2153,7 @@ if ARM64E
 elsif ARM64
     loadpairq [cfr], cfr, lr
     ret
-elsif X86_64 or PPC64LE
+elsif X86_64 or PPC64
     # Jump straight to the return address rather than restoring a link
     # register. PPC64 does have LR, but this thunk is entered *as* a return
     # address and never returns here, so the caller's own epilogue reloads LR
@@ -2163,7 +2163,7 @@ elsif X86_64 or PPC64LE
     jmp ws1
 end
 
-if JSVALUE64 and (ARM64 or ARM64E or X86_64 or PPC64LE)
+if JSVALUE64 and (ARM64 or ARM64E or X86_64 or PPC64)
     include InPlaceInterpreter64
 else
 # nextIPIntInstruction is defined inside InPlaceInterpreter64. Provide a stub here
@@ -2832,7 +2832,7 @@ unimplementedInstruction(_i64_atomic_rmw32_cmpxchg_u)
 
 # Stubs for the IPInt call/return-location trampolines that LowLevelInterpreter
 # references via pcrtoaddr to populate the wasm dispatch tables.  On platforms
-# that don't ship a real IPInt (anything not ARM64/ARM64E/X86_64/PPC64LE), point
+# that don't ship a real IPInt (anything not ARM64/ARM64E/X86_64/PPC64), point
 # every entry at a `crash()` body so the symbols resolve at link time.
 _wasm_trampoline_wasm_ipint_call:
 _wasm_trampoline_wasm_ipint_call_wide16:

@@ -77,7 +77,7 @@ do { \
 
 void initialize()
 {
-#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)))
+#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64)))
 
 #define INIT_IPINT_BASE_POINTER(basePointerName, targetAddress) \
     g_opcodeConfig.basePointerName = removeCodePtrTag(reinterpret_cast<void*>(targetAddress));
@@ -99,13 +99,13 @@ void initialize()
     FOR_EACH_IPINT_PPC64_FLOAT_MINT_RETURN_OPCODE(VALIDATE_IPINT_MINT_RETURN_OPCODE);
     FOR_EACH_IPINT_PPC64_FLOAT_UINT_OPCODE(VALIDATE_IPINT_UINT_OPCODE);
 #else
-    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64LE (for now).");
+    RELEASE_ASSERT_NOT_REACHED("IPInt only supports ARM64, X86_64 and PPC64 (for now).");
 #endif
 }
 
 void verifyInitialization()
 {
-#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)))
+#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64)))
 
 #define VERIFY_IPINT_BASE_POINTER(basePointerName, targetAddress) \
     RELEASE_ASSERT(g_opcodeConfig.basePointerName == removeCodePtrTag(reinterpret_cast<void*>(targetAddress)));

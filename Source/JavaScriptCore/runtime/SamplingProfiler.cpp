@@ -314,7 +314,7 @@ private:
     void* m_machineFrame;
 };
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 // ELFv2 code keeps no frame-pointer chain. Instead every frame starts with a
 // back chain (the caller's stack pointer), and a function saves its return
 // address in its caller's frame, at 16(caller's sp). Walk the C frames on top
@@ -487,7 +487,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             void* machineFrame;
             CallFrame* callFrame;
             void* machinePC;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             void* machineStackPointer;
             void* machineLinkRegister;
 #endif
@@ -499,7 +499,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 m_jscExecutionThread->getRegisters(threadSuspendLocker, registers);
                 machineFrame = MachineContext::framePointer(registers);
                 callFrame = static_cast<CallFrame*>(machineFrame);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 machineStackPointer = MachineContext::stackPointer(registers);
                 machineLinkRegister = MachineContext::linkRegister(registers).untaggedPtr();
 #endif
@@ -539,7 +539,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 UNUSED_PARAM(machineFrame);
                 BackChainCFrameWalker walker(m_vm, topFrameIsCCode ? machineStackPointer : nullptr, machineLinkRegister, callFrame, executableAllocatorLocker ? &*executableAllocatorLocker : nullptr, codeBlockSetLocker, machineThreadsLocker);
 #else

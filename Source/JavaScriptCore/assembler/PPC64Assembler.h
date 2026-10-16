@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#if ENABLE(ASSEMBLER) && CPU(PPC64)
 
 #include "AssemblerBuffer.h"
 #include "AssemblerCommon.h"
@@ -2951,4 +2951,4 @@ private:
 
 } // namespace JSC
 
-#endif // ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#endif // ENABLE(ASSEMBLER) && CPU(PPC64)

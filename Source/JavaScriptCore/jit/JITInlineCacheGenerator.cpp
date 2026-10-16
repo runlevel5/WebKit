@@ -122,7 +122,7 @@ void JITByIdGenerator::generateFastCommon(CCallHelpers& jit, size_t inlineICSize
     m_start = jit.label();
     size_t startSize = jit.m_assembler.buffer().codeSize();
     {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // The inline region is later overwritten in place (InlineAccess, and
         // rewireStubAsJumpInAccess with a jump slot), so it must keep its
         // emitted size: keep branch compaction from shrinking this jump.

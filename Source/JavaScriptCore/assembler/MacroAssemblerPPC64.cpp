@@ -26,7 +26,7 @@
 #include "config.h"
 #include "MacroAssembler.h"
 
-#if ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#if ENABLE(ASSEMBLER) && CPU(PPC64)
 
 #include "ProbeContext.h"
 #include <wtf/InlineASM.h>
@@ -492,4 +492,4 @@ void MacroAssembler::probe(Probe::Function, void*)
 
 } // namespace JSC
 
-#endif // ENABLE(ASSEMBLER) && CPU(PPC64LE)
+#endif // ENABLE(ASSEMBLER) && CPU(PPC64)

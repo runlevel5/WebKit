@@ -437,7 +437,7 @@ static constexpr size_t prologueSizeInBytesDataIC = 0;
 static constexpr size_t prologueSizeInBytesDataIC = 0;
 #elif CPU(RISCV64)
 static constexpr size_t prologueSizeInBytesDataIC = 0;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
 static constexpr size_t prologueSizeInBytesDataIC = 0;
 #else
 #error "unsupported architecture"

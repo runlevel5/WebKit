@@ -14043,7 +14043,7 @@ IGNORE_CLANG_WARNINGS_END
                         jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR2, JSCallee::offsetOfScopeChain()), GPRInfo::argumentGPR0);
                     }
                     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                     // As in the DFG: an ELFv2 C callee's CR/LR/TOC saves at
                     // sp + 8..31 would overwrite this frame's header (sp == cfr).
                     // sp stays lowered through the exception check; the epilogue
@@ -14948,7 +14948,7 @@ IGNORE_CLANG_WARNINGS_END
                 // - The caller frame and PC for a call to operationCallDirectEvalSloppy/operationCallDirectEvalStrict.
                 // - Potentially two arguments on the stack.
                 CodeBlock* baselineCodeBlock = state->graph.baselineCodeBlockFor(semanticNodeOrigin);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 // As in the DFG: reserve the ELFv2 C-call area below the eval
                 // callee frame's CallerFrameAndPC at sp - 16.
                 unsigned requiredBytes = sizeof(CallerFrameAndPC) + maxFrameExtentForSlowPathCall;
@@ -26631,7 +26631,7 @@ IGNORE_CLANG_WARNINGS_END
     template<typename OperationType, typename... Args>
     LValue callOperationWithELFv2Extension(LType type, LValue function, Args&&... args)
     {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // See B3::cCallArgumentIsUnsigned32: pass an Int32 argument for a uint32_t
         // parameter zero-extended, so CCallSpecial does not sign-extend it.
         return [&]<size_t... I>(std::index_sequence<I...>) {
@@ -26642,7 +26642,7 @@ IGNORE_CLANG_WARNINGS_END
 #endif
     }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     template<typename OperationType, size_t index>
     LValue extendCCallArgumentForELFv2(LValue argument)
     {

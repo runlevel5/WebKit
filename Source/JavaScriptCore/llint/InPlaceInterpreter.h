@@ -783,10 +783,10 @@ extern "C" void SYSV_ABI ipint_entry();
     m(0x11, uint_stack_vector) \
     m(0x12, uint_ret) \
 
-// PPC64LE-only f32 FPR transport slots (see ArgumINTBytecode::ArgFPRFloat in
+// PPC64-only f32 FPR transport slots (see ArgumINTBytecode::ArgFPRFloat in
 // WasmIPIntGenerator.h): an f32 sits in a PPC64 FPR in double format, so
 // moving it to or from an IPInt slot needs lfs/stfs.
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 #define FOR_EACH_IPINT_PPC64_FLOAT_ARGUMINT_OPCODE(m) \
     m(0x13, argumINT_ffa0) \
     m(0x14, argumINT_ffa1) \
@@ -834,7 +834,7 @@ extern "C" void SYSV_ABI ipint_entry();
 #define FOR_EACH_IPINT_PPC64_FLOAT_UINT_OPCODE(m)
 #endif
 
-#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64LE)))
+#if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64) || CPU(PPC64)))
 FOR_EACH_IPINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_GC_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 FOR_EACH_IPINT_CONVERSION_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
@@ -852,11 +852,11 @@ FOR_EACH_IPINT_PPC64_FLOAT_UINT_OPCODE(IPINT_VALIDATE_DEFINE_FUNCTION);
 
 namespace JSC { namespace IPInt {
 
-#if LLINT_TRACING || CPU(PPC64LE)
+#if LLINT_TRACING || CPU(PPC64)
 // When LLINT_TRACING is enabled, each ipintOp handler has a trace prologue injected,
 // which can push the largest handlers past 256 bytes. Double the slot size in tracing
 // builds so the dispatch table stays valid.
-// PPC64LE has no PC-relative addressing before POWER10, so a dispatch-table address
+// PPC64 has no PC-relative addressing before POWER10, so a dispatch-table address
 // takes six instructions and a 64-bit constant up to five. Some handlers need up to
 // 290 bytes, so all slots are doubled there.
 constexpr uint64_t alignIPInt = 512;
@@ -865,7 +865,7 @@ constexpr uint64_t alignIPInt = 256;
 #endif
 // FIXME: adding an adds instruction to offlineasm could shrink atomic handlers back to 256 bytes
 constexpr uint64_t alignAtomicIPInt = 2 * alignIPInt;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 constexpr uint64_t alignArgumInt = 128;
 constexpr uint64_t alignUInt = 128;
 constexpr uint64_t alignMInt = 128;

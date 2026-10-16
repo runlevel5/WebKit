@@ -54,7 +54,7 @@ void lowerStackArgs(Code& code)
         }
     }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // An ELFv2 C callee saves CR, LR and the TOC at sp + 8..31 of its caller's frame.
     // Patchpoints also reach C through thunks that build no frame of their own, and
     // with no CCall and no spill slots sp == fp, so always keep that area below the
@@ -112,7 +112,7 @@ void lowerStackArgs(Code& code)
                 // We solve this in AirAllocateRegistersAndStackAndGenerateCode.cpp.
                 UNUSED_PARAM(insertionIndex);
                 return result;
-#elif CPU(X86_64) || CPU(PPC64LE)
+#elif CPU(X86_64) || CPU(PPC64)
                 UNUSED_PARAM(insertionIndex);
                 // Can't happen on x86: immediates are always big enough for frame size.
                 // Same on PPC64: isValidAddrForm() accepts any offset (the
@@ -218,7 +218,7 @@ void lowerStackArgs(Code& code)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::ZeroReg;
                             Air::Arg operand = Arg::zeroReg();
-#elif CPU(X86_64) || CPU(ARM) || CPU(PPC64LE)
+#elif CPU(X86_64) || CPU(ARM) || CPU(PPC64)
                             Air::Opcode storeOpcode = Move32;
                             Air::Arg::Kind operandKind = Arg::Imm;
                             Air::Arg operand = Arg::imm(0);

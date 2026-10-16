@@ -176,7 +176,7 @@ private:
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);
     static constexpr bool jitEnabledByDefault() { return isAddress64Bit(); }
     static constexpr bool regExpJITEnabledByDefault() { return jitEnabledByDefault() && is64Bit(); }
-    static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64() || isPPC64LE(); }
+    static constexpr bool ipintEnabledByDefault() { return isARM64() || isARM64E() || isX86_64() || isPPC64(); }
     static double defaultQuickDFGTierUpThresholdFactor()
     {
 #if PLATFORM(MAC)

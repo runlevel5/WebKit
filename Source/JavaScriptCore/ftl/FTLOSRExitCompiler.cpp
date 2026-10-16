@@ -343,14 +343,14 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
                 CCallHelpers::TrustedImmPtr(materializationArguments));
             jit.prepareCallOperation(vm);
             jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeObjectInOSR)), GPRInfo::nonArgGPR0);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // An ELFv2 callee writes its linkage area and parameter save area in
             // the caller's frame, and B3's sp here may have no call arg area
             // below live stack slots that the recoveries still read.
             jit.makeSpaceOnStackForCCall();
 #endif
             jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             jit.reclaimSpaceOnStackForCCall();
 #endif
             jit.storePtr(GPRInfo::returnValueGPR, materializationToPointer.get(materialization));
@@ -382,12 +382,12 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             CCallHelpers::TrustedImmPtr(materializationArguments));
         jit.prepareCallOperation(vm);
         jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationPopulateObjectInOSR)), GPRInfo::nonArgGPR0);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // See the comment on the operationMaterializeObjectInOSR call above.
         jit.makeSpaceOnStackForCCall();
 #endif
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         jit.reclaimSpaceOnStackForCCall();
 #endif
     }

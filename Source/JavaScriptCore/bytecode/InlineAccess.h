@@ -55,7 +55,7 @@ public:
         return 48;
 #elif CPU(RISCV64)
         return 44;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         return 44; // Placeholder, mirrors RISCV64; refine when IC is wired up.
 #else
 #error "unsupported platform"
@@ -73,7 +73,7 @@ public:
         return 48;
 #elif CPU(RISCV64)
         return 52;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         return 52; // Placeholder, mirrors RISCV64.
 #else
 #error "unsupported platform"
@@ -91,7 +91,7 @@ public:
         size_t size = 30;
 #elif CPU(RISCV64)
         size_t size = 60;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         size_t size = 60; // Placeholder, mirrors RISCV64.
 #else
 #error "unsupported platform"

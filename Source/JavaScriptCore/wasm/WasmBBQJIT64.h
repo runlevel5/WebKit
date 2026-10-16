@@ -503,7 +503,7 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
     // multiplySub below cancels out, but PPC64's divw/divd leave the quotient undefined.
     // Answer x % -1 = 0 directly. A constant -1 divisor was folded above.
     Jump remainderByNegativeOneDone;
-    if constexpr (isPPC64LE() && isSigned && IsMod) {
+    if constexpr (isPPC64() && isSigned && IsMod) {
         if (!rhs.isConst()) {
             Jump notNegativeOne = is32
                 ? m_jit.branch32(RelationalCondition::NotEqual, rhsLocation.asGPR(), TrustedImm32(-1))
@@ -517,7 +517,7 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
         }
     }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // POWER9 computes the remainder directly; x % 0 and x % -1 are already handled.
     if (IsMod && MacroAssembler::supportsISA3_00()) {
         if (is32 && isSigned)
@@ -599,7 +599,7 @@ void BBQJIT::emitShuffleMove(Vector<Value, N, OverflowHandler>& srcVector, Vecto
     statusVector[index] = ShuffleStatus::Moved;
 }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 // ELFv2 has the caller sign- or zero-extend a narrow argument by its C type. BBQ
 // keeps i32 values zero-extended, which is wrong for a negative int32_t, so
 // re-extend each narrow integer argument by the operation's parameter type.
@@ -650,7 +650,7 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)
     // Preserve caller-saved registers and other info
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     extendNarrowCCallArgumentsForELFv2<Func>(m_jit, callInfo, arguments.size());
 #endif
 
@@ -683,7 +683,7 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments, Value& r
     // Preserve caller-saved registers and other info
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     extendNarrowCCallArgumentsForELFv2<Func>(m_jit, callInfo, arguments.size());
 #endif
 

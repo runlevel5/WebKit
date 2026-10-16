@@ -50,9 +50,9 @@ inline bool optimizeForX86_64()
     return isX86_64() && Options::useArchitectureSpecificOptimizations();
 }
 
-inline bool optimizeForPPC64LE()
+inline bool optimizeForPPC64()
 {
-    return isPPC64LE() && Options::useArchitectureSpecificOptimizations();
+    return isPPC64() && Options::useArchitectureSpecificOptimizations();
 }
 
 inline bool hasSensibleDoubleToInt()

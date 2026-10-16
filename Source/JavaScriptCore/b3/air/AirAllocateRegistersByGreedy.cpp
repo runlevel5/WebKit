@@ -3007,7 +3007,7 @@ private:
         return true;
     }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // A PPC64 FPR holds a float in double format, so stfd/lfd and stfs/lfs use
     // different memory encodings. defWidth() is 64 for any non-ZDef def, but
     // every reader of a Float in memory uses the 4-byte encoding, so spill FP
@@ -3022,7 +3022,7 @@ private:
     {
         Opcode move = Oops;
         Width width = m_tmpWidth.requiredWidth(tmp);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         if (tmp.bank() == FP)
             width = spillWidthForFP(tmp);
 #endif
@@ -3060,7 +3060,7 @@ private:
             }
             ASSERT(spillSlot<bank>(tmp));
         });
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // FP spill slots that some instruction reads. The width rule below only
         // protects readers; a slot nothing reads (say the slot of a dead result
         // of a call returning many values) may be written in place at any width,
@@ -3168,7 +3168,7 @@ private:
                         }
 
                         Arg spilledArg = Arg::stack(spilled);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                         // On PPC64 an FP spill slot may only be accessed at
                         // its tmp's spill width (see above); an access at the
                         // other width goes through a register.

@@ -48,7 +48,7 @@ concept canMakeExceptionOperationResult =
     std::is_standard_layout_v<T>
     && std::is_trivially_copyable_v<T>
     && std::is_trivially_default_constructible_v<T>
-#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(PPC64)
     // The ARM64 ABI says that this should be returned in x0 instead of d0. Seems unlikely it's worth it to do the extra fmov.
     // On PPC64 ELFv2 { double; Exception*; } is not a homogeneous float aggregate, so it comes back in r3/r4,
     // not f1/r3 as CCallHelpers expects.

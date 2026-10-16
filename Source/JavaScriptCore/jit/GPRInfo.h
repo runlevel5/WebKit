@@ -853,7 +853,7 @@ public:
 
 #endif // CPU(RISCV64)
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 
 #define NUMBER_OF_ARGUMENT_REGISTERS 8u
 // ELFv2 callee-saved GP: r14-r23 (csr0-csr9, 10 regs); FP: f14-f21 (csfr0-csfr7, 8 regs).
@@ -1004,7 +1004,7 @@ public:
     static constexpr unsigned InvalidIndex = 0xffffffff;
 };
 
-#endif // CPU(PPC64LE)
+#endif // CPU(PPC64)
 
 // To make some code generic over both JSVALUE64 and JSVALUE32_64 platforms, we use standard names
 // for certain JSValueRegs instances. On JSVALUE64, a JSValueRegs corresponds to a single 64-bit

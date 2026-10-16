@@ -252,7 +252,7 @@ set(OFFLINE_ASM
     offlineasm/offsets.rb
     offlineasm/opt.rb
     offlineasm/parser.rb
-    offlineasm/ppc64le.rb
+    offlineasm/ppc64.rb
     offlineasm/registers.rb
     offlineasm/risc.rb
     offlineasm/riscv64.rb
@@ -317,11 +317,11 @@ elseif (ARM_THUMB2_DETECTED)
 elseif (WTF_CPU_RISCV64)
     set(OFFLINE_ASM_BACKEND "RISCV64")
 elseif (WTF_CPU_PPC64LE)
-    # A C_LOOP build of ppc64le still uses the C_LOOP offlineasm backend.
+    # A C_LOOP build of ppc64 still uses the C_LOOP offlineasm backend.
     if (ENABLE_C_LOOP)
         set(OFFLINE_ASM_BACKEND "C_LOOP")
     else ()
-        set(OFFLINE_ASM_BACKEND "PPC64LE")
+        set(OFFLINE_ASM_BACKEND "PPC64")
     endif ()
 endif ()
 

@@ -263,8 +263,8 @@ struct ArgumentTweaker<float> {
 template <typename T>
 using TweakedArgument = typename ArgumentTweaker<T>::Result;
 
-#if CPU(PPC64LE)
-// On PPC64LE the JIT uses the ELFv2 callee-saves r29/r30 as scratch, which the VM
+#if CPU(PPC64)
+// On PPC64 the JIT uses the ELFv2 callee-saves r29/r30 as scratch, which the VM
 // entry saves for its C caller. This harness calls JIT code directly, so the asm
 // after the call makes this frame save them (and prevents a tail call).
 template<typename T, typename Function, typename... Arguments>
@@ -286,7 +286,7 @@ T invoke(CodePtr<JITCompilationPtrTag> ptr, Arguments... arguments)
 {
     void* executableAddress = untagCFunctionPtr<JITCompilationPtrTag>(ptr.taggedPtr());
     T (SYSV_ABI *function)(TweakedArgument<Arguments>...) = std::bit_cast<T(SYSV_ABI *)(TweakedArgument<Arguments>...)>(executableAddress);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     return callPreservingJITScratchRegisters<T>(function, ArgumentTweaker<Arguments>::tweak(arguments)...);
 #else
     return function(ArgumentTweaker<Arguments>::tweak(arguments)...);
@@ -325,7 +325,7 @@ template<typename Func>
 void checkDisassembly(Compilation& compilation, const Func& func, const CString& failText)
 {
 #if !ENABLE(DISASSEMBLER)
-    // Without a disassembler (PPC64LE has none) there is no text to match the
+    // Without a disassembler (PPC64 has none) there is no text to match the
     // expected instruction names against; only the tests' results are checked.
     UNUSED_PARAM(compilation);
     UNUSED_PARAM(func);

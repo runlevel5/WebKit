@@ -841,19 +841,19 @@ void Options::notifyOptionsChanged()
 #if !CPU(X86_64) && !CPU(ARM64)
     Options::useConcurrentGC() = false;
     Options::forceUnlinkedDFG() = false;
-#if !CPU(PPC64LE)
+#if !CPU(PPC64)
     Options::useWasmSIMD() = false;
 #endif
-#if !CPU(PPC64LE)
+#if !CPU(PPC64)
     Options::useWasmIPInt() = false;
 #endif
-    // PPC64LE has IPInt (InPlaceInterpreter64.asm) and BBQ, so neither is forced off.
-#if !CPU(ARM_THUMB2) && !CPU(PPC64LE)
+    // PPC64 has IPInt (InPlaceInterpreter64.asm) and BBQ, so neither is forced off.
+#if !CPU(ARM_THUMB2) && !CPU(PPC64)
     Options::useBBQJIT() = false;
 #endif
 #endif
 
-#if !CPU(ARM64) && !CPU(PPC64LE)
+#if !CPU(ARM64) && !CPU(PPC64)
     Options::useRandomizingExecutableIslandAllocation() = false;
 #endif
 

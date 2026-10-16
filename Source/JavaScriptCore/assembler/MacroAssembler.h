@@ -54,7 +54,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #define TARGET_MACROASSEMBLER MacroAssemblerRISCV64
 #include "MacroAssemblerRISCV64.h"
 
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
 #define TARGET_MACROASSEMBLER MacroAssemblerPPC64
 #include "MacroAssemblerPPC64.h"
 
@@ -141,10 +141,10 @@ public:
     using MacroAssemblerBase::and32;
     using MacroAssemblerBase::branchAdd32;
     using MacroAssemblerBase::branchMul32;
-#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(ARM_THUMB2) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64)
     using MacroAssemblerBase::branchPtr;
 #endif
-#if CPU(X86_64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(PPC64)
     using MacroAssemblerBase::branch64;
 #endif
 #if CPU(RISCV64)
@@ -159,10 +159,10 @@ public:
     using MacroAssemblerBase::urshift32;
     using MacroAssemblerBase::xor32;
 
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2) || CPU(PPC64)
     using MacroAssemblerBase::convertInt32ToDouble;
 #endif
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(PPC64)
     using MacroAssemblerBase::add64;
     using MacroAssemblerBase::sub64;
     using MacroAssemblerBase::and64;
@@ -355,7 +355,7 @@ public:
     static constexpr ptrdiff_t pushToSaveByteOffset() { return sizeof(void*); }
 #endif // !CPU(ARM64)
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
     void peek64(RegisterID dest, int index = 0)
     {
         load64(Address(stackPointerRegister, (index * sizeof(void*))), dest);
@@ -440,7 +440,7 @@ private:
     PatchableJump makePatchableJump(const EmitJump& emitJump)
     {
         padBeforePatch();
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // A jump that will be repatched keeps its full slot through branch
         // compaction.
         FixedSizeJumpScope fixedSizeJumps(*this);
@@ -1966,7 +1966,7 @@ public:
     }
 #endif
 
-#if !CPU(X86_64) && !CPU(ARM64) && !CPU(PPC64LE)
+#if !CPU(X86_64) && !CPU(ARM64) && !CPU(PPC64)
     // We should implement this the right way eventually, but for now, it's fine because it arises so
     // infrequently.
     void compareDouble(DoubleCondition cond, FPRegisterID left, FPRegisterID right, RegisterID dest)
@@ -1991,7 +1991,7 @@ public:
         add32(TrustedImm32(address.offset), address.base, dest);
     }
 
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
     void lea64(Address address, RegisterID dest)
     {
         add64(TrustedImm32(address.offset), address.base, dest);
@@ -2233,7 +2233,7 @@ public:
         storePtr(value, addressForPoke(index));
     }
     
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
     void poke(Imm64 value, int index = 0)
     {
         store64(value, addressForPoke(index));

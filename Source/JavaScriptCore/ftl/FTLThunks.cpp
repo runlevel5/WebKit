@@ -88,13 +88,13 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
         GPRInfo::argumentGPR1,
         (stackMisalignment - pushToSaveByteOffset) / sizeof(void*));
     jit.prepareCallOperation(vm);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // An ELFv2 C callee saves CR/LR/TOC at sp + 8..31, where this thunk's
     // pushToSave slots are.
     jit.makeSpaceOnStackForCCall();
 #endif
     jit.callOperation<OperationPtrTag>(generationFunction.retagged<OperationPtrTag>());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     jit.reclaimSpaceOnStackForCCall();
 #endif
 

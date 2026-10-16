@@ -1399,7 +1399,7 @@ void InlineCacheCompiler::emitDataICPrepareForCall(CCallHelpers& jit)
 #elif CPU(RISCV64)
     static_assert(!maxFrameExtentForSlowPathCall);
     jit.pushPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
     static_assert(!!maxFrameExtentForSlowPathCall);
     // The DataIC handler is entered as a leaf with its return address in LR and
     // the caller's fp. The nested C call clobbers LR, so spill fp and LR as a frame

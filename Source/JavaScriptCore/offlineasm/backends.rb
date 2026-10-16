@@ -27,7 +27,7 @@ require "arm64"
 require "ast"
 require "x86"
 require "riscv64"
-require "ppc64le"
+require "ppc64"
 require "cloop"
 
 begin
@@ -42,7 +42,7 @@ BACKENDS =
      "ARM64",
      "ARM64E",
      "RISCV64",
-     "PPC64LE",
+     "PPC64",
      "C_LOOP"
     ]
 
@@ -58,7 +58,7 @@ WORKING_BACKENDS =
      "ARM64",
      "ARM64E",
      "RISCV64",
-     "PPC64LE",
+     "PPC64",
      "C_LOOP"
     ]
 

@@ -3365,8 +3365,8 @@ void testInt32BImmToFloatBitwiseCast(int32_t value)
 {
     // The Const64 makes this a BitwiseCast to Double whose result is read back as
     // a float, which only works where a float is the low half of a double
-    // register (x86_64, ARM64). A PPC64LE FPR holds a float in double format.
-    if (isPPC64LE())
+    // register (x86_64, ARM64). A PPC64 FPR holds a float in double format.
+    if (isPPC64())
         return;
 
     Procedure proc;

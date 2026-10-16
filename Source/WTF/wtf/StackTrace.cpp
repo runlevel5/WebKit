@@ -42,13 +42,13 @@
 #include <wtf/NeverDestroyed.h>
 #endif
 
-#if CPU(PPC64LE) && OS(LINUX)
+#if CPU(PPC64) && OS(LINUX)
 // The walk below reads other functions' stack frames, which ASan considers out of bounds.
 SUPPRESS_ASAN
 #endif
 void WTFGetBacktrace(void** stack, int* size)
 {
-#if CPU(PPC64LE) && OS(LINUX)
+#if CPU(PPC64) && OS(LINUX)
     // glibc's backtrace() on PPC64 walks the ELFv2 back chain, which JIT and
     // LLInt frames do not maintain, and can fault. Walk it ourselves and stop
     // at the first frame that is not a strictly higher, 16-byte-aligned slot

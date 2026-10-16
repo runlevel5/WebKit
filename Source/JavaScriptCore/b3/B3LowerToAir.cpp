@@ -244,9 +244,9 @@ public:
     }
 
 private:
-    // On PPC64LE a scalar f32 lives in an FPR in double format, while an f32x4
+    // On PPC64 a scalar f32 lives in an FPR in double format, while an f32x4
     // lane is single format, so f32x4 lane 0 is not the scalar register.
-    static constexpr bool scalarFloatIsDoubleFormat() { return isPPC64LE(); }
+    static constexpr bool scalarFloatIsDoubleFormat() { return isPPC64(); }
 
     bool NODELETE shouldCopyPropagate(Value* value)
     {
@@ -3558,7 +3558,7 @@ private:
             return;
         }
         
-        RELEASE_ASSERT(isARM64() || isPPC64LE());
+        RELEASE_ASSERT(isARM64() || isPPC64());
         // We wish to emit:
         //
         // Block #reloop:
@@ -3720,7 +3720,7 @@ private:
                 break;
             }
         } else {
-            RELEASE_ASSERT(isARM64() || isPPC64LE());
+            RELEASE_ASSERT(isARM64() || isPPC64());
             prepareOpcode = loadLinkOpcode(atomic->accessWidth(), atomic->hasFence());
         }
         reloopBlock->append(trappingInst(m_value, prepareOpcode, m_value, address, oldValue));
@@ -3751,7 +3751,7 @@ private:
             reloopBlock->append(relaxedMoveForType(atomic->type()), m_value, oldValue, m_eax);
             reloopBlock->append(trappingInst(m_value, casOpcode, m_value, Arg::statusCond(MacroAssembler::Success), m_eax, newValue, address));
         } else {
-            RELEASE_ASSERT(isARM64() || isPPC64LE());
+            RELEASE_ASSERT(isARM64() || isPPC64());
             Tmp boolResult = m_code.newTmp(GP);
             reloopBlock->append(trappingInst(m_value, storeCondOpcode(atomic->accessWidth(), atomic->hasFence()), m_value, newValue, address, boolResult));
             reloopBlock->append(BranchTest32, m_value, Arg::resCond(MacroAssembler::Zero), boolResult, boolResult);
@@ -4176,7 +4176,7 @@ private:
 
         case Mod: {
             RELEASE_ASSERT(!m_value->isChill());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             RELEASE_ASSERT(MacroAssembler::supportsISA3_00());
             appendBinOp<Mod32, Mod64, Air::Oops, Air::Oops>(m_value->child(0), m_value->child(1));
 #else
@@ -4187,7 +4187,7 @@ private:
         }
 
         case UMod: {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             RELEASE_ASSERT(MacroAssembler::supportsISA3_00());
             appendBinOp<UMod32, UMod64, Air::Oops, Air::Oops>(m_value->child(0), m_value->child(1));
 #else
@@ -4198,13 +4198,13 @@ private:
         }
 
         case FMin: {
-            RELEASE_ASSERT(isARM64() || isPPC64LE());
+            RELEASE_ASSERT(isARM64() || isPPC64());
             append(m_value->type() == Float ? FloatMin : DoubleMin, tmp(m_value->child(0)), tmp(m_value->child(1)), tmp(m_value));
             return;
         }
 
         case FMax: {
-            RELEASE_ASSERT(isARM64() || isPPC64LE());
+            RELEASE_ASSERT(isARM64() || isPPC64());
             append(m_value->type() == Float ? FloatMax : DoubleMax, tmp(m_value->child(0)), tmp(m_value->child(1)), tmp(m_value));
             return;
         }
@@ -4572,7 +4572,7 @@ private:
         }
             
         case Depend: {
-            RELEASE_ASSERT(isARM64() || isPPC64LE());
+            RELEASE_ASSERT(isARM64() || isPPC64());
             appendUnOp<Depend32, Depend64>(m_value->child(0));
             return;
         }
@@ -5250,7 +5250,7 @@ private:
                 return;
             }
 
-            if constexpr (isPPC64LE()) {
+            if constexpr (isPPC64()) {
                 // VMX shifts take a per-lane count (modulo the lane width) from
                 // the low bits of each lane, so a byte splat serves every lane size.
                 auto v = tmp(value->child(0));
@@ -5793,9 +5793,9 @@ private:
                 return;
             }
 
-            ASSERT(isARM64() || isPPC64LE());
+            ASSERT(isARM64() || isPPC64());
             ASSERT(m_value->numChildren() == 3);
-            if constexpr (isPPC64LE()) {
+            if constexpr (isPPC64()) {
                 append(Air::VectorSwizzleTwoTables, tmp(m_value->child(0)), tmp(m_value->child(1)), tmp(m_value->child(2)), tmp(m_value));
                 return;
             }

@@ -133,7 +133,7 @@ void CCallSpecial::reportUsedRegisters(Inst&, const RegisterSet&)
 
 CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext&)
 {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // ELFv2 has the caller extend 32-bit integer arguments to 64 bits, but JIT
     // code keeps int32 values zero-extended. The C type is not known here, so
     // sign-extend every Int32 GP argument (operation int32 parameters are mostly

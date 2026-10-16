@@ -73,7 +73,7 @@ private:
     }
 };
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 // ELFv2 has the caller extend a narrow integer argument by its C type. A B3 CCall
 // only knows B3 types, so Air's CCallSpecial sign-extends every Int32 argument,
 // which is wrong for a uint32_t. Creators that know the C type use this to pass such

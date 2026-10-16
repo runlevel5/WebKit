@@ -81,7 +81,7 @@ void marshallCCallArgumentImpl(Vector<Arg>& result, unsigned& argumentCount, Val
 }
 
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 // ELFv2 assigns every argument one doubleword of the parameter save area by its
 // position in the argument list, starting after the 32-byte linkage area at
 // sp + 32. Positions 0-7 are also r3-r10: an integer argument takes the GPR of its
@@ -141,7 +141,7 @@ Vector<Arg> computeCCallingConvention(Code& code, CCallValue* value)
     result.append(Tmp(CCallSpecial::scratchRegister)); // For callee
     unsigned gpArgumentCount = 0;
     unsigned fpArgumentCount = 0;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // The callee may store CR, LR and the TOC into the 32-byte linkage area at our
     // sp, so it is always reserved. A caller that passes anything in memory must
     // reserve the whole parameter save area, one doubleword per argument.
@@ -344,7 +344,7 @@ ArgumentValueList computeCCallArguments(Procedure& procedure, B3::BasicBlock* bl
     Vector<unsigned> argUnderlyingCounts;
     unsigned gpArgumentCount = 0;
     unsigned fpArgumentCount = 0;
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     bool usesParameterSaveArea = false;
 #else
     Value::OffsetType stackOffset = 0;
@@ -352,7 +352,7 @@ ArgumentValueList computeCCallArguments(Procedure& procedure, B3::BasicBlock* bl
 
     for (auto type : types) {
         argUnderlyingCounts.append(underlyingArgs.size());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         marshallCCallArgumentELFv2(underlyingArgs, gpArgumentCount, fpArgumentCount, usesParameterSaveArea, type);
 #else
 #if CPU(ARM_THUMB2)

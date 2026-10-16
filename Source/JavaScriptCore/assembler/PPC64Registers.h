@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 
 // Register roles follow the 64-bit ELFv2 ABI; POWER8 (Power ISA 2.07) is the baseline.
 //
@@ -175,4 +175,4 @@
     macro(v30, "v30"_s, 0, 1)        \
     macro(v31, "v31"_s, 0, 1)
 
-#endif // CPU(PPC64LE)
+#endif // CPU(PPC64)

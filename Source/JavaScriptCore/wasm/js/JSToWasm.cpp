@@ -330,7 +330,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         jit.loadPair64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0 * 8), GPRInfo::regWA0, GPRInfo::regWA1);
         jit.loadPair64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 2 * 8), GPRInfo::regWA2, GPRInfo::regWA3);
         jit.loadPair64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 4 * 8), GPRInfo::regWA4, GPRInfo::regWA5);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         // ELFv2 passes 8 arguments in r3-r10; the generic path below restores only 6.
         jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0 * 8), GPRInfo::regWA0);
         jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, 1 * 8), GPRInfo::regWA1);
@@ -357,7 +357,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         jit.loadPairDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 2) * 8), FPRInfo::argumentFPR2, FPRInfo::argumentFPR3);
         jit.loadPairDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 4) * 8), FPRInfo::argumentFPR4, FPRInfo::argumentFPR5);
         jit.loadPairDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 6) * 8), FPRInfo::argumentFPR6, FPRInfo::argumentFPR7);
-#elif CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(X86_64) || CPU(RISCV64) || CPU(PPC64)
         jit.loadDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 0) * 8), FPRInfo::argumentFPR0);
         jit.loadDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 1) * 8), FPRInfo::argumentFPR1);
         jit.loadDouble(CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters + 2) * 8), FPRInfo::argumentFPR2);
@@ -426,7 +426,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         jit.storePair64(GPRInfo::regWA0, GPRInfo::regWA1, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0 * 8));
         jit.storePair64(GPRInfo::regWA2, GPRInfo::regWA3, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 2 * 8));
         jit.storePair64(GPRInfo::regWA4, GPRInfo::regWA5, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 4 * 8));
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         jit.store64(GPRInfo::regWA0, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0 * 8));
         jit.store64(GPRInfo::regWA1, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 1 * 8));
         jit.store64(GPRInfo::regWA2, CCallHelpers::Address(CCallHelpers::stackPointerRegister, 2 * 8));
@@ -451,7 +451,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> createJSToWasmJITShared()
         jit.storePairDouble(FPRInfo::argumentFPR2, FPRInfo::argumentFPR3, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  2) * 8));
         jit.storePairDouble(FPRInfo::argumentFPR4, FPRInfo::argumentFPR5, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  4) * 8));
         jit.storePairDouble(FPRInfo::argumentFPR6, FPRInfo::argumentFPR7, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  6) * 8));
-#elif CPU(X86_64) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(X86_64) || CPU(RISCV64) || CPU(PPC64)
         jit.storeDouble(FPRInfo::argumentFPR0, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  0) * 8));
         jit.storeDouble(FPRInfo::argumentFPR1, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  1) * 8));
         jit.storeDouble(FPRInfo::argumentFPR2, CCallHelpers::Address(CCallHelpers::stackPointerRegister, (GPRInfo::numberOfArgumentRegisters +  2) * 8));

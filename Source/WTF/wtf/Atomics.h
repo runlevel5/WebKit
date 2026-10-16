@@ -297,7 +297,7 @@ inline void storeLoadFence() { x86_ortop(); }
 inline void storeStoreFence() { compilerFence(); }
 inline void crossModifyingCodeFence() { x86_cpuid(); }
 
-#elif CPU(PPC64) || CPU(PPC64LE)
+#elif CPU(PPC64)
 
 inline void ppc_isync()
 {

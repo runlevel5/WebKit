@@ -206,7 +206,7 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
 
 #if CPU(X86_64)
         pop(GPRInfo::argumentGPR1);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         // linkRegister is only a placeholder on PPC64; the return address is in
         // LR, which nearCallThunk clobbers.
         moveFromLR(GPRInfo::argumentGPR1);
@@ -217,7 +217,7 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
         nearCallThunk(CodeLocationLabel { LLInt::arityFixup() });
 #if CPU(X86_64)
         push(GPRInfo::argumentGPR1);
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
         moveToLR(GPRInfo::argumentGPR1);
 #else
         move(GPRInfo::argumentGPR1, linkRegister);
@@ -2959,7 +2959,7 @@ void LOLJIT::emit_op_mod(const JSInstruction* currentInstruction)
     m_fastAllocator.releaseScratches(allocations);
 }
 
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
 
 void LOLJIT::emit_op_mod(const JSInstruction*)
 {

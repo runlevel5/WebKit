@@ -2053,7 +2053,7 @@ private:
             m_stats[bank].numSpillStackSlots++;
         }
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
         // FP spill slots that some instruction reads; see the width rule below.
         // A slot nothing reads may be written in place at any width.
         UncheckedKeyHashSet<StackSlot*> fpSlotsRead;
@@ -2140,7 +2140,7 @@ private:
                             return;
                         
                         Width spillWidth = m_tmpWidth.requiredWidth(arg.tmp());
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                         // See the spill-move selection below: on PPC64 an FP
                         // slot is always accessed at its tmp's use width, since
                         // 32- and 64-bit FP accesses use different memory
@@ -2236,7 +2236,7 @@ private:
                     }
 
                     Width spillWidth = m_tmpWidth.requiredWidth(tmp);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                     // A PPC64 FPR holds a float in double format, so stfd/lfd and stfs/lfs use
                     // different memory encodings. defWidth() is 64 for any non-ZDef def, but every
                     // reader of a Float in memory uses the 4-byte encoding, so spill FP tmps by

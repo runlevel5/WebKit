@@ -101,8 +101,8 @@ std::unique_ptr<Compilation> compile(B3::Procedure& proc)
         FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts());
 }
 
-#if CPU(PPC64LE)
-// On PPC64LE, r29/r30 are ELFv2 callee-saves that the JIT uses as scratch
+#if CPU(PPC64)
+// On PPC64, r29/r30 are ELFv2 callee-saves that the JIT uses as scratch
 // (GPRInfo::nonPreservedNonArgumentGPR0/1): Air never allocates them, but a CCall
 // loads its callee into r29 and patchpoints may clobber either one without saving
 // it. Production code only enters JIT code through the VM entry, which saves them
@@ -132,7 +132,7 @@ T invoke(const Compilation& code, Arguments... arguments)
 
     executableAddress = untagCFunctionPtr<JITCompilationPtrTag>(code.code().taggedPtr());
     function = std::bit_cast<T(SYSV_ABI *)(Arguments...)>(executableAddress);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     result = callPreservingJITScratchRegisters<T>(function, arguments...);
 #else
     result = function(arguments...);
@@ -2364,7 +2364,7 @@ void testElideMoveThenRealloc()
         if (isARM64() || isARM_THUMB2()) {
             negOne = code.newTmp(B3::GP);
             root->append(Move, nullptr, Arg::bigImm(-1), negOne);
-        } else if (isX86() || isPPC64LE())
+        } else if (isX86() || isPPC64())
             negOne = Arg::bitImm(-1);
         else
             RELEASE_ASSERT_NOT_REACHED();
@@ -2877,7 +2877,7 @@ void testMoveFloatConstantSpill()
     uint32_t floatBits = 0x3f800000U;
 
     // MoveFloat $imm, %tmp is only a valid Air form for an immediate the target
-    // can materialise directly (Arg::isValidFPImm32Form); on PPC64LE that is
+    // can materialise directly (Arg::isValidFPImm32Form); on PPC64 that is
     // only zero, which cannot tell a float constant from a double one.
     if (!Arg::isValidFPImm32Form(floatBits))
         return;

@@ -79,7 +79,7 @@ static constexpr bool verbose = false;
 // wrappers move it with plain 8-byte FPR loads and stores.
 static ALWAYS_INLINE float loadF32FromFPRSlot(const void* slot)
 {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     return static_cast<float>(*static_cast<const double*>(slot));
 #else
     return *static_cast<const float*>(slot);
@@ -88,7 +88,7 @@ static ALWAYS_INLINE float loadF32FromFPRSlot(const void* slot)
 
 static ALWAYS_INLINE uint64_t f32FPRSlotBits(float value)
 {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     return std::bit_cast<uint64_t>(static_cast<double>(value));
 #else
     return static_cast<uint64_t>(std::bit_cast<uint32_t>(value));
@@ -814,7 +814,7 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
                 *std::bit_cast<double*>(buffer + index) = context.fpr(value.fpr());
                 break;
             case B3::V128:
-#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64)
                 dataLogLnIf(verbose, "Vector FPR for value ", index, " ", value.fpr(), " = ", context.vector(value.fpr()));
                 *std::bit_cast<v128_t*>(buffer + index) = context.vector(value.fpr());
 #else
@@ -928,8 +928,8 @@ static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context,
     context.gpr(ARMRegisters::lr) = std::bit_cast<UCPURegister>(*(framePointer + 1));
     context.sp() = framePointer + 2;
     static_assert(prologueStackPointerDelta() == sizeof(void*) * 2);
-#elif CPU(PPC64LE)
-    // Mirrors the ppc64le emitFunctionPrologue in AssemblyHelpers.h, which
+#elif CPU(PPC64)
+    // Mirrors the ppc64 emitFunctionPrologue in AssemblyHelpers.h, which
     // stores the caller fp at [sp] and the return address at [sp+8], giving
     // the same two-word header as ARM64/RISCV64. The return address lives in
     // LR, which on PPC64 is a special-purpose register rather than a GPR, so
@@ -1225,7 +1225,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
 #endif
         } else if (value.isFPR()) {
             if (type.isVector()) {
-#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64LE)
+#if CPU(X86_64) || CPU(ARM64) || CPU(PPC64)
                 context.vector(value.fpr()) = *std::bit_cast<v128_t*>(bufferSlot);
 #else
                 UNREACHABLE_FOR_PLATFORM();

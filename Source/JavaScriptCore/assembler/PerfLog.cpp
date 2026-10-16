@@ -97,7 +97,7 @@ static constexpr uint32_t elfMachine = 0xB7;
 static constexpr uint32_t elfMachine = 0x28;
 #elif CPU(RISCV64)
 static constexpr uint32_t elfMachine = 0xF3;
-#elif CPU(PPC64LE)
+#elif CPU(PPC64)
 static constexpr uint32_t elfMachine = 0x15; // EM_PPC64 per /usr/include/elf.h
 #endif
 

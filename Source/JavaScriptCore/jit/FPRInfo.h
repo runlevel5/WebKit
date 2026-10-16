@@ -422,7 +422,7 @@ public:
 
 #endif // CPU(RISCV64)
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
 
 class FPRInfo {
 public:
@@ -521,7 +521,7 @@ public:
     static constexpr unsigned InvalidIndex = 0xffffffff;
 };
 
-#endif // CPU(PPC64LE)
+#endif // CPU(PPC64)
 
 // We use this hack to get the FPRInfo from the FPRReg type in templates because our code is bad and we should feel bad..
 constexpr FPRInfo toInfoFromReg(FPRReg) { return FPRInfo(); }

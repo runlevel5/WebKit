@@ -1077,7 +1077,7 @@ void Type::dump(PrintStream& out) const
 }
 
 // PPC64 keeps an f32 in an FPR in double format, but IPInt slots hold its 4-byte
-// encoding, so moving one needs lfs/stfs: the PPC64LE-only *FPRFloat bytecodes.
+// encoding, so moving one needs lfs/stfs: the PPC64-only *FPRFloat bytecodes.
 
 void RTT::ensureArgumINTBytecode(const CallInformation& callCC) const
 {
@@ -1112,7 +1112,7 @@ void RTT::ensureArgumINTBytecode(const CallInformation& callCC) const
 
                 if (loc.isFPR()) {
                     ASSERT_UNUSED(NUM_ARGUMINT_FPRS, FPRInfo::toArgumentIndex(loc.fpr()) < NUM_ARGUMINT_FPRS);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                     if (argumentType(index).isF32())
                         return static_cast<uint8_t>(IPInt::ArgumINTBytecode::ArgFPRFloat) + FPRInfo::toArgumentIndex(loc.fpr());
 #endif
@@ -1171,7 +1171,7 @@ void RTT::ensureUINTBytecode(const CallInformation& returnCC) const
 
             if (loc.isFPR()) {
                 ASSERT_UNUSED(NUM_UINT_FPRS, FPRInfo::toArgumentIndex(loc.fpr()) < NUM_UINT_FPRS);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 if (returnType(index).isF32())
                     return static_cast<uint8_t>(IPInt::UINTBytecode::RetFPRFloat) + FPRInfo::toArgumentIndex(loc.fpr());
 #endif
@@ -1212,7 +1212,7 @@ void RTT::ensureUINTBytecode(const CallInformation& returnCC) const
 template<bool isTailCall>
 static Vector<uint8_t, 16> buildCallArgumentBytecode(const RTT& signature, const CallInformation& callConvention)
 {
-#if !CPU(PPC64LE)
+#if !CPU(PPC64)
     UNUSED_PARAM(signature);
 #endif
     constexpr static int NUM_MINT_CALL_GPRS = 8;
@@ -1257,7 +1257,7 @@ static Vector<uint8_t, 16> buildCallArgumentBytecode(const RTT& signature, const
 
             if (loc.isFPR()) {
                 ASSERT_UNUSED(NUM_MINT_CALL_FPRS, FPRInfo::toArgumentIndex(loc.fpr()) < NUM_MINT_CALL_FPRS);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 if (signature.argumentType(index).isF32())
                     return static_cast<uint8_t>(IPInt::CallArgumentBytecode::ArgumentFPRFloat) + FPRInfo::toArgumentIndex(loc.fpr());
 #endif
@@ -1298,7 +1298,7 @@ static Vector<uint8_t, 16> buildCallArgumentBytecode(const RTT& signature, const
 
 static intptr_t buildCallResultBytecode(Vector<uint8_t, 16>& results, const RTT& signature, const CallInformation& callConvention)
 {
-#if !CPU(PPC64LE)
+#if !CPU(PPC64)
     UNUSED_PARAM(signature);
 #endif
     constexpr static int NUM_MINT_RET_GPRS = 8;
@@ -1326,7 +1326,7 @@ static intptr_t buildCallResultBytecode(Vector<uint8_t, 16>& results, const RTT&
 
             if (loc.isFPR()) {
                 ASSERT_UNUSED(NUM_MINT_RET_FPRS, FPRInfo::toArgumentIndex(loc.fpr()) < NUM_MINT_RET_FPRS);
-#if CPU(PPC64LE)
+#if CPU(PPC64)
                 if (signature.returnType(index).isF32())
                     return static_cast<uint8_t>(IPInt::CallResultBytecode::ResultFPRFloat) + FPRInfo::toArgumentIndex(loc.fpr());
 #endif

@@ -102,7 +102,7 @@ Code::Code(Procedure& proc)
             // ARM-only.
             all.remove(MacroAssembler::addressTempRegister);
 #endif // CPU(ARM)
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // ELFv2 makes f14-f31 callee-saved, but JSC only models f14-f21 as
             // VM callee-saves, and no C-to-VM entry saves f22-f31. An exception
             // unwinding through Air code using them would lose the C caller's

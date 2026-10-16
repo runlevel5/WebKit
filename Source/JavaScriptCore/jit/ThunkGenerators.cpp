@@ -137,7 +137,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallGenerator(VM& vm)
 
     jit.emitFunctionPrologue();
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // ELFv2: the C callee saves LR/TOC at 16(sp)/24(sp), this frame's codeBlock and
     // callee slots. The exception handler resets sp.
     if (maxFrameExtentForSlowPathCall)
@@ -165,7 +165,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromCallSlowPathGenerator(VM
     // even though we won't use it.
     jit.preserveReturnAddressAfterCall(GPRInfo::nonPreservedNonReturnGPR);
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // ELFv2: the C callee's LR/TOC saves at 16(sp)/24(sp) would clobber the frame's
     // codeBlock and callee slots.
     if (maxFrameExtentForSlowPathCall)
@@ -495,7 +495,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
     jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
     jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // An ELFv2 C callee saves LR and TOC at 16(sp)/24(sp), in its caller's frame,
     // which here are the JS frame's codeBlock and callee slots. sp is reset from fp
     // afterwards, so there is no explicit restore.

@@ -241,7 +241,7 @@ enum class CallArgumentBytecode : uint8_t { // (mINT)
     TailCall = 0x1a,
     Call = 0x1b,
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // PPC64 holds an f32 in an FPR in double format while IPInt slots hold its
     // 4-byte encoding, so f32 needs its own variants (lfs/stfs).
     ArgumentFPRFloat = 0x1c, // 0x1c - 0x23: pop an f32 into fa0, fa1, ...
@@ -303,7 +303,7 @@ enum class CallResultBytecode : uint8_t { // (mINT)
     ResultStackVector = 0x11,
     End = 0x12,
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // f32 variants for PPC64; see above.
     ResultFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
     NumOpcodes = 0x1b // this must be the last element of the enum!
@@ -326,7 +326,7 @@ enum class ArgumINTBytecode: uint8_t {
     StackVector = 0x11,
     End = 0x12,
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // f32 variants for PPC64; see above.
     ArgFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
     NumOpcodes = 0x1b // this must be the last element of the enum!
@@ -342,7 +342,7 @@ enum class UINTBytecode: uint8_t {
     StackVector = 0x11,
     End = 0x12,
 
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     // f32 variants for PPC64; see above.
     RetFPRFloat = 0x13, // 0x13 - 0x1a: f32 in fr0 - fr7
     NumOpcodes = 0x1b // this must be the last element of the enum!

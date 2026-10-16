@@ -203,7 +203,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
         int8_t bufferSlot = m_vmCalleeSaveBufferSlotsByRegIndex[currentEntry.reg().index()];
 
         if (bufferSlot < 0) {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
             // ELFv2 makes r14-r31 callee-saved, but the VM only models r14-r23.
             // r24-r30 are scratch to the VM and saved at every C-to-VM entry; Air
             // saves them only because it can be called from C. Like ARMv7 below,

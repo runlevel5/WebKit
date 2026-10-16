@@ -137,9 +137,9 @@ constexpr bool isRISCV64()
 #endif
 }
 
-constexpr bool isPPC64LE()
+constexpr bool isPPC64()
 {
-#if CPU(PPC64LE)
+#if CPU(PPC64)
     return true;
 #else
     return false;
@@ -195,7 +195,7 @@ inline bool optimizeForARMv7IDIVSupported();
 inline bool optimizeForARM64();
 inline bool optimizeForX86();
 inline bool optimizeForX86_64();
-inline bool optimizeForPPC64LE();
+inline bool optimizeForPPC64();
 inline bool hasSensibleDoubleToInt();
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
@@ -230,7 +230,7 @@ constexpr size_t prologueStackPointerDelta()
 #elif CPU(X86_64)
     // Prologue only saves the framePointerRegister
     return sizeof(CPURegister);
-#elif CPU(ARM_THUMB2) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64LE)
+#elif CPU(ARM_THUMB2) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
     // Prologue saves the framePointerRegister and linkRegister
     return 2 * sizeof(CPURegister);
 #else

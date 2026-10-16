@@ -164,7 +164,11 @@ doubleword 0.
 - Arch gates that omit PPC64 compile cleanly and emit nothing or the x86 shape — the most common
   silent bug. Air opcode gates live on individual form sub-lines in `AirOpcode.opcodes`.
   `PPC64_UNSUPPORTED()` marks deliberately absent operations; hitting one means a gate leaked.
-- offlineasm: resolve PtrTags symbolically (never re-implement a WTF hash in Ruby); `ppc64le.rb` is a
+- Naming: `CPU(PPC64)` is 64-bit PowerPC in either byte order, `CPU(PPC64LE)` the little-endian
+  subset; byte-order-specific code uses `CPU(BIG_ENDIAN)`. The offlineasm backend, Air arch tags and
+  `isPPC64()` all say PPC64. CMake keeps `WTF_CPU_PPC64LE` for the JIT defaults, so on this branch
+  big-endian builds stay C_LOOP; big-endian work is on `ppc64-be`.
+- offlineasm: resolve PtrTags symbolically (never re-implement a WTF hash in Ruby); `ppc64.rb` is a
   CMake dependency of LLIntAssembly.h.
 - GC scans the 288-byte red zone below sp. Pages are 64 KB (memory-threshold tests are tuned for 4 KB).
 
