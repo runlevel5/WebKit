@@ -205,10 +205,12 @@ void lowerStackArgs(Code& code)
                         if (inst.kind.opcode == Move && slot->kind() == StackSlotKind::Spill)
                             inst.kind.spill = true;
                         // A narrower access to a spill slot means its low-order bytes, which are
-                        // at the end of the slot on big-endian.
+                        // at the end of the slot on big-endian. A stackmap (Patch) argument is the
+                        // exception: its rep is read back with a load of the whole slot, which
+                        // finds a narrow value in the low-order bytes by itself.
                         Value::OffsetType narrowOffset = 0;
 #if CPU(BIG_ENDIAN)
-                        if (bank == GP && slot->kind() == StackSlotKind::Spill && !arg.offset() && bytesForWidth(width) < slot->byteSize())
+                        if (bank == GP && inst.kind.opcode != Patch && slot->kind() == StackSlotKind::Spill && !arg.offset() && bytesForWidth(width) < slot->byteSize())
                             narrowOffset = slot->byteSize() - bytesForWidth(width);
 #else
                         UNUSED_PARAM(bank);
