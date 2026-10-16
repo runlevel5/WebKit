@@ -465,6 +465,19 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MaskedAlternativeInfo);
 static constexpr MacroAssembler::TrustedImm32 surrogateTagMask = MacroAssembler::TrustedImm32(0xfc00fc00);
 static constexpr MacroAssembler::TrustedImm32 surrogatePairTags = MacroAssembler::TrustedImm32(0xdc00d800);
 
+// The readers below load two UTF-16 code units with one 32-bit load and expect
+// the first unit in the low half. On big-endian it lands in the high half, so
+// swap the halves after the load.
+static ALWAYS_INLINE void swapHalfwordsIfBigEndian(CCallHelpers& jit, MacroAssembler::RegisterID reg)
+{
+#if CPU(BIG_ENDIAN)
+    jit.rotateRight32(MacroAssembler::TrustedImm32(16), reg);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(reg);
+#endif
+}
+
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
 template<TryReadUnicodeCharGenFirstNonBMPOptimization useNonBMPOptimization>
 void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg)
@@ -485,6 +498,7 @@ void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterI
     // Load and try to process two UTF-16 characters.
     // If they are a proper surrogate pair, compute the non-BMP codepoint.
     jit.load32(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
+    swapHalfwordsIfBigEndian(jit, resultReg);
 #if CPU(ARM64)
     jit.and32AndSetFlags(surrogateTagMask, resultReg, regs.unicodeAndSubpatternIdTemp);
     isBMP.append(jit.branch(MacroAssembler::Zero));
@@ -564,6 +578,7 @@ void tryReadUnicodeCharSlowImpl(CCallHelpers& jit)
     // Load and try to process two UTF-16 characters.
     // If they are a proper surrogate pair, compute the non-BMP codepoint.
     jit.load32(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
+    swapHalfwordsIfBigEndian(jit, resultReg);
 #if CPU(ARM64)
     jit.and32AndSetFlags(surrogateTagMask, resultReg, regs.unicodeAndSubpatternIdTemp);
     isBMP.append(jit.branch(MacroAssembler::Zero));
@@ -1488,6 +1503,7 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, character, indexReg);
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
         m_jit.load32(MacroAssembler::Address(m_regs.regUnicodeInputAndTrail), character);
+        swapHalfwordsIfBigEndian(m_jit, character);
 
         // Fast path for a small matches-only trail set (e.g., OfAKindRegExp's
         // {0xa1,0xb1,0xc1,0xd1}): compare the loaded 32-bit pair directly against
@@ -3514,6 +3530,7 @@ class YarrGenerator final : public YarrJITInfo {
             MacroAssembler::Jump backtrackToBegin = m_jit.branchTest32(MacroAssembler::Zero, countRegister);
 
             m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 2, character), character);
+            swapHalfwordsIfBigEndian(m_jit, character);
             m_jit.and32(surrogateTagMask, character);
             m_jit.compare32(MacroAssembler::Equal, character, surrogatePairTags, character);
             m_jit.add32(MacroAssembler::TrustedImm32(1), character);
