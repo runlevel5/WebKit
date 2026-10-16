@@ -104,7 +104,7 @@ GPRReg SpeculativeJIT::fillJSValue(Edge edge)
             m_gprs.retain(gpr, virtualRegister, SpillOrderSpilled);
             switch (spillFormat) {
             case DataFormatInt32: {
-                load32(addressFor(virtualRegister), gpr);
+                load32(payloadFor(virtualRegister), gpr);
                 or64(GPRInfo::numberTagRegister, gpr);
                 spillFormat = DataFormatJSInt32;
                 break;
@@ -1222,13 +1222,13 @@ GPRReg SpeculativeJIT::fillSpeculateInt32Internal(Edge edge, DataFormat& returnF
         if (spillFormat == DataFormatJSInt32 || spillFormat == DataFormatInt32) {
             // If we know this was spilled as an integer we can fill without checking.
             if (strict) {
-                load32(addressFor(virtualRegister), gpr);
+                load32(payloadFor(virtualRegister), gpr);
                 info.fillInt32(m_stream, gpr);
                 returnFormat = DataFormatInt32;
                 return gpr;
             }
             if (spillFormat == DataFormatInt32) {
-                load32(addressFor(virtualRegister), gpr);
+                load32(payloadFor(virtualRegister), gpr);
                 info.fillInt32(m_stream, gpr);
                 returnFormat = DataFormatInt32;
             } else {
