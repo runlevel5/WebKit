@@ -24883,7 +24883,11 @@ IGNORE_CLANG_WARNINGS_END
         LValue bigInt = allocateCell(m_out.constIntPtr(allocatorValue.localAllocator()), structure, slowCase);
 
         // Initialize m_length = 1 and m_hash = 0 with a single 64-bit store.
+#if CPU(BIG_ENDIAN)
+        m_out.store64(m_out.constInt64(1ULL << 32), bigInt, m_heaps.JSBigInt_length);
+#else
         m_out.store64(m_out.constInt64(1), bigInt, m_heaps.JSBigInt_length);
+#endif
 
         LValue magnitude = value;
         if (isSigned) {
