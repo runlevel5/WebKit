@@ -11836,13 +11836,8 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.bitOr(kids[0], m_out.constIntPtr(JSString::isRopeInPointer)),
                 m_out.bitAnd(m_out.constIntPtr(JSRopeString::is8BitInPointer), m_out.zeroExtPtr(flagsAndLength.flags))),
             result, m_heaps.JSRopeString_fiber0);
-        m_out.storePtr(
-            m_out.bitOr(m_out.zeroExtPtr(flagsAndLength.length), m_out.shl(kids[1], m_out.constInt32(32))),
-            result, m_heaps.JSRopeString_fiber1);
-        if (numKids == 2)
-            m_out.storePtr(m_out.lShr(kids[1], m_out.constInt32(32)), result, m_heaps.JSRopeString_fiber2);
-        else
-            m_out.storePtr(m_out.bitOr(m_out.lShr(kids[1], m_out.constInt32(32)), m_out.shl(kids[2], m_out.constInt32(16))), result, m_heaps.JSRopeString_fiber2);
+        m_out.storePtr(ropeFiber1Word(flagsAndLength.length, kids[1]), result, m_heaps.JSRopeString_fiber1);
+        m_out.storePtr(ropeFiber2Word(kids[1], numKids == 2 ? nullptr : kids[2]), result, m_heaps.JSRopeString_fiber2);
 
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(result);
@@ -20731,8 +20726,8 @@ IGNORE_CLANG_WARNINGS_END
         LValue rope = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), substringRopeSlowAlloc);
         LValue baseIs8BitFlag = m_out.bitAnd(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit()));
         m_out.storePtr(m_out.bitOr(m_out.constIntPtr(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), m_out.zeroExtPtr(baseIs8BitFlag)), rope, m_heaps.JSRopeString_fiber0);
-        m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(span), m_out.shl(string, m_out.constInt32(32))), rope, m_heaps.JSRopeString_fiber1);
-        m_out.storePtr(m_out.bitOr(m_out.lShr(string, m_out.constInt32(32)), m_out.shl(m_out.zeroExtPtr(from), m_out.constInt32(16))), rope, m_heaps.JSRopeString_fiber2);
+        m_out.storePtr(ropeFiber1Word(span, string), rope, m_heaps.JSRopeString_fiber1);
+        m_out.storePtr(ropeFiber2Word(string, m_out.zeroExtPtr(from)), rope, m_heaps.JSRopeString_fiber2);
         mutatorFence();
         results.append(m_out.anchor(rope));
         m_out.jump(continuation);
@@ -22721,6 +22716,34 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         return patchpoint;
+    }
+
+    // The two 64-bit words of JSRopeString::CompactFibers, { u32 length; u32 fiber1Lower;
+    // u16 fiber1Upper; u16 fiber2Lower; u32 fiber2Upper }, from a 32-bit length and 64-bit
+    // fibers. fiber2 is null for a two-fiber rope.
+    LValue ropeFiber1Word(LValue length, LValue fiber1)
+    {
+#if CPU(BIG_ENDIAN)
+        return m_out.bitOr(m_out.shl(m_out.zeroExtPtr(length), m_out.constInt32(32)), m_out.bitAnd(fiber1, m_out.constIntPtr(0xffffffff)));
+#else
+        return m_out.bitOr(m_out.zeroExtPtr(length), m_out.shl(fiber1, m_out.constInt32(32)));
+#endif
+    }
+
+    LValue ropeFiber2Word(LValue fiber1, LValue fiber2)
+    {
+#if CPU(BIG_ENDIAN)
+        LValue word = m_out.shl(m_out.lShr(fiber1, m_out.constInt32(32)), m_out.constInt32(48));
+        if (!fiber2)
+            return word;
+        word = m_out.bitOr(word, m_out.shl(m_out.bitAnd(fiber2, m_out.constIntPtr(0xffff)), m_out.constInt32(32)));
+        return m_out.bitOr(word, m_out.lShr(fiber2, m_out.constInt32(16)));
+#else
+        LValue word = m_out.lShr(fiber1, m_out.constInt32(32));
+        if (!fiber2)
+            return word;
+        return m_out.bitOr(word, m_out.shl(fiber2, m_out.constInt32(16)));
+#endif
     }
 
     void storeStructure(LValue object, Structure* structure)

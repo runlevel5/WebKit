@@ -17912,6 +17912,26 @@ void SpeculativeJIT::compileMakeRope(Node* node)
     orPtr(TrustedImmPtr(JSString::isRopeInPointer), scratchGPR);
     storePtr(scratchGPR, Address(resultGPR, JSRopeString::offsetOfFiber0()));
 
+#if CPU(BIG_ENDIAN)
+    // CompactFibers is { u32 length; u32 fiber1Lower; u16 fiber1Upper; u16 fiber2Lower;
+    // u32 fiber2Upper }. As big-endian words, the first field of each is the high half:
+    // word1 = length << 32 | low32(fiber1),
+    // word2 = upper16(fiber1) << 48 | low16(fiber2) << 32 | fiber2 >> 16.
+    lshiftPtr(allocatorGPR, TrustedImm32(32), scratchGPR);
+    zeroExtend32ToWord(opGPRs[1], scratch2GPR);
+    orPtr(scratch2GPR, scratchGPR);
+    storePtr(scratchGPR, Address(resultGPR, JSRopeString::offsetOfFiber1()));
+    urshift64(opGPRs[1], TrustedImm32(32), scratchGPR);
+    lshiftPtr(TrustedImm32(48), scratchGPR);
+    if (numOpGPRs == 3) {
+        zeroExtend16To32(opGPRs[2], scratch2GPR);
+        lshiftPtr(TrustedImm32(32), scratch2GPR);
+        orPtr(scratch2GPR, scratchGPR);
+        urshift64(opGPRs[2], TrustedImm32(16), scratch2GPR);
+        orPtr(scratch2GPR, scratchGPR);
+    }
+    storePtr(scratchGPR, Address(resultGPR, JSRopeString::offsetOfFiber2()));
+#else
 #if CPU(ARM64)
     orLeftShift64(allocatorGPR, opGPRs[1], TrustedImm32(32), scratchGPR);
 #else
@@ -17935,6 +17955,7 @@ void SpeculativeJIT::compileMakeRope(Node* node)
         storePtr(scratchGPR, Address(resultGPR, JSRopeString::offsetOfFiber2()));
 #endif
     }
+#endif
 
     auto isNonEmptyString = branchTest32(NonZero, allocatorGPR);
 
