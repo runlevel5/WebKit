@@ -166,6 +166,18 @@ struct DataViewData {
         };
         uint64_t asQuadWord;
     };
+
+    // The fields as one integer in the low bits, independent of byte order. AbstractHeap keeps
+    // only the low 48 bits of a payload, which on big-endian would drop byteSize and isSigned
+    // from asQuadWord.
+    uint64_t key() const
+    {
+        return static_cast<uint64_t>(byteSize)
+            | static_cast<uint64_t>(isSigned) << 8
+            | static_cast<uint64_t>(isResizable) << 16
+            | static_cast<uint64_t>(isFloatingPoint) << 24
+            | static_cast<uint64_t>(static_cast<uint8_t>(isLittleEndian)) << 32;
+    }
 };
 static_assert(sizeof(DataViewData) == sizeof(uint64_t));
 
