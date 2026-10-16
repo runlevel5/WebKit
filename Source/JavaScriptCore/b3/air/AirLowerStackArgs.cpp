@@ -198,12 +198,21 @@ void lowerStackArgs(Code& code)
             }
 
             inst.forEachArg(
-                [&] (Arg& arg, Arg::Role role, Bank, Width width) {
+                [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
                     switch (arg.kind()) {
                     case Arg::Stack: {
                         StackSlot* slot = arg.stackSlot();
                         if (inst.kind.opcode == Move && slot->kind() == StackSlotKind::Spill)
                             inst.kind.spill = true;
+                        // A narrower access to a spill slot means its low-order bytes, which are
+                        // at the end of the slot on big-endian.
+                        Value::OffsetType narrowOffset = 0;
+#if CPU(BIG_ENDIAN)
+                        if (bank == GP && slot->kind() == StackSlotKind::Spill && !arg.offset() && bytesForWidth(width) < slot->byteSize())
+                            narrowOffset = slot->byteSize() - bytesForWidth(width);
+#else
+                        UNUSED_PARAM(bank);
+#endif
                         if (Arg::isZDef(role)
                             && slot->kind() == StackSlotKind::Spill
                             && slot->byteSize() > bytesForWidth(width)) {
@@ -228,10 +237,10 @@ void lowerStackArgs(Code& code)
                             RELEASE_ASSERT(isValidForm(storeOpcode, operandKind, Arg::Stack));
                             insertionSet.insert(
                                 instIndex + 1, storeOpcode, inst.origin, operand,
-                                stackAddr(instIndex + 1, arg, width, arg.offset() + 4 + slot->offsetFromFP()));
+                                stackAddr(instIndex + 1, arg, width, arg.offset() + (4 - narrowOffset) + slot->offsetFromFP()));
                             extendedOffsetAddrRegInUse = false;
                         }
-                        arg = stackAddr(instIndex, arg, width, arg.offset() + slot->offsetFromFP());
+                        arg = stackAddr(instIndex, arg, width, arg.offset() + narrowOffset + slot->offsetFromFP());
                         break;
                     }
                     case Arg::CallArg:
