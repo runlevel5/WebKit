@@ -21444,6 +21444,17 @@ IGNORE_CLANG_WARNINGS_END
 
         DataViewData data = m_node->dataViewData();
 
+        // The accesses below are in the host's byte order and swap for the other one, so on a
+        // big-endian host the "little-endian" cases are the ones that swap.
+#if CPU(BIG_ENDIAN)
+        if (data.isLittleEndian == TriState::True)
+            data.isLittleEndian = TriState::False;
+        else if (data.isLittleEndian == TriState::False)
+            data.isLittleEndian = TriState::True;
+        if (isLittleEndian)
+            isLittleEndian = m_out.bitXor(isLittleEndian, m_out.int32One);
+#endif
+
         LValue length = typedArrayLength(dataView, data.isResizable, TypeDataView, m_node->child1());
 
 #if USE(LARGE_TYPED_ARRAYS)
@@ -21638,6 +21649,17 @@ IGNORE_CLANG_WARNINGS_END
             isLittleEndian = lowBoolean(m_graph.varArgChild(m_node, 3));
 
         DataViewData data = m_node->dataViewData();
+
+        // The accesses below are in the host's byte order and swap for the other one, so on a
+        // big-endian host the "little-endian" cases are the ones that swap.
+#if CPU(BIG_ENDIAN)
+        if (data.isLittleEndian == TriState::True)
+            data.isLittleEndian = TriState::False;
+        else if (data.isLittleEndian == TriState::False)
+            data.isLittleEndian = TriState::True;
+        if (isLittleEndian)
+            isLittleEndian = m_out.bitXor(isLittleEndian, m_out.int32One);
+#endif
 
         LValue length = typedArrayLength(dataView, data.isResizable, TypeDataView, m_graph.varArgChild(m_node, 0));
 

@@ -6398,6 +6398,20 @@ void SpeculativeJIT::compile(Node* node)
         if (node->child3())
             isLittleEndianOperand.emplace(this, node->child3());
         GPRReg isLittleEndianGPR = isLittleEndianOperand ? isLittleEndianOperand->gpr() : InvalidGPRReg;
+#if CPU(BIG_ENDIAN)
+        // The accesses below are in the host's byte order and swap for the other one, so on a
+        // big-endian host the "little-endian" cases are the ones that swap.
+        std::optional<GPRTemporary> swappedIsLittleEndian;
+        if (data.isLittleEndian == TriState::True)
+            data.isLittleEndian = TriState::False;
+        else if (data.isLittleEndian == TriState::False)
+            data.isLittleEndian = TriState::True;
+        if (isLittleEndianGPR != InvalidGPRReg) {
+            swappedIsLittleEndian.emplace(this);
+            xor32(TrustedImm32(1), isLittleEndianGPR, swappedIsLittleEndian->gpr());
+            isLittleEndianGPR = swappedIsLittleEndian->gpr();
+        }
+#endif
 
         if (data.isResizable)
             loadTypedArrayLength(dataViewGPR, t1, t2, t1, TypeDataView);
@@ -6695,6 +6709,19 @@ void SpeculativeJIT::compile(Node* node)
         if (m_graph.varArgChild(node, 3))
             isLittleEndianOperand.emplace(this, m_graph.varArgChild(node, 3));
         GPRReg isLittleEndianGPR = isLittleEndianOperand ? isLittleEndianOperand->gpr() : InvalidGPRReg;
+#if CPU(BIG_ENDIAN)
+        // As in DataViewGet: on a big-endian host the "little-endian" cases are the ones that swap.
+        std::optional<GPRTemporary> swappedIsLittleEndian;
+        if (data.isLittleEndian == TriState::True)
+            data.isLittleEndian = TriState::False;
+        else if (data.isLittleEndian == TriState::False)
+            data.isLittleEndian = TriState::True;
+        if (isLittleEndianGPR != InvalidGPRReg) {
+            swappedIsLittleEndian.emplace(this);
+            xor32(TrustedImm32(1), isLittleEndianGPR, swappedIsLittleEndian->gpr());
+            isLittleEndianGPR = swappedIsLittleEndian->gpr();
+        }
+#endif
 
         if (data.isResizable)
             loadTypedArrayLength(dataViewGPR, t1, t2, t1, TypeDataView);
