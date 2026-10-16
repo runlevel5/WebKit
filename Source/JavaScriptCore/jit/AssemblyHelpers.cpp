@@ -414,7 +414,15 @@ void AssemblyHelpers::emitStoreStructureWithTypeInfo(AssemblyHelpers& jit, Trust
 {
     const Structure* structurePtr = reinterpret_cast<const Structure*>(structure.m_value);
 #if USE(JSVALUE64)
-    jit.store64(TrustedImm64(static_cast<uint64_t>(structurePtr->id().bits()) | (static_cast<uint64_t>(structurePtr->typeInfoBlob()) << 32)), MacroAssembler::Address(dest, JSCell::structureIDOffset()));
+    // One 64-bit store of the StructureID (offset 0) and the type info blob (offset 4).
+    uint64_t structureID = structurePtr->id().bits();
+    uint64_t typeInfoBlob = structurePtr->typeInfoBlob();
+#if CPU(BIG_ENDIAN)
+    uint64_t header = (structureID << 32) | typeInfoBlob;
+#else
+    uint64_t header = structureID | (typeInfoBlob << 32);
+#endif
+    jit.store64(TrustedImm64(header), MacroAssembler::Address(dest, JSCell::structureIDOffset()));
     if (ASSERT_ENABLED) {
         Jump correctStructure = jit.branch32(Equal, MacroAssembler::Address(dest, JSCell::structureIDOffset()), TrustedImm32(structurePtr->id().bits()));
         jit.abortWithReason(AHStructureIDIsValid);
