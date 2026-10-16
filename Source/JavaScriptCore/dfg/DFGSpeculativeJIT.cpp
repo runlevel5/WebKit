@@ -15686,14 +15686,22 @@ void SpeculativeJIT::compileGetSetter(Node* node)
 void SpeculativeJIT::compileGetCallee(Node* node)
 {
     GPRTemporary result(this);
+#if USE(JSVALUE64)
+    loadPtr(addressFor(CallFrameSlot::callee), result.gpr());
+#else
     loadPtr(payloadFor(CallFrameSlot::callee), result.gpr());
+#endif
     cellResult(result.gpr(), node);
 }
 
 void SpeculativeJIT::compileSetCallee(Node* node)
 {
     SpeculateCellOperand callee(this, node->child1());
+#if USE(JSVALUE64)
+    storeCell(callee.gpr(), addressFor(CallFrameSlot::callee));
+#else
     storeCell(callee.gpr(), payloadFor(CallFrameSlot::callee));
+#endif
     noResult(node);
 }
 

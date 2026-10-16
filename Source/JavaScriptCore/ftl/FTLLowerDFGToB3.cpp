@@ -13083,7 +13083,7 @@ IGNORE_CLANG_WARNINGS_END
     void compileSetCallee()
     {
         auto callee = lowCell(m_node->child1());
-        m_out.storePtr(callee, payloadFor(VirtualRegister(CallFrameSlot::callee)));
+        m_out.storePtr(callee, addressFor(VirtualRegister(CallFrameSlot::callee)));
     }
 
     void compileGetArgumentCountIncludingThis()
@@ -19940,7 +19940,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(m_callFrame, packet, m_heaps.ShadowChicken_Packet_frame);
         m_out.storePtr(m_out.loadPtr(addressFor(VirtualRegister(0))), packet, m_heaps.ShadowChicken_Packet_callerFrame);
-        m_out.storePtr(m_out.loadPtr(payloadFor(VirtualRegister(CallFrameSlot::callee))), packet, m_heaps.ShadowChicken_Packet_callee);
+        m_out.storePtr(m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::callee))), packet, m_heaps.ShadowChicken_Packet_callee);
         m_out.storePtr(scope, packet, m_heaps.ShadowChicken_Packet_scope);
     }
 
