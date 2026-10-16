@@ -1575,7 +1575,10 @@ bool NODELETE canUseJITCage() { return false; }
 
 bool NODELETE canUseWasm()
 {
-#if ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
+#if CPU(PPC64) && CPU(BIG_ENDIAN)
+    // Wasm memory is little-endian; big-endian PPC64 does not yet byte-reverse its accesses.
+    return false;
+#elif ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
     return true;
 #else
     return false;

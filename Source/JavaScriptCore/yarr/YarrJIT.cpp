@@ -2689,7 +2689,11 @@ class YarrGenerator final : public YarrJITInfo {
         ASSERT(opIndex + 1 < m_ops.size());
 
         const MacroAssembler::RegisterID character = m_regs.regT0;
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
+#if CPU(BIG_ENDIAN)
+        // The multi-character compares below pack the first character into the
+        // low bits of the load, which only holds on little-endian.
+        unsigned maxCharactersAtOnce = 1;
+#elif CPU(X86_64) || CPU(ARM64) || CPU(RISCV64) || CPU(PPC64)
         unsigned maxCharactersAtOnce = m_charSize == CharSize::Char8 ? 8 : 4;
 #else
         unsigned maxCharactersAtOnce = m_charSize == CharSize::Char8 ? 4 : 2;

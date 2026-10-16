@@ -29,6 +29,10 @@
 
 #if ENABLE(ASSEMBLER) && CPU(PPC64)
 
+#if !defined(_CALL_ELF) || _CALL_ELF != 2
+#error "The PPC64 JIT supports the ELFv2 ABI only"
+#endif
+
 #include "AbstractMacroAssembler.h"
 #include "PPC64Assembler.h"
 #include <limits>
