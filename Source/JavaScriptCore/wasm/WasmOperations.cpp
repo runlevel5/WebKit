@@ -804,11 +804,10 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
         } else if (value.isFPR()) {
             switch (value.type().kind()) {
             case B3::Float:
-                // The OSR entry reads a Float slot as 4 bytes; an FPR holds it in
+                // The buffer reader takes the low 32 bits; an FPR holds an f32 in
                 // its register format (the double image on PPC64).
                 dataLogLnIf(verbose, "FPR for value ", index, " ", value.fpr(), " = ", context.fpr(value.fpr()));
-                *std::bit_cast<uint64_t*>(buffer + index) = 0;
-                *std::bit_cast<float*>(buffer + index) = loadF32FromFPRSlot(&context.fpr(value.fpr()));
+                *std::bit_cast<uint64_t*>(buffer + index) = std::bit_cast<uint32_t>(loadF32FromFPRSlot(&context.fpr(value.fpr())));
                 break;
             case B3::Double:
                 dataLogLnIf(verbose, "FPR for value ", index, " ", value.fpr(), " = ", context.fpr(value.fpr()));
@@ -828,7 +827,7 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
         } else if (value.isConstant()) {
             switch (value.type().kind()) {
             case B3::Float:
-                *std::bit_cast<float*>(buffer + index) = value.floatValue();
+                *std::bit_cast<uint64_t*>(buffer + index) = std::bit_cast<uint32_t>(value.floatValue());
                 break;
             case B3::Double:
                 *std::bit_cast<double*>(buffer + index) = value.doubleValue();
