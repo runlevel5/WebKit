@@ -89,6 +89,16 @@ static inline MacroAssembler::Address slotAddress(TypeKind type, MacroAssembler:
 {
     return (type == TypeKind::I32 || type == TypeKind::F32) ? payloadOf(address) : address;
 }
+// The low `size` bytes of a 32-bit value held in an 8-byte slot.
+static inline MacroAssembler::Address narrowSourceOf(MacroAssembler::Address slot, unsigned size)
+{
+#if CPU(BIG_ENDIAN)
+    return size < 8 ? slot.withOffset(PayloadOffset + 4 - size) : slot;
+#else
+    UNUSED_PARAM(size);
+    return slot;
+#endif
+}
 
 
 Location Location::fromArgumentLocation(ArgumentLocation argLocation, TypeKind)
@@ -4997,13 +5007,13 @@ void BBQJIT::emitMoveMemory(StorageType type, Location src, Address dst)
 
     switch (type.elementSize()) {
     case 1:
-        m_jit.transfer8(src.asAddress(), dst);
+        m_jit.transfer8(narrowSourceOf(src.asAddress(), 1), dst);
         break;
     case 2:
-        m_jit.transfer16(src.asAddress(), dst);
+        m_jit.transfer16(narrowSourceOf(src.asAddress(), 2), dst);
         break;
     case 4:
-        m_jit.transfer32(src.asAddress(), dst);
+        m_jit.transfer32(narrowSourceOf(src.asAddress(), 4), dst);
         break;
     case 8:
         m_jit.transfer64(src.asAddress(), dst);
@@ -5023,13 +5033,13 @@ void BBQJIT::emitMoveMemory(StorageType type, Location src, BaseIndex dst)
 
     switch (type.elementSize()) {
     case 1:
-        m_jit.transfer8(src.asAddress(), dst);
+        m_jit.transfer8(narrowSourceOf(src.asAddress(), 1), dst);
         break;
     case 2:
-        m_jit.transfer16(src.asAddress(), dst);
+        m_jit.transfer16(narrowSourceOf(src.asAddress(), 2), dst);
         break;
     case 4:
-        m_jit.transfer32(src.asAddress(), dst);
+        m_jit.transfer32(narrowSourceOf(src.asAddress(), 4), dst);
         break;
     case 8:
         m_jit.transfer64(src.asAddress(), dst);
