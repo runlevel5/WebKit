@@ -211,8 +211,8 @@ int32's payload, the low word of a pointer-sized field, a `Move32` spill into an
   filled the disk once). The tree there is rsync'd, not git: a source edited while ninja runs ends up
   older than its object — `touch` it. Result: 82,106 pass, 88 fail, all nine
   failing tests needing `WebAssembly`.
-- Releases ship two JIT patches, LE (`webkitgtk-2.54.1..ppc64`) and BE (`ppc64..ppc64-be`); the
-  BE patch applies on top of the LE one and is validated on LE too (power10: stress 82,194/0, wasm 19,812/0).
+- Releases ship two JIT patches, LE (`webkitgtk-2.54.1..ppc64`) and BE (`ppc64..ppc64-be`, applied
+  on top of the LE one); `ppc64-be` is gated on LE too (power10: stress 82,194/0, wasm 19,812/0).
 
 ## Testing
 
@@ -284,12 +284,13 @@ Build traps — both look like compile errors that contradict the file you just 
 
 ## Releases and packaging
 
-- Tag `webkitgtk-<version>-ppc64` on the fork, with the release assets generated from the tag (plus the
-  big-endian JIT patch, `git diff ppc64 ppc64-be -- Source/`, from `ppc64-be`):
+- Tag `webkitgtk-<version>-ppc64` on the fork, with three release assets. The big-endian patch is
+  incremental: it applies after the LE JIT patch (`ppc64-be` is `ppc64` plus the BE commits).
 
   ```sh
-  git diff webkitgtk-2.54.1 <commit> -- Source/ThirdParty/skia > webkitgtk-2.54.1-ppc64-skia-vsx.patch
-  git diff webkitgtk-2.54.1 <commit> -- Source/ ':!Source/ThirdParty/skia' > webkitgtk-2.54.1-ppc64-jit.patch
+  git diff webkitgtk-2.54.1 <le-commit> -- Source/ThirdParty/skia > webkitgtk-2.54.1-ppc64-skia-vsx.patch
+  git diff webkitgtk-2.54.1 <le-commit> -- Source/ ':!Source/ThirdParty/skia' > webkitgtk-2.54.1-ppc64-jit.patch
+  git diff <le-commit> <be-commit> -- Source/ > webkitgtk-2.54.1-ppc64-be-jit.patch
   ```
 
   Check both apply with `patch -p1` to the release tarball (`power9:~/Projects/webkitgtk-rpm/`) before
