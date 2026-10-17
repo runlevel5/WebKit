@@ -2,7 +2,8 @@
 
 JSC's JIT tiers and WebAssembly on 64-bit little-endian POWER. **POWER8 (Power ISA 2.07) is the
 baseline**; POWER9 (ISA 3.0) and POWER10 (ISA 3.1) instructions are used only behind runtime checks.
-Non-goals: 32-bit PPC, big-endian, AIX, pointer authentication.
+Non-goals: 32-bit PPC, AIX, pointer authentication. Big-endian ELFv2 is a second target on the
+`ppc64-be` branch (see *Big-endian*); ELFv1 stays C_LOOP.
 
 - Branch `ppc64` on the fork `github.com/runlevel5/WebKit-ppc64`, based on the **WebKitGTK 2.54.1**
   tag (`webkitgtk-2.54.1` = `628d6ce1850e`, release branch `webkitglib/2.54`) since 2026-10-15.
@@ -166,11 +167,52 @@ doubleword 0.
   `PPC64_UNSUPPORTED()` marks deliberately absent operations; hitting one means a gate leaked.
 - Naming: `CPU(PPC64)` is 64-bit PowerPC in either byte order, `CPU(PPC64LE)` the little-endian
   subset; byte-order-specific code uses `CPU(BIG_ENDIAN)`. The offlineasm backend, Air arch tags and
-  `isPPC64()` all say PPC64. CMake keeps `WTF_CPU_PPC64LE` for the JIT defaults, so on this branch
-  big-endian builds stay C_LOOP; big-endian work is on `ppc64-be`.
+  `isPPC64()` all say PPC64. CMake enables the JIT for `WTF_CPU_PPC64LE` or for `WTF_CPU_PPC64`
+  with `WTF_PPC64_ELFV2` (`_CALL_ELF == 2`); ELFv1 stays C_LOOP.
 - offlineasm: resolve PtrTags symbolically (never re-implement a WTF hash in Ruby); `ppc64.rb` is a
   CMake dependency of LLIntAssembly.h.
 - GC scans the 288-byte red zone below sp. Pages are 64 KB (memory-threshold tests are tuned for 4 KB).
+
+## Big-endian
+
+Branch `ppc64-be` on top of `ppc64`; host `ppc64elfv2` (Arch POWER, POWER9 KVM guest). The ABI and
+every instruction sequence are shared with LE; only the byte order of memory differs, and nearly
+every bug was one shape: **a 32-bit access to the first four bytes of an 8-byte slot** (a boxed
+int32's payload, the low word of a pointer-sized field, a `Move32` spill into an 8-byte stack slot).
+
+- JSValue halves: `TagOffset` 0 / `PayloadOffset` 4. Fills of int32 locals use `payloadFor`; the
+  callee slot on JSVALUE64 is a whole pointer (`addressFor`). The LLInt's
+  `loadp Callee + PayloadOffset[cfr]` on 64-bit was a latent upstream bug.
+- Boxed-int32 metadata read with `load32` needs `+ PayloadOffset`: Map/Set ordered-hash-table
+  counts (DFG, FTL, the IC `size` getter); DataView `isLittleEndian` is inverted on a BE host and
+  the CSE key must carry byteSize/isSigned (the AbstractHeap payload is 48 bits).
+- Low word of a 64-bit field: `JSRopeString::offsetOfFlags()`, Yarr `branch32` against frame slots
+  written with `storePtr` (`frameSlotLowWordAddress`), `FreeCell::scrambledBits` halves in the
+  inline allocator, `FreeList` secret.
+- Packed words built by shifting: object header (`structureID << 32 | typeInfo`), rope
+  `CompactFibers`, `JSBigInt` header (`1 << 32`), `OpInfoWrapper` (integers stored zero-extended in
+  `int64` and read back truncated — the `int32` union member is gone), `ArrayMode` (a bare
+  `Array::Type` no longer converts to the private word constructor).
+- Air: GP spill slots are at least 8 bytes and `lowerStackArgs` moves a narrower spill access to the
+  low half, except Patch (stackmap) arguments, which the OSR exit / B3 stackmap code restores with a
+  whole-slot `load64`.
+- offlineasm: `btbz addr, mask` was lowered to `andi` on a 32-bit load; `ppc64LowerByteTestsOnMemory`
+  loads the byte first (`MasqueradesAsUndefined`, typed-array mode byte).
+- Yarr: surrogate-pair loads are 32-bit pairs of UTF-16 code units — `rotateRight32(16)` after the
+  load; multi-character compares (`maxCharactersAtOnce = 1`) and SIMD searches are off on BE.
+- Uint8Array hex encode/decode lane shifts and the DataView stress tests assumed an LE host.
+- Off on BE: WebAssembly (compiled in, `canUseWasm()` false — IPInt/BBQ/OMG memory accesses and
+  SIMD lane order would need byte reversal), Yarr multi-character compares and SIMD searches.
+- Debugging: `--dumpFTLDisassembly=true` prints per-Air-instruction address ranges without a
+  disassembler, usable with gdb `x/Ni`; `--collectContinuously=true` makes heap corruption
+  deterministic. Release `RELEASE_ASSERT`s fold into one `abort()` block per function, so a -g1 line
+  number can name a different assert in the same function.
+- Gate: `~/be-jit-gate.sh` (TZ=America/Los_Angeles, `JSCTEST_timeout=120`, `ulimit -c 0`; core dumps
+  filled the disk once). The tree there is rsync'd, not git: a source edited while ninja runs ends up
+  older than its object — `touch` it. Result: 82,106 pass, 88 fail, all nine
+  failing tests needing `WebAssembly`.
+- Releases ship two JIT patches, LE (`webkitgtk-2.54.1..ppc64`) and BE (`ppc64..ppc64-be`); the
+  BE patch applies on top of the LE one and is validated on LE too (power10: stress 82,194/0, wasm 19,812/0).
 
 ## Testing
 
@@ -242,7 +284,8 @@ Build traps — both look like compile errors that contradict the file you just 
 
 ## Releases and packaging
 
-- Tag `webkitgtk-<version>-ppc64` on the fork, with two release assets generated from the tag:
+- Tag `webkitgtk-<version>-ppc64` on the fork, with the release assets generated from the tag (plus the
+  big-endian JIT patch, `git diff ppc64 ppc64-be -- Source/`, from `ppc64-be`):
 
   ```sh
   git diff webkitgtk-2.54.1 <commit> -- Source/ThirdParty/skia > webkitgtk-2.54.1-ppc64-skia-vsx.patch
