@@ -245,16 +245,9 @@ void lowerStackArgs(Code& code)
                         arg = stackAddr(instIndex, arg, width, arg.offset() + narrowOffset + slot->offsetFromFP());
                         break;
                     }
-                    case Arg::CallArg: {
-                        Value::OffsetType narrowOffset = 0;
-#if CPU(BIG_ENDIAN)
-                        // A 32-bit argument is the payload of its 8-byte slot.
-                        if (inst.kind.opcode != Patch && bytesForWidth(width) == 4)
-                            narrowOffset = 4;
-#endif
-                        arg = stackAddr(instIndex, arg, width, arg.offset() + narrowOffset - code.frameSize());
+                    case Arg::CallArg:
+                        arg = stackAddr(instIndex, arg, width, arg.offset() - code.frameSize());
                         break;
-                    }
                     default:
                         break;
                     }

@@ -3287,7 +3287,7 @@ void BBQJIT::emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature
             Location slot = canonicalSlot(result);
             switch (type.kind) {
             case TypeKind::I32:
-                m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
+                m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), payloadOf(slot.asAddress()));
                 break;
             case TypeKind::I31ref:
             case TypeKind::I64:
@@ -3313,7 +3313,7 @@ void BBQJIT::emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature
                 m_jit.transfer64(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
                 break;
             case TypeKind::F32:
-                m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
+                m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), payloadOf(slot.asAddress()));
                 break;
             case TypeKind::F64:
                 m_jit.transfer64(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
@@ -3374,9 +3374,9 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
                 switch (type.kind) {
                 case TypeKind::I32:
                     if (slot.isGPR())
-                        m_jit.load32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asGPR());
+                        m_jit.load32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), slot.asGPR());
                     else
-                        m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
+                        m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), payloadOf(slot.asAddress()));
                     break;
                 case TypeKind::I31ref:
                 case TypeKind::I64:
@@ -3406,9 +3406,9 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
                     break;
                 case TypeKind::F32:
                     if (slot.isFPR())
-                        m_jit.loadFloat(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asFPR());
+                        m_jit.loadFloat(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), slot.asFPR());
                     else
-                        m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
+                        m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t) + PayloadOffset), payloadOf(slot.asAddress()));
                     break;
                 case TypeKind::F64:
                     if (slot.isFPR())

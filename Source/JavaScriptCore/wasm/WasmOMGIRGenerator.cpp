@@ -4879,7 +4879,7 @@ auto OMGIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer
 
 Value* OMGIRGenerator::loadFromScratchBuffer(unsigned& indexInBuffer, Value* pointer, B3::Type type)
 {
-    int32_t offset = safeCast<int32_t>(sizeof(Wasm::Context::ScratchBufferEntry) * (indexInBuffer++));
+    int32_t offset = safeCast<int32_t>(sizeof(Wasm::Context::ScratchBufferEntry) * (indexInBuffer++)) + narrowSlotOffset(type);
     RELEASE_ASSERT(type.isNumeric());
     return m_currentBlock->appendNew<MemoryValue>(m_proc, Load, type, origin(), pointer, offset);
 }
@@ -5249,7 +5249,7 @@ auto OMGIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const RTT& s
     unsigned offset = 0;
     for (unsigned i = 0; i < signature.argumentCount(); ++i) {
         Type type = signature.argumentType(i);
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), payload, safeCast<int32_t>(offset * sizeof(uint64_t)));
+        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), payload, safeCast<int32_t>(offset * sizeof(uint64_t)) + narrowSlotOffset(toB3Type(type)));
         results.append(push(value));
         offset += type.kind == TypeKind::V128 ? 2 : 1;
     }
@@ -5339,7 +5339,7 @@ auto OMGIRGenerator::emitCatchTableImpl(ControlData& data, const ControlData::Tr
         unsigned offset = 0;
         for (unsigned i = 0; i < signature->argumentCount(); ++i) {
             Type type = signature->argumentType(i);
-            Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), buffer, safeCast<int32_t>(offset * sizeof(uint64_t)));
+            Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), buffer, safeCast<int32_t>(offset * sizeof(uint64_t)) + narrowSlotOffset(toB3Type(type)));
             resultStack.constructAndAppend(type, value);
             offset += type.kind == TypeKind::V128 ? 2 : 1;
         }
@@ -5388,7 +5388,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::
     patch->append(instanceValue(), ValueRep::reg(GPRInfo::argumentGPR0));
     unsigned offset = 0;
     for (auto arg : args) {
-        patch->append(get(arg), ValueRep::stackArgument(safeCast<int32_t>(offset * sizeof(EncodedJSValue))));
+        patch->append(get(arg), ValueRep::stackArgument(safeCast<int32_t>(offset * sizeof(EncodedJSValue) + narrowSlotOffset(get(arg)->type()))));
         offset += arg.value().type().isVector() ?  2 : 1;
     }
     m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, offset);
@@ -5681,8 +5681,11 @@ Vector<ConstrainedValue> OMGIRGenerator::createCallConstrainedArgs(BasicBlock* b
     Vector<ConstrainedValue> constrainedPatchArgs;
     constrainedPatchArgs.reserveCapacity(tmpArgs.size());
     for (unsigned i = 0; i < tmpArgs.size(); ++i) {
-        auto dstLocation = wasmCalleeInfo.params[i];
-        constrainedPatchArgs.append(B3::ConstrainedValue(get(block, tmpArgs[i]), dstLocation));
+        Value* value = get(block, tmpArgs[i]);
+        B3::ValueRep rep = wasmCalleeInfo.params[i].location;
+        if (rep.isStackArgument())
+            rep = B3::ValueRep::stackArgument(safeCast<int32_t>(rep.offsetFromSP() + narrowSlotOffset(value->type())));
+        constrainedPatchArgs.append(B3::ConstrainedValue(value, rep));
     }
 
     return constrainedPatchArgs;
@@ -5709,13 +5712,16 @@ auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const RTT& signatur
     const Vector<ArgumentLocation, 1>& constrainedResultLocations = wasmCalleeInfo.results;
     if (returnType != B3::Void) {
         Vector<B3::ValueRep, 1> resultConstraints;
-        for (auto valueLocation : constrainedResultLocations) {
+        for (unsigned i = 0; i < constrainedResultLocations.size(); ++i) {
+            auto valueLocation = constrainedResultLocations[i];
             // FIXME: Graph Coloring has an issue where it runs out of "colors" (aka registers) when passing as an Any so instead place results where they would canonically go.
             // Even though the expected location is SP relative it still works with emitWasmCallStackResultsAndSPRestore because "SP" means FP - frameSize not the semi-random SP we got back from our callee.
             if (valueLocation.location.isStackArgument() && Options::airUseGreedyRegAlloc()) {
                 // FIXME: Should these results be ColdAny? The argument in favor of Warm is that we have to move the values anyway so we might as well put in a register if that's what B3 wants
                 resultConstraints.append(B3::ValueRep::WarmAny);
-            } else
+            } else if (valueLocation.location.isStackArgument())
+                resultConstraints.append(B3::ValueRep::stackArgument(safeCast<int32_t>(valueLocation.location.offsetFromSP() + narrowSlotOffset(toB3Type(signature.returnType(i))))));
+            else
                 resultConstraints.append(B3::ValueRep(valueLocation.location));
         }
         patchpoint->resultConstraints = WTF::move(resultConstraints);
@@ -5872,6 +5878,12 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         ShuffleLocation dst;
         std::optional<int64_t> constant;
         Width width { Width64 };
+        bool isFloat { false };
+        // A 32-bit value is the payload of its 8-byte slot: every stack destination is a
+        // calling-convention slot, and an Int32 stack source is an 8-byte spill slot. A
+        // Float spill slot is 4 bytes, so it has no payload half.
+        int32_t srcPayloadOffset() const { return width == Width32 && !isFloat ? PayloadOffset : 0; }
+        int32_t dstPayloadOffset() const { return width == Width32 ? PayloadOffset : 0; }
     };
 
     Vector<ShuffleEntry> entries;
@@ -5972,6 +5984,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         } else {
             ShuffleEntry entry;
             entry.width = dstType.width();
+            entry.isFloat = dstType.isF32() || dstType.isF64();
             ASSERT(dstType.width() <= Width64);
             entry.src = src;
             entry.dst = dst;
@@ -6046,8 +6059,8 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         }
         if (conflicts) {
             int scratchOffset = allocateSpill(Width64);
-            auto scratchAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, scratchOffset);
-            auto srcAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, entry.src.stackOffset);
+            auto scratchAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, scratchOffset + entry.srcPayloadOffset());
+            auto srcAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, entry.src.stackOffset + entry.srcPayloadOffset());
             jit.transfer32(srcAddr, scratchAddr);
             entry.src = ShuffleLocation::fromStack(scratchOffset);
         }
@@ -6071,7 +6084,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                     jit.move64ToDouble(MacroAssembler::TrustedImm64(*e.constant), dst.fpr);
             } else {
                 ASSERT(dst.kind == ShuffleLocation::Stack);
-                auto dstAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset);
+                auto dstAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset + e.dstPayloadOffset());
                 if (e.width == Width32) {
                     jit.move(MacroAssembler::TrustedImm32(static_cast<int32_t>(*e.constant)), tmp);
                     jit.store32(tmp, dstAddr);
@@ -6087,7 +6100,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                 jit.move(src.gpr, dst.gpr);
             else {
                 ASSERT(dst.kind == ShuffleLocation::Stack);
-                jit.storeWidth(e.width, src.gpr, CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset));
+                jit.storeWidth(e.width, src.gpr, CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset + e.dstPayloadOffset()));
             }
             return;
         }
@@ -6097,13 +6110,13 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                 jit.moveDouble(src.fpr, dst.fpr);
             } else {
                 ASSERT(dst.kind == ShuffleLocation::Stack);
-                jit.storeWidth(e.width, src.fpr, CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset));
+                jit.storeWidth(e.width, src.fpr, CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset + e.dstPayloadOffset()));
             }
             return;
         }
         case ShuffleLocation::Stack: {
             ASSERT(src.kind == ShuffleLocation::Stack);
-            auto srcAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, src.stackOffset);
+            auto srcAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, src.stackOffset + e.srcPayloadOffset());
             ASSERT_WITH_MESSAGE(e.width != Width128, "V128 values should have been split during setup.");
             if (dst.kind == ShuffleLocation::GPR)
                 jit.loadWidth(e.width, srcAddr, dst.gpr);
@@ -6111,7 +6124,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
                 jit.loadWidth(e.width, srcAddr, dst.fpr);
             else {
                 ASSERT(dst.kind == ShuffleLocation::Stack);
-                auto dstAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset);
+                auto dstAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, dst.stackOffset + e.dstPayloadOffset());
                 jit.transferWidth(e.width, srcAddr, dstAddr);
             }
             return;
