@@ -841,7 +841,8 @@ void Options::notifyOptionsChanged()
 #if !CPU(X86_64) && !CPU(ARM64)
     Options::useConcurrentGC() = false;
     Options::forceUnlinkedDFG() = false;
-#if !CPU(PPC64)
+#if !CPU(PPC64) || CPU(BIG_ENDIAN)
+    // Big-endian hosts would need the lanes of every v128 memory access reversed.
     Options::useWasmSIMD() = false;
 #endif
 #if !CPU(PPC64)
@@ -1575,10 +1576,7 @@ bool NODELETE canUseJITCage() { return false; }
 
 bool NODELETE canUseWasm()
 {
-#if CPU(PPC64) && CPU(BIG_ENDIAN)
-    // Wasm memory is little-endian; big-endian PPC64 does not yet byte-reverse its accesses.
-    return false;
-#elif ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
+#if ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
     return true;
 #else
     return false;
