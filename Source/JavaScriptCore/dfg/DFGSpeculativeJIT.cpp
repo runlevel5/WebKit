@@ -18489,9 +18489,15 @@ void SpeculativeJIT::compileStringStartsOrEndsWithConstant(Node* node, bool isSt
     // Encode the search bytes as little-endian immediates so the comparison is a few
     // wide loads + compares, with overlap when searchLength isn't a power of two.
     auto chunk = [&](unsigned offset, unsigned width) -> uint64_t {
+        // The characters as the word a load of them yields on this host.
         uint64_t value = 0;
-        for (unsigned i = 0; i < width; ++i)
+        for (unsigned i = 0; i < width; ++i) {
+#if CPU(BIG_ENDIAN)
+            value |= static_cast<uint64_t>(search[offset + i]) << ((width - 1 - i) * 8);
+#else
             value |= static_cast<uint64_t>(search[offset + i]) << (i * 8);
+#endif
+        }
         return value;
     };
 
