@@ -15002,7 +15002,7 @@ IGNORE_CLANG_WARNINGS_END
             switch (type.kind) {
             case Wasm::TypeKind::I32:
                 if (isStack)
-                    arguments.append(ConstrainedValue(lowInt32(m_graph.varArgChild(node, 2 + i)), ValueRep::stackArgument(safeCast<int32_t>(wasmCallInfo.params[i].location.offsetFromSP()))));
+                    arguments.append(ConstrainedValue(lowInt32(m_graph.varArgChild(node, 2 + i)), ValueRep::stackArgument(safeCast<int32_t>(wasmCallInfo.params[i].location.offsetFromSP() + PayloadOffset))));
                 else
                     arguments.append(ConstrainedValue(m_out.zeroExtPtr(lowInt32(m_graph.varArgChild(node, 2 + i))), ValueRep::reg(wasmCallInfo.params[i].location.jsr().payloadGPR())));
                 break;
@@ -15036,7 +15036,7 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             case Wasm::TypeKind::F32:
                 if (isStack)
-                    arguments.append(ConstrainedValue(m_out.doubleToFloat(lowDouble(m_graph.varArgChild(node, 2 + i))), ValueRep::stackArgument(safeCast<Value::OffsetType>(wasmCallInfo.params[i].location.offsetFromSP()))));
+                    arguments.append(ConstrainedValue(m_out.doubleToFloat(lowDouble(m_graph.varArgChild(node, 2 + i))), ValueRep::stackArgument(safeCast<Value::OffsetType>(wasmCallInfo.params[i].location.offsetFromSP() + PayloadOffset))));
                 else
                     arguments.append(ConstrainedValue(m_out.doubleToFloat(lowDouble(m_graph.varArgChild(node, 2 + i))), ValueRep::reg(wasmCallInfo.params[i].location.fpr())));
                 break;
