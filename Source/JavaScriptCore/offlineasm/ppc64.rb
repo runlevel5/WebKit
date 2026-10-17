@@ -880,8 +880,29 @@ class Instruction
     end
 end
 
+# riscLowerTest turns a byte test on memory (btbz addr, mask, lbl) into
+# andi addr, mask, tmp, and the generic address lowering then fetches that
+# operand with a 32-bit load.  The low byte of that word is the addressed byte
+# only on little-endian, so load the byte explicitly first.
+def ppc64LowerByteTestsOnMemory(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a?(Instruction) && node.opcode =~ /\A(bt|t)b(s|z|nz)\z/ && node.operands[0].is_a?(Address)
+            co  = node.codeOrigin
+            tmp = Tmp.new(co, :gpr)
+            newList << Instruction.new(co, "loadb", [node.operands[0], tmp])
+            newList << Instruction.new(co, node.opcode, [tmp] + node.operands[1..], node.annotation)
+        else
+            newList << node
+        end
+    }
+    newList
+end
+
 class Sequence
     def getModifiedListPPC64(result = @list)
+        result = ppc64LowerByteTestsOnMemory(result)
         # Expand bt*z/bt*nz (test-and-branch) into and + bieq/bineq
         result = riscLowerTest(result)
         # Expand bmulio → smulli + rshifti + bineq
