@@ -128,6 +128,10 @@ end
 # Typed push/pop to make code pretty
 
 macro pushInt32(reg)
+if PPC64
+    # ELFv2 returns an int32 sign-extended; the slot holds it zero-extended.
+    zxi2q reg, reg
+end
     pushQuad(reg)
 end
 
