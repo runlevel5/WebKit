@@ -143,8 +143,9 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
 
         if (wasmFrameConvention.params[i].location.isStackArgument()) {
             auto dst = wasmFrameConvention.params[i].location.offsetFromSP() + calleeSPOffsetFromFP;
+            // A 32-bit value is the payload of its slot: write the whole slot.
             if (type.isI32() || type.isF32())
-                *access.operator()<uint32_t>(callFrame, dst) = static_cast<uint32_t>(value);
+                *access.operator()<uint64_t>(callFrame, dst) = static_cast<uint32_t>(value);
             else
                 *access.operator()<uint64_t>(callFrame, dst) = value;
         } else {
@@ -203,7 +204,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
 
         JSValue result;
         if (signature.returnType(0).isI32())
-            result = jsNumber(*access.operator()<int32_t>(registerSpace, 0));
+            result = jsNumber(static_cast<int32_t>(*access.operator()<uint64_t>(registerSpace, 0)));
         else if (signature.returnType(0).isI64()) {
             result = JSBigInt::makeHeapBigIntOrBigInt32(instance->realm(), *access.operator()<int64_t>(registerSpace, 0));
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -429,7 +430,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
         case TypeKind::F32: {
             float val;
             if (wasmParam.isStack())
-                val = *access.operator()<float>(callFrame, wasmParam.offsetFromFP());
+                val = *access.operator()<float>(callFrame, wasmParam.offsetFromFP() + PayloadOffset);
             else
                 val = loadF32FromFPRSlot(access.operator()<uint64_t>(argumentRegisters, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(wasmParam.fpr()) * bytesForWidth(Width::Width64)));
 
@@ -851,7 +852,7 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
 
             switch (value.type().kind()) {
             case B3::Float:
-                *std::bit_cast<float*>(baseStore) = *std::bit_cast<float*>(baseLoad);
+                *std::bit_cast<uint64_t*>(baseStore) = std::bit_cast<uint32_t>(*std::bit_cast<float*>(baseLoad + PayloadOffset)); // The buffer reader takes the low 32 bits.
                 break;
             case B3::Double:
                 *std::bit_cast<double*>(baseStore) = *std::bit_cast<double*>(baseLoad);
@@ -1240,13 +1241,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
             auto* baseStore = std::bit_cast<uint8_t*>(context.fp()) + value.offsetFromFP();
             switch (type.kind()) {
             case B3::Int32:
-                *std::bit_cast<uint32_t*>(baseStore) = static_cast<uint32_t>(*bufferSlot);
+                *std::bit_cast<uint32_t*>(baseStore + PayloadOffset) = static_cast<uint32_t>(*bufferSlot);
                 break;
             case B3::Int64:
                 *std::bit_cast<uint64_t*>(baseStore) = *bufferSlot;
                 break;
             case B3::Float:
-                *std::bit_cast<float*>(baseStore) = std::bit_cast<float>(static_cast<uint32_t>(*bufferSlot));
+                *std::bit_cast<float*>(baseStore + PayloadOffset) = std::bit_cast<float>(static_cast<uint32_t>(*bufferSlot));
                 break;
             case B3::Double:
                 *std::bit_cast<double*>(baseStore) = std::bit_cast<double>(*bufferSlot);
