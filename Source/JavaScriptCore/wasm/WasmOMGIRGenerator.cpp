@@ -1977,7 +1977,10 @@ static void emitWasmCallStackResultsAndSPRestore(CCallHelpers& jit,
             ASSERT(rep.isStack());
             if (wasmType.isV128())
                 jit.transferVector(src, CCallHelpers::Address(GPRInfo::callFrameRegister, rep.offsetFromFP()));
-            else
+            else if (wasmType.isF32()) {
+                // Air keeps a Float in a 4-byte spill slot; a GP spill slot takes the whole word.
+                jit.transfer32(src.withOffset(PayloadOffset), CCallHelpers::Address(GPRInfo::callFrameRegister, rep.offsetFromFP()));
+            } else
                 jit.transfer64(src, CCallHelpers::Address(GPRInfo::callFrameRegister, rep.offsetFromFP()));
         }
     }
@@ -6143,15 +6146,19 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         int scratchOffset = allocateSpill(Width64);
         auto scratchAddr = CCallHelpers::Address(MacroAssembler::stackPointerRegister, scratchOffset);
 
+        // The scratch slot is read back like the source it replaces (see srcPayloadOffset).
         switch (e.src.kind) {
         case ShuffleLocation::GPR:
             jit.storePtr(e.src.gpr, scratchAddr);
             break;
         case ShuffleLocation::FPR:
-            jit.storeDouble(e.src.fpr, scratchAddr);
+            if (e.width == Width32)
+                jit.storeFloat(e.src.fpr, scratchAddr);
+            else
+                jit.storeDouble(e.src.fpr, scratchAddr);
             break;
         case ShuffleLocation::Stack: {
-            jit.transferWidth(e.width, CCallHelpers::Address(MacroAssembler::stackPointerRegister, e.src.stackOffset), scratchAddr);
+            jit.transferWidth(e.width, CCallHelpers::Address(MacroAssembler::stackPointerRegister, e.src.stackOffset + e.srcPayloadOffset()), scratchAddr.withOffset(e.srcPayloadOffset()));
             break;
         }
         default:
