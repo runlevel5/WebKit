@@ -523,7 +523,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
                 OPERATION_RETURN_IF_EXCEPTION(scope);
                 *access.operator()<uint64_t>(registerSpace, 0) = static_cast<uint64_t>(result);
             } else {
-                uint64_t result = static_cast<uint64_t>(*access.operator()<uint32_t>(registerSpace, 0));
+                uint64_t result = static_cast<uint32_t>(*access.operator()<uint64_t>(registerSpace, 0)); // The payload of the boxed int32.
                 *access.operator()<uint64_t>(registerSpace, 0) = result;
             }
             break;
@@ -539,7 +539,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             auto offset = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(dest) * bytesForWidth(Width::Width64);
             if (returned.isNumber()) {
                 if (returned.isInt32()) {
-                    float result = static_cast<float>(*access.operator()<int32_t>(registerSpace, 0));
+                    float result = static_cast<float>(static_cast<int32_t>(*access.operator()<uint64_t>(registerSpace, 0)));
                     *access.operator()<uint64_t>(registerSpace, offset) = f32FPRSlotBits(result);
                 } else {
 #if USE(JSVALUE64)
@@ -562,7 +562,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             auto offset = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(dest) * bytesForWidth(Width::Width64);
             if (returned.isNumber()) {
                 if (returned.isInt32()) {
-                    double result = static_cast<double>(*access.operator()<int32_t>(registerSpace, 0));
+                    double result = static_cast<double>(static_cast<int32_t>(*access.operator()<uint64_t>(registerSpace, 0)));
                     *access.operator()<double>(registerSpace, offset) = result;
                 } else {
 #if USE(JSVALUE64)
