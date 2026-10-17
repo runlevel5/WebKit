@@ -259,7 +259,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
         if (loc.isGPR() || loc.isFPR()) {
             switch (type.kind) {
             case TypeKind::I32:
-                result = jsNumber(*access.operator()<int32_t>(registerSpace, GPRInfo::toArgumentIndex(loc.jsr().payloadGPR()) * sizeof(UCPURegister)));
+                result = jsNumber(static_cast<int32_t>(*access.operator()<uint64_t>(registerSpace, GPRInfo::toArgumentIndex(loc.jsr().payloadGPR()) * sizeof(UCPURegister))));
                 break;
             case TypeKind::I64:
                 result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(registerSpace, GPRInfo::toArgumentIndex(loc.jsr().payloadGPR()) * sizeof(UCPURegister)));
@@ -278,14 +278,14 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
         } else {
             switch (type.kind) {
             case TypeKind::I32:
-                result = jsNumber(*access.operator()<int32_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP()));
+                result = jsNumber(*access.operator()<int32_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP() + PayloadOffset));
                 break;
             case TypeKind::I64:
                 result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP()));
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 break;
             case TypeKind::F32:
-                result = jsNumber(purifyNaN(*access.operator()<float>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP())));
+                result = jsNumber(purifyNaN(*access.operator()<float>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP() + PayloadOffset)));
                 break;
             case TypeKind::F64:
                 result = jsNumber(purifyNaN(*access.operator()<double>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP())));
