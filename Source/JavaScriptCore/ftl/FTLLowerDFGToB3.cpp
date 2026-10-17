@@ -10887,7 +10887,7 @@ IGNORE_CLANG_WARNINGS_END
             // Check deletedEntryCount == 0.
             m_out.appendTo(deletedCheck, sizeCheck);
             LValue length = unboxInt32(aliveEntryCountValue);
-            LValue deletedCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, storageButterfly, m_out.constIntPtr(Helper::deletedEntryCountIndex())));
+            LValue deletedCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, storageButterfly, m_out.constIntPtr(Helper::deletedEntryCountIndex()), JSValue(), PayloadOffset));
             m_out.branch(m_out.isZero32(deletedCount), usually(sizeCheck), rarely(slowPath));
 
             // Check length <= MAX_STORAGE_VECTOR_LENGTH.
@@ -10907,7 +10907,7 @@ IGNORE_CLANG_WARNINGS_END
             ValueFromBlock fastResult = m_out.anchor(fastAllocation);
 
             // Compute dataTableStartIndex = hashTableStartIndex + capacity.
-            LValue capacity = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, storageButterfly, m_out.constIntPtr(Helper::capacityIndex())));
+            LValue capacity = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, storageButterfly, m_out.constIntPtr(Helper::capacityIndex()), JSValue(), PayloadOffset));
             LValue dataTableStart = m_out.add(m_out.constInt32(Helper::hashTableStartIndex()), capacity);
 
             ValueFromBlock startIndex = m_out.anchor(m_out.constIntPtr(0));
@@ -16463,7 +16463,7 @@ IGNORE_CLANG_WARNINGS_END
         // Compute the bucketCount = Capacity and bucketIndex = hashTableStartIndex + (hash & bucketCount - 1).
         LBasicBlock lastNext = m_out.appendTo(indexSetUp, loopStart);
         LValue mapStorageData = toButterfly(mapStorage);
-        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.constIntPtr(MapOrSet::Helper::capacityIndex())));
+        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.constIntPtr(MapOrSet::Helper::capacityIndex()), JSValue(), PayloadOffset));
         LValue bucketIndex = m_out.add(m_out.constInt32(MapOrSet::Helper::hashTableStartIndex()), m_out.bitAnd(hash, m_out.sub(bucketCount, m_out.int32One)));
 
         // Get the entryKeyIndex JSValue.
@@ -16779,7 +16779,7 @@ IGNORE_CLANG_WARNINGS_END
 
         // Fast path: iterate through entries to find next non-deleted entry
         m_out.appendTo(fastPath, loop);
-        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(isMapIterator ? JSMap::Helper::capacityIndex() : JSSet::Helper::capacityIndex())));
+        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(isMapIterator ? JSMap::Helper::capacityIndex() : JSSet::Helper::capacityIndex()), JSValue(), PayloadOffset));
         LValue dataTableStartIndex = m_out.add(m_out.constInt32(isMapIterator ? JSMap::Helper::hashTableStartIndex() : JSSet::Helper::hashTableStartIndex()), bucketCount);
         LValue entrySize = m_out.constIntPtr(isMapIterator ? JSMap::Helper::EntrySize : JSSet::Helper::EntrySize);
 
@@ -16838,7 +16838,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue entry = lowInt32(m_node->child2());
 
         LValue butterfly = toButterfly(storage);
-        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(isMapIterator ? JSMap::Helper::capacityIndex() : JSSet::Helper::capacityIndex())));
+        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(isMapIterator ? JSMap::Helper::capacityIndex() : JSSet::Helper::capacityIndex()), JSValue(), PayloadOffset));
 
         LValue multiplied;
         int32_t entrySize;
@@ -16866,7 +16866,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue entry = lowInt32(m_node->child2());
 
         LValue butterfly = toButterfly(storage);
-        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(JSMap::Helper::capacityIndex())));
+        LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.constIntPtr(JSMap::Helper::capacityIndex()), JSValue(), PayloadOffset));
 
         static_assert(JSMap::Helper::EntrySize == 3);
         LValue multiplied = m_out.add(entry, m_out.shl(entry, m_out.constInt32(1)));
@@ -16906,7 +16906,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue butterfly = toButterfly(storage);
         // aliveEntryCountIndex() is the same for both JSSet::Helper and JSMap::Helper.
         LValue size = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly,
-            m_out.constIntPtr(JSSet::Helper::aliveEntryCountIndex())));
+            m_out.constIntPtr(JSSet::Helper::aliveEntryCountIndex()), JSValue(), PayloadOffset));
         ValueFromBlock hasStorageResult = m_out.anchor(size);
         m_out.jump(continuation);
 

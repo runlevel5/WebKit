@@ -2590,7 +2590,7 @@ void SpeculativeJIT::compileMapGetImpl(Node* node)
 
     JIT_COMMENT(*this, "Compute the bucketCount = Capacity and bucketIndex = hashTableStartIndex + (hash & bucketCount - 1).");
     addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), mapStorageOrDataGPR);
-    load32(Address(mapStorageOrDataGPR, MapOrSet::Helper::capacityIndex() * sizeof(uint64_t)), bucketCountGPR);
+    load32(Address(mapStorageOrDataGPR, MapOrSet::Helper::capacityIndex() * sizeof(uint64_t) + PayloadOffset), bucketCountGPR);
     sub32(bucketCountGPR, TrustedImm32(1), bucketIndexOrDeletedValueGPR);
     and32(hashGPR, bucketIndexOrDeletedValueGPR);
     add32(TrustedImm32(MapOrSet::Helper::hashTableStartIndex()), bucketIndexOrDeletedValueGPR);
@@ -9104,7 +9104,7 @@ void SpeculativeJIT::compileMapIteratorNext(Node* node)
 
     // Fast path: iterate to find next non-deleted entry.
     move(currentEntryGPR, newEntryGPR);
-    load32(Address(storageGPR, JSCellButterfly::offsetOfData() + capacityIndex * sizeof(uint64_t)), scratchGPR1);
+    load32(Address(storageGPR, JSCellButterfly::offsetOfData() + capacityIndex * sizeof(uint64_t) + PayloadOffset), scratchGPR1);
     add32(TrustedImm32(hashTableStartIndex), scratchGPR1);
     if (entrySize == 3) {
         lshift32(newEntryGPR, TrustedImm32(1), scratchGPR2);

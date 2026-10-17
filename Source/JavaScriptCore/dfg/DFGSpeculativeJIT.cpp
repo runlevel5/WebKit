@@ -9735,7 +9735,7 @@ void SpeculativeJIT::compileSpread(Node* node)
         zeroExtend32ToWord(lengthGPR, lengthGPR);
 
         // Load deletedEntryCount and check it's 0.
-        load32(Address(scratch1GPR, Helper::deletedEntryCountIndex() * sizeof(EncodedJSValue)), scratch2GPR);
+        load32(Address(scratch1GPR, Helper::deletedEntryCountIndex() * sizeof(EncodedJSValue) + PayloadOffset), scratch2GPR);
         slowPath.append(branchTest32(NonZero, scratch2GPR));
 
         // Guard aliveEntryCount <= MAX_STORAGE_VECTOR_LENGTH.
@@ -9756,7 +9756,7 @@ void SpeculativeJIT::compileSpread(Node* node)
         // Reload storage and recompute source base pointer (scratches were clobbered by allocation).
         loadPtr(Address(argument, JSSet::offsetOfStorage()), scratch1GPR);
         addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), scratch1GPR);
-        load32(Address(scratch1GPR, Helper::capacityIndex() * sizeof(EncodedJSValue)), scratch2GPR);
+        load32(Address(scratch1GPR, Helper::capacityIndex() * sizeof(EncodedJSValue) + PayloadOffset), scratch2GPR);
         add32(TrustedImm32(Helper::hashTableStartIndex()), scratch2GPR);
         // scratch1GPR += dataTableStartIndex * sizeof(EncodedJSValue)
         lshiftPtr(TrustedImm32(3), scratch2GPR);
@@ -15082,13 +15082,13 @@ void SpeculativeJIT::compileMapIteratorKey(Node* node)
         static_assert(JSMap::Helper::EntrySize == 3);
         lshift32(entryGPR, TrustedImm32(1), scratchGPR2);
         add32(entryGPR, scratchGPR2);
-        load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSMap::Helper::capacityIndex() * sizeof(uint64_t)), scratchGPR1);
+        load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSMap::Helper::capacityIndex() * sizeof(uint64_t) + PayloadOffset), scratchGPR1);
         add32(scratchGPR1, scratchGPR2);
         add32(TrustedImm32(JSMap::Helper::hashTableStartIndex() - JSMap::Helper::EntrySize), scratchGPR2);
     } else {
         static_assert(JSSet::Helper::EntrySize == 2);
         add32(entryGPR, entryGPR, scratchGPR2);
-        load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSSet::Helper::capacityIndex() * sizeof(uint64_t)), scratchGPR1);
+        load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSSet::Helper::capacityIndex() * sizeof(uint64_t) + PayloadOffset), scratchGPR1);
         add32(scratchGPR1, scratchGPR2);
         add32(TrustedImm32(JSSet::Helper::hashTableStartIndex() - JSSet::Helper::EntrySize), scratchGPR2);
     }
@@ -15114,7 +15114,7 @@ void SpeculativeJIT::compileMapIteratorValue(Node* node)
     static_assert(JSMap::Helper::EntrySize == 3);
     lshift32(entryGPR, TrustedImm32(1), scratchGPR2);
     add32(entryGPR, scratchGPR2);
-    load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSMap::Helper::capacityIndex() * sizeof(uint64_t)), scratchGPR1);
+    load32(Address(storageGPR, JSCellButterfly::offsetOfData() + JSMap::Helper::capacityIndex() * sizeof(uint64_t) + PayloadOffset), scratchGPR1);
     add32(scratchGPR1, scratchGPR2);
     add32(TrustedImm32(JSMap::Helper::hashTableStartIndex() - JSMap::Helper::EntrySize + /* value offset */ 1), scratchGPR2);
 
@@ -16842,7 +16842,7 @@ void SpeculativeJIT::compileMapOrSetSize(Node* node)
     move(TrustedImm32(0), resultGPR);
     auto nullCase = branchTestPtr(Zero, storageGPR);
     // offsetOfAliveEntryCount() is the same for both JSSet::Helper and JSMap::Helper.
-    load32(Address(storageGPR, JSSet::Helper::offsetOfAliveEntryCount()), resultGPR);
+    load32(Address(storageGPR, JSSet::Helper::offsetOfAliveEntryCount() + PayloadOffset), resultGPR);
 
     nullCase.link(this);
     strictInt32Result(resultGPR, node);
